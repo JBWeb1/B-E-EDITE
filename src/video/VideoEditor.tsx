@@ -7,6 +7,7 @@ import { sameFilters } from '../lib/filters';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { FilterSliders } from '../ui/FilterSliders';
 import { FirstRunTips, ShortcutsDialog } from '../ui/Help';
+import { Icon } from '../ui/Icon';
 import type { Shortcut } from '../ui/Help';
 import { probeMedia, VideoEngine } from './engine';
 import { putMedia, saveVideoProject } from '../lib/projects';
@@ -21,6 +22,8 @@ import {
   createProject,
   createOverlay,
   createTextOverlay,
+  estimateSizeMB,
+  EXPORT_QUALITIES,
   FILTER_PRESETS,
   MOTIONS,
   normalizeProject,
@@ -36,6 +39,7 @@ import {
   textsAt,
   TRANSITIONS,
 } from './timeline';
+import type { ExportOptions } from './timeline';
 import type { AudioClip, Clip, ClipFilters, Motion, OverlayClip, TextOverlay, Transition, VideoProject } from './types';
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -91,6 +95,9 @@ export function VideoEditor({
   const [importing, setImporting] = useState(0);
   const [exportProgress, setExportProgress] = useState<number | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
+  const [exportDialog, setExportDialog] = useState(false);
+  const [exportOpts, setExportOpts] = useState<ExportOptions>({ fps: 30, bitrate: 8_000_000 });
   const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error' | null>(null);
 
@@ -401,10 +408,11 @@ export function VideoEditor({
   const doExport = async () => {
     const engine = engineRef.current;
     if (!engine || duration <= 0) return;
+    setExportDialog(false);
     setSelection(null);
     setExportProgress(0);
     try {
-      const blob = await engine.record(setExportProgress);
+      const blob = await engine.record(setExportProgress, exportOpts);
       downloadBlob(blob, `${project.name || 'video'}.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Export failed');
@@ -425,50 +433,86 @@ export function VideoEditor({
       }}
     >
       <header className="topbar">
-        <button className="ghost" onClick={onExit}>← Home</button>
-        <input
-          className="title-input"
-          value={project.name}
-          onFocus={mark}
-          onChange={(e) => setTransient((p) => ({ ...p, name: e.target.value }))}
-          aria-label="Video name"
-        />
-        <div className="spacer" />
-        <select
-          value={`${project.width}x${project.height}`}
-          onChange={(e) => {
-            const [w, h] = e.target.value.split('x').map(Number);
-            set((p) => ({ ...p, width: w, height: h }));
-          }}
-          title="Aspect ratio"
-        >
-          {ASPECTS.map((a) => (
-            <option key={a.label} value={`${a.width}x${a.height}`}>{a.label}</option>
-          ))}
-        </select>
-        <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
-        <button onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
-        <button className="primary" onClick={doExport} disabled={duration <= 0 || exportProgress !== null}>
-          Export video
-        </button>
+        <div className="topbar-group">
+          <button className="icon-btn" onClick={onExit} title="Back to home" aria-label="Home">
+            <Icon name="home" />
+          </button>
+          <input
+            className="title-input"
+            value={project.name}
+            onFocus={mark}
+            onChange={(e) => setTransient((p) => ({ ...p, name: e.target.value }))}
+            aria-label="Video name"
+          />
+          <span className={`save-state ${saveState ?? ''}`} aria-live="polite">
+            {saveState === 'saving' && 'Saving…'}
+            {saveState === 'saved' && (
+              <>
+                <Icon name="check" size={14} /> Saved
+              </>
+            )}
+            {saveState === 'error' && '⚠ Not saved'}
+          </span>
+        </div>
+        <div className="topbar-group center">
+          <button className="icon-btn" onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
+            <Icon name="undo" />
+          </button>
+          <button className="icon-btn" onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+            <Icon name="redo" />
+          </button>
+          <span className="divider" />
+          <select
+            className="pill-select"
+            value={`${project.width}x${project.height}`}
+            onChange={(e) => {
+              const [w, h] = e.target.value.split('x').map(Number);
+              set((p) => ({ ...p, width: w, height: h }));
+            }}
+            title="Aspect ratio"
+            aria-label="Aspect ratio"
+          >
+            {ASPECTS.map((a) => (
+              <option key={a.label} value={`${a.width}x${a.height}`}>{a.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="topbar-group end">
+          <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+            <Icon name="help" />
+          </button>
+          <button className="primary" onClick={() => setExportDialog(true)} disabled={duration <= 0 || exportProgress !== null}>
+            <Icon name="download" /> <span className="label">Export</span>
+          </button>
+        </div>
       </header>
 
       <div className="workspace">
         <nav className="rail">
-          <button className={tab === 'media' ? 'active' : ''} onClick={() => setTab('media')}>
-            <span className="rail-icon">▶</span>Media
-          </button>
-          <button className={tab === 'text' ? 'active' : ''} onClick={() => setTab('text')}>
-            <span className="rail-icon">T</span>Text
-          </button>
+          {(['media', 'text'] as const).map((t) => (
+            <button
+              key={t}
+              className={tab === t ? 'active' : ''}
+              onClick={() => {
+                if (tab === t) setPanelOpen((o) => !o);
+                else {
+                  setTab(t);
+                  setPanelOpen(true);
+                }
+              }}
+            >
+              <Icon name={t === 'media' ? 'film' : 'text'} size={20} />
+              <span>{t === 'media' ? 'Media' : 'Text'}</span>
+            </button>
+          ))}
         </nav>
 
-        <aside className="panel">
+        <aside className={`panel ${panelOpen ? '' : 'collapsed'}`}>
           {tab === 'media' ? (
             <>
               <h3>Media</h3>
               <label className="button primary block">
-                Import video, photos or music
+                <Icon name="upload" /> Import media
                 <input
                   type="file"
                   accept="video/*,image/*,audio/*"
@@ -482,10 +526,12 @@ export function VideoEditor({
               </label>
               {importing > 0 && <p className="hint">Importing {importing} file(s)…</p>}
               {recorder ? (
-                <button className="block recording" onClick={() => recorder.stop()}>■ Stop recording</button>
+                <button className="block recording" onClick={() => recorder.stop()}>
+                  <span className="rec-dot" /> Stop recording
+                </button>
               ) : (
                 <button className="block" onClick={startVoiceOver} title="Record from your microphone while the video plays">
-                  🎙 Record voice-over
+                  <Icon name="mic" /> Record voice-over
                 </button>
               )}
               <p className="hint">Or drag files anywhere onto the editor. Videos and photos are added to the end of the timeline; music goes on the audio track at the playhead.</p>
@@ -505,8 +551,9 @@ export function VideoEditor({
                             : { ...p, clips: [...p.clips, createClip(a)] },
                         )
                       }
+                      aria-label="Add to timeline"
                     >
-                      +
+                      <Icon name="plus" size={16} />
                     </button>
                     {a.kind !== 'audio' && (
                       <button
@@ -517,8 +564,9 @@ export function VideoEditor({
                           set((p) => ({ ...p, overlays: [...p.overlays, o] }));
                           setSelection({ kind: 'overlay', id: o.id });
                         }}
+                        aria-label="Add as picture-in-picture"
                       >
-                        ⧉
+                        <Icon name="pip" size={15} />
                       </button>
                     )}
                   </div>
@@ -612,21 +660,34 @@ export function VideoEditor({
             />
           </div>
           <div className="transport">
-            <button onClick={() => seek(0)} title="Go to start (Home)">⏮</button>
-            <button className="primary round" onClick={togglePlay} disabled={duration <= 0} title="Play/Pause (Space)">
-              {playing ? '❚❚' : '▶'}
-            </button>
-            <span className="timecode">
-              {formatTime(time)} / {formatTime(duration)}
-            </span>
-            <div className="spacer" />
-            <button onClick={split} title="Split at playhead (S)">✂ Split</button>
-            <button onClick={duplicateSelected} disabled={!selectedClip && !selectedText && !selectedOverlay}>Duplicate</button>
-            <button className="danger" onClick={removeSelected} disabled={!selection} title="Delete (Del)">Delete</button>
-            <label className="zoom-slider" title="Timeline zoom">
-              🔍
-              <input type="range" min={10} max={300} value={pps} onChange={(e) => setPps(Number(e.target.value))} />
-            </label>
+            <div className="transport-side">
+              <button className="icon-btn" onClick={split} title="Split at playhead (S)" aria-label="Split">
+                <Icon name="scissors" />
+              </button>
+              <button className="icon-btn" onClick={duplicateSelected} disabled={!selectedClip && !selectedText && !selectedOverlay} title="Duplicate" aria-label="Duplicate">
+                <Icon name="copy" />
+              </button>
+              <button className="icon-btn danger" onClick={removeSelected} disabled={!selection} title="Delete (Del)" aria-label="Delete">
+                <Icon name="trash" />
+              </button>
+            </div>
+            <div className="transport-center">
+              <button className="icon-btn" onClick={() => seek(0)} title="Go to start (Home)" aria-label="Go to start">
+                <Icon name="skipBack" />
+              </button>
+              <button className="play-btn" onClick={togglePlay} disabled={duration <= 0} title="Play/Pause (Space)" aria-label={playing ? 'Pause' : 'Play'}>
+                <Icon name={playing ? 'pause' : 'play'} size={20} />
+              </button>
+              <span className="timecode">
+                <strong>{formatTime(time)}</strong> / {formatTime(duration)}
+              </span>
+            </div>
+            <div className="transport-side end">
+              <label className="zoom-slider" title="Timeline zoom">
+                <Icon name="zoomIn" size={16} />
+                <input type="range" min={10} max={300} value={pps} onChange={(e) => setPps(Number(e.target.value))} aria-label="Timeline zoom" />
+              </label>
+            </div>
           </div>
         </main>
 
@@ -709,6 +770,8 @@ export function VideoEditor({
               <h3>Audio</h3>
               <p className="hint">{project.assets.find((a) => a.id === selectedAudio.assetId)?.name}</p>
               <RangeField label="Volume" value={selectedAudio.volume} min={0} max={2} step={0.05} onStart={mark} onChange={(v) => updateAudio({ volume: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+              <RangeField label="Fade in" value={selectedAudio.fadeIn ?? 0} min={0} max={Math.min(5, (selectedAudio.out - selectedAudio.in) / 2)} step={0.1} onStart={mark} onChange={(v) => updateAudio({ fadeIn: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
+              <RangeField label="Fade out" value={selectedAudio.fadeOut ?? 0} min={0} max={Math.min(5, (selectedAudio.out - selectedAudio.in) / 2)} step={0.1} onStart={mark} onChange={(v) => updateAudio({ fadeOut: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
               <NumberField label="Start (s)" value={selectedAudio.start} min={0} step={0.1} onChange={(v) => updateAudio({ start: v })} />
             </>
           ) : (
@@ -728,12 +791,10 @@ export function VideoEditor({
                   Edit clip under playhead
                 </button>
               )}
-              <p className="hint">
-                {saveState === 'saving' && 'Saving…'}
-                {saveState === 'saved' && '✓ Saved in this browser. Reopen it from the home screen any time.'}
-                {saveState === 'error' && '⚠ Could not save in this browser (storage may be full or blocked).'}
-              </p>
-              <button className="block" onClick={() => setShowHelp(true)}>⌨ Keyboard shortcuts</button>
+              <p className="hint">Your project saves automatically in this browser. Reopen it from the home screen any time.</p>
+              <button className="block" onClick={() => setShowHelp(true)}>
+                <Icon name="keyboard" /> Keyboard shortcuts
+              </button>
             </>
           )}
         </aside>
@@ -753,6 +814,38 @@ export function VideoEditor({
       />
 
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
+
+      {exportDialog && (
+        <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && setExportDialog(false)}>
+          <div className="modal" role="dialog" aria-label="Export video">
+            <h3>Export video</h3>
+            <p className="hint">
+              {project.width} × {project.height} · {formatTime(duration)}
+            </p>
+            <h4>Quality</h4>
+            <div className="segmented">
+              {EXPORT_QUALITIES.map((q) => (
+                <button key={q.label} className={exportOpts.bitrate === q.bitrate ? 'active' : ''} onClick={() => setExportOpts((o) => ({ ...o, bitrate: q.bitrate }))}>
+                  {q.label}
+                </button>
+              ))}
+            </div>
+            <h4>Frame rate</h4>
+            <div className="segmented">
+              {([30, 60] as const).map((fps) => (
+                <button key={fps} className={exportOpts.fps === fps ? 'active' : ''} onClick={() => setExportOpts((o) => ({ ...o, fps }))}>
+                  {fps} fps{fps === 60 ? ' (smoother)' : ''}
+                </button>
+              ))}
+            </div>
+            <p className="hint">About {estimateSizeMB(duration, exportOpts).toFixed(1)} MB. The video plays through once while it records.</p>
+            <div className="row">
+              <button onClick={() => setExportDialog(false)}>Cancel</button>
+              <button className="primary" onClick={doExport}>Export</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {exportProgress !== null && (
         <div className="modal-backdrop">

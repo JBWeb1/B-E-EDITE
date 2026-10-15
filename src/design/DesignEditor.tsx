@@ -7,8 +7,11 @@ import { useHistory } from '../lib/history';
 import { saveDesignProject } from '../lib/projects';
 import { uid } from '../lib/id';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
+import { removeBackgroundFromImage } from '../lib/bgremove';
 import { FilterSliders } from '../ui/FilterSliders';
 import { FirstRunTips, ShortcutsDialog } from '../ui/Help';
+import { Icon } from '../ui/Icon';
+import { Menu, MenuItem } from '../ui/Menu';
 import type { Shortcut } from '../ui/Help';
 import {
   addElement,
@@ -42,9 +45,12 @@ import {
   updateElement,
 } from './model';
 import type { AlignMode, Guide, Handle, LayerMove, Point, Rect } from './model';
-import { designThumbnail, exportDesign, exportPdf, ImageCache, measureTextHeight, renderDesign } from './render';
+import { animateAll, ANIMATIONS, entranceLength } from './animate';
+import { blankPage, duplicatePage, insertPage, isDesignFile, movePage, normalizeFile, pageDuration, pageView, removePage, withPage } from './pages';
+import { Presenter } from './Presenter';
+import { designThumbnail, exportDesign, exportDesignVideo, exportPdf, ImageCache, measureTextHeight, renderDesign } from './render';
 import { SIZE_PRESETS, TEMPLATES } from './templates';
-import type { Crop, DesignDoc, DesignElement, Gradient, ImageElement, ShapeKind, TextElement } from './types';
+import type { Crop, DesignDoc, DesignElement, DesignFile, ElementAnimation, Gradient, ImageElement, ShapeKind, TextElement } from './types';
 
 const SWATCHES = ['#ffffff', '#111827', '#f87171', '#fbbf24', '#34d399', '#60a5fa', '#a78bfa', '#f472b6', '#fde68a', '#d1fae5'];
 const SHAPES: ShapeKind[] = ['rect', 'ellipse', 'triangle', 'star', 'line', 'heart', 'arrow', 'bubble', 'hexagon', 'diamond'];
@@ -84,6 +90,8 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['Alt', 'Drag'], action: 'Move without snapping' },
   { keys: ['Shift', 'Rotate'], action: 'Rotate in 15° steps' },
   { keys: ['Esc'], action: 'Deselect' },
+  { keys: ['Page Up'], action: 'Previous page' },
+  { keys: ['Page Down'], action: 'Next page' },
   { keys: ['?'], action: 'Show this help' },
 ];
 
@@ -117,9 +125,41 @@ function isTyping(target: EventTarget | null) {
 
 const gradientCss = (g: Gradient) => `linear-gradient(${g.angle + 90}deg, ${g.from}, ${g.to})`;
 
-export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: DesignDoc; projectId: string; onExit: () => void }) {
-  const history = useHistory<DesignDoc>(initialDoc);
-  const { state: doc, set, setTransient, mark } = history;
+type Updater<T> = T | ((prev: T) => T);
+const applyUpdate = <T,>(u: Updater<T>, prev: T): T => (typeof u === 'function' ? (u as (p: T) => T)(prev) : u);
+
+export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: DesignFile; projectId: string; onExit: () => void }) {
+  // Undo history covers the whole file; editing tools see one page at a time.
+  const fileHistory = useHistory<DesignFile>(initialFile);
+  const file = fileHistory.state;
+  const [pageIndex, setPageIndex] = useState(0);
+  const page = Math.min(pageIndex, file.pages.length - 1);
+  const doc = useMemo(() => pageView(file, page), [file, page]);
+  const { mark } = fileHistory;
+  const fileSet = fileHistory.set;
+  const fileSetTransient = fileHistory.setTransient;
+  const set = useCallback(
+    (u: Updater<DesignDoc>) => fileSet((f) => withPage(f, page, applyUpdate(u, pageView(f, page)))),
+    [fileSet, page],
+  );
+  const setTransient = useCallback(
+    (u: Updater<DesignDoc>) => fileSetTransient((f) => withPage(f, page, applyUpdate(u, pageView(f, page)))),
+    [fileSetTransient, page],
+  );
+  const history = useMemo(
+    () => ({
+      undo: fileHistory.undo,
+      redo: fileHistory.redo,
+      canUndo: fileHistory.canUndo,
+      canRedo: fileHistory.canRedo,
+      reset: (value: DesignFile | DesignDoc) => fileHistory.reset(normalizeFile(value)),
+    }),
+    [fileHistory],
+  );
+  const [presenting, setPresenting] = useState<number | null>(null);
+  const [previewStart, setPreviewStart] = useState<number | null>(null);
+  const [previewTime, setPreviewTime] = useState<number | null>(null);
+  const [videoProgress, setVideoProgress] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [guides, setGuides] = useState<Guide[]>([]);
@@ -133,6 +173,8 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
   const [uploads, setUploads] = useState<string[]>([]);
   const [exportScale, setExportScale] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
+  const openInputRef = useRef<HTMLInputElement>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -155,16 +197,71 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
   // Autosave so work survives a refresh. Untouched blank designs are not saved.
   const [saveState, setSaveState] = useState<'saving' | 'saved' | 'error' | null>(null);
   useEffect(() => {
-    if (doc === initialDoc && doc.elements.length === 0) return;
+    if (file === initialFile && file.pages.every((p) => p.elements.length === 0)) return;
     setSaveState('saving');
     const t = setTimeout(() => {
-      saveDesignProject(projectId, doc, designThumbnail(doc, 240, images)).then(
+      saveDesignProject(projectId, file, designThumbnail(pageView(file, 0), 240, images)).then(
         () => setSaveState('saved'),
         () => setSaveState('error'),
       );
     }, 600);
     return () => clearTimeout(t);
-  }, [doc, initialDoc, projectId, images]);
+  }, [file, initialFile, projectId, images]);
+
+  // Play the page's entrance animations on the canvas.
+  useEffect(() => {
+    if (previewStart === null) return;
+    const end = entranceLength(doc) + 0.3;
+    let raf = 0;
+    const tick = () => {
+      const t = (performance.now() - previewStart) / 1000;
+      if (t >= end) {
+        setPreviewStart(null);
+        setPreviewTime(null);
+        return;
+      }
+      setPreviewTime(t);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [previewStart, doc]);
+
+  const setFile = fileSet;
+  const goToPage = (i: number) => {
+    setPageIndex(Math.max(0, Math.min(i, file.pages.length - 1)));
+    setSelectedIds([]);
+    setEditingId(null);
+  };
+  const addPage = () => {
+    setFile((f) => insertPage(f, page + 1, blankPage(doc.background)));
+    setPageIndex(page + 1);
+    setSelectedIds([]);
+  };
+  const copyPage = () => {
+    setFile((f) => duplicatePage(f, page));
+    setPageIndex(page + 1);
+    setSelectedIds([]);
+  };
+  const deletePage = () => {
+    if (file.pages.length <= 1) return;
+    if (file.pages[page].elements.length > 0 && !confirm(`Delete page ${page + 1}?`)) return;
+    setFile((f) => removePage(f, page));
+    setPageIndex(Math.max(0, page - 1));
+    setSelectedIds([]);
+  };
+  const shiftPage = (delta: number) => {
+    const to = page + delta;
+    if (to < 0 || to >= file.pages.length) return;
+    setFile((f) => movePage(f, page, to));
+    setPageIndex(to);
+  };
+  // Keyboard handler reads the latest page through a ref, so it needn't re-subscribe.
+  const goToPageRef = useRef((delta: number) => goToPage(page + delta));
+  goToPageRef.current = (delta: number) => goToPage(page + delta);
+
+  const setPageSeconds = (seconds: number) =>
+    setFile((f) => ({ ...f, pages: f.pages.map((p, i) => (i === page ? { ...p, duration: seconds } : p)) }));
 
   // Fit the artboard to the available space.
   useLayoutEffect(() => {
@@ -192,10 +289,10 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
     canvas.style.height = `${doc.height * zoom}px`;
     const ctx = canvas.getContext('2d')!;
     ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, 0, 0);
-    renderDesign(ctx, doc, images, editingId ?? undefined);
+    renderDesign(ctx, doc, images, editingId ?? undefined, previewTime ?? undefined);
 
     const px = 1 / zoom;
-    if (!editingId) {
+    if (!editingId && previewTime === null) {
       for (const el of selectedEls) {
         const c = { x: el.x + el.width / 2, y: el.y + el.height / 2 };
         ctx.save();
@@ -253,7 +350,7 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
       ctx.stroke();
     }
     // selectedEls/selected are derived from doc + selectedIds, which are listed.
-  }, [doc, zoom, selectedIds, editingId, guides, marquee, images, imageVersion]);
+  }, [doc, zoom, selectedIds, editingId, guides, marquee, images, imageVersion, previewTime]);
 
   const toDoc = (e: { clientX: number; clientY: number }): Point => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -509,6 +606,9 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
       } else if (e.key === 'Escape') {
         setSelectedIds([]);
         setMenu(null);
+      } else if (e.key === 'PageDown' || e.key === 'PageUp') {
+        e.preventDefault();
+        goToPageRef.current(e.key === 'PageDown' ? 1 : -1);
       } else if (e.key === '?') {
         setShowHelp(true);
       } else if (e.key.startsWith('Arrow') && selectedIds.length) {
@@ -551,14 +651,27 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
   const doExportPdf = async () => {
     setBusy(true);
     try {
-      downloadBlob(await exportPdf(doc), `${doc.name || 'design'}.pdf`);
+      downloadBlob(await exportPdf(file), `${doc.name || 'design'}.pdf`);
     } finally {
       setBusy(false);
     }
   };
 
+  const doExportVideo = async () => {
+    setVideoProgress(0);
+    setSelectedIds([]);
+    try {
+      const blob = await exportDesignVideo(file, setVideoProgress);
+      downloadBlob(blob, `${doc.name || 'design'}.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Video export failed');
+    } finally {
+      setVideoProgress(null);
+    }
+  };
+
   const saveProject = () =>
-    downloadBlob(new Blob([JSON.stringify(doc)], { type: 'application/json' }), `${doc.name || 'design'}.bee.json`);
+    downloadBlob(new Blob([JSON.stringify(file)], { type: 'application/json' }), `${doc.name || 'design'}.bee.json`);
 
   const openProject = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -566,8 +679,9 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
     if (!file) return;
     try {
       const parsed = JSON.parse(await file.text());
-      if (!isDesignDoc(parsed)) throw new Error('Not a design file');
+      if (!isDesignDoc(parsed) && !isDesignFile(parsed)) throw new Error('Not a design file');
       history.reset(parsed);
+      setPageIndex(0);
       setSelectedIds([]);
     } catch {
       alert('Could not open that file. Choose a .bee.json design saved from B-E-EDITE.');
@@ -601,54 +715,107 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
   return (
     <div className="editor">
       <header className="topbar">
-        <button className="ghost" onClick={onExit} title="Back to home">← Home</button>
-        <input
-          className="title-input"
-          value={doc.name}
-          onFocus={mark}
-          onChange={(e) => setTransient((d) => ({ ...d, name: e.target.value }))}
-          aria-label="Design name"
-        />
-        <span className="save-state" aria-live="polite">
-          {saveState === 'saving' && 'Saving…'}
-          {saveState === 'saved' && '✓ Saved'}
-          {saveState === 'error' && '⚠ Not saved'}
-        </span>
-        <div className="spacer" />
-        <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
-        <button onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
-        <div className="zoom">
-          <button onClick={() => setZoomOverride(Math.max(0.05, zoom / 1.25))} title="Zoom out">−</button>
-          <button onClick={() => setZoomOverride(null)} title="Fit to screen">{Math.round(zoom * 100)}%</button>
-          <button onClick={() => setZoomOverride(Math.min(8, zoom * 1.25))} title="Zoom in">+</button>
+        <div className="topbar-group">
+          <button className="icon-btn" onClick={onExit} title="Back to home" aria-label="Home">
+            <Icon name="home" />
+          </button>
+          <input
+            className="title-input"
+            value={doc.name}
+            onFocus={mark}
+            onChange={(e) => setTransient((d) => ({ ...d, name: e.target.value }))}
+            aria-label="Design name"
+          />
+          <span className={`save-state ${saveState ?? ''}`} aria-live="polite">
+            {saveState === 'saving' && 'Saving…'}
+            {saveState === 'saved' && (
+              <>
+                <Icon name="check" size={14} /> Saved
+              </>
+            )}
+            {saveState === 'error' && '⚠ Not saved'}
+          </span>
         </div>
-        <label className="button">
-          Open
-          <input type="file" accept=".json,application/json" hidden onChange={openProject} />
-        </label>
-        <button onClick={saveProject} title="Download an editable project file">Save</button>
-        <select value={exportScale} onChange={(e) => setExportScale(Number(e.target.value))} title="Export size">
-          <option value={0.5}>0.5×</option>
-          <option value={1}>1×</option>
-          <option value={2}>2×</option>
-        </select>
-        <button className="primary" disabled={busy} onClick={() => doExport('image/png')}>Download PNG</button>
-        <button disabled={busy} onClick={() => doExport('image/jpeg')}>JPG</button>
-        <button disabled={busy} onClick={doExportPdf} title="Print-ready PDF">PDF</button>
-        <button className="ghost" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)">?</button>
+        <div className="topbar-group center">
+          <button className="icon-btn" onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
+            <Icon name="undo" />
+          </button>
+          <button className="icon-btn" onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+            <Icon name="redo" />
+          </button>
+          <span className="divider" />
+          <div className="zoom">
+            <button onClick={() => setZoomOverride(Math.max(0.05, zoom / 1.25))} title="Zoom out" aria-label="Zoom out">
+              <Icon name="minus" size={16} />
+            </button>
+            <button className="zoom-value" onClick={() => setZoomOverride(null)} title="Fit to screen">
+              {Math.round(zoom * 100)}%
+            </button>
+            <button onClick={() => setZoomOverride(Math.min(8, zoom * 1.25))} title="Zoom in" aria-label="Zoom in">
+              <Icon name="plus" size={16} />
+            </button>
+          </div>
+        </div>
+        <div className="topbar-group end">
+          <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+            <Icon name="help" />
+          </button>
+          <button className="secondary" onClick={() => setPresenting(page)} title="Show pages full screen">
+            <Icon name="present" /> <span className="label">Present</span>
+          </button>
+          <Menu
+            buttonClassName="primary"
+            title="Download or save"
+            label={
+              <>
+                <Icon name="download" /> <span className="label">Download</span> <Icon name="chevronDown" size={14} />
+              </>
+            }
+          >
+            <div className="menu-section">
+              <span className="menu-heading">Size</span>
+              <div className="segmented">
+                {[0.5, 1, 2].map((v) => (
+                  <button key={v} className={exportScale === v ? 'active' : ''} onClick={() => setExportScale(v)}>
+                    {v}×
+                  </button>
+                ))}
+              </div>
+            </div>
+            <MenuItem icon={<Icon name="image" />} title="PNG" detail="Sharpest quality, this page" onClick={() => doExport('image/png')} disabled={busy} />
+            <MenuItem icon={<Icon name="image" />} title="JPG" detail="Smaller file, this page" onClick={() => doExport('image/jpeg')} disabled={busy} />
+            <MenuItem icon={<Icon name="file" />} title="PDF" detail="Print-ready, all pages" onClick={doExportPdf} disabled={busy} />
+            <MenuItem icon={<Icon name="film" />} title="Video" detail="Animated, all pages" onClick={doExportVideo} disabled={busy || videoProgress !== null} />
+            <div className="menu-sep" />
+            <MenuItem icon={<Icon name="folder" />} title="Save project file" detail="Editable .bee.json backup" onClick={saveProject} />
+            <MenuItem icon={<Icon name="upload" />} title="Open project file" detail="Load a .bee.json" onClick={() => openInputRef.current?.click()} />
+          </Menu>
+          <input ref={openInputRef} type="file" accept=".json,application/json" hidden onChange={openProject} />
+        </div>
       </header>
 
       <div className="workspace">
         <nav className="rail">
           {(['templates', 'text', 'elements', 'uploads', 'background'] as Tab[]).map((t) => (
-            <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-              <span className="rail-icon">{{ templates: '▦', text: 'T', elements: '◆', uploads: '⇪', background: '■' }[t]}</span>
-              {t[0].toUpperCase() + t.slice(1)}
+            <button
+              key={t}
+              className={tab === t ? 'active' : ''}
+              onClick={() => {
+                // Tapping the open tab again folds the panel away (handy on small screens).
+                if (tab === t) setPanelOpen((o) => !o);
+                else {
+                  setTab(t);
+                  setPanelOpen(true);
+                }
+              }}
+            >
+              <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', uploads: 'upload', background: 'droplet' } as const)[t]} size={20} />
+              <span>{t[0].toUpperCase() + t.slice(1)}</span>
             </button>
           ))}
         </nav>
 
-        <aside className="panel">
+        <aside className={`panel ${panelOpen ? '' : 'collapsed'}`}>
           {tab === 'templates' && (
             <>
               <h3>Templates</h3>
@@ -659,7 +826,13 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
                     className="card template-card"
                     title={t.label}
                     onClick={() => {
-                      if (doc.elements.length === 0 || confirm('Replace the current design with this template?')) {
+                      if (file.pages.length > 1) {
+                        // In a multi-page design, a template becomes a new page sized to match.
+                        const built = resizeDoc(t.build(), doc.width, doc.height);
+                        setFile((f) => insertPage(f, page + 1, { ...blankPage(built.background), gradient: built.gradient ?? null, elements: built.elements }));
+                        setPageIndex(page + 1);
+                        setSelectedIds([]);
+                      } else if (doc.elements.length === 0 || confirm('Replace the current design with this template?')) {
                         set(t.build());
                         setSelectedIds([]);
                       }
@@ -793,6 +966,7 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
           )}
         </aside>
 
+        <div className="stage-column">
         <main
           className="stage"
           ref={stageRef}
@@ -852,6 +1026,18 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
             ]}
           />
         </main>
+        <PageStrip
+          file={file}
+          current={page}
+          images={images}
+          imageVersion={imageVersion}
+          onSelect={goToPage}
+          onAdd={addPage}
+          onDuplicate={copyPage}
+          onDelete={deletePage}
+          onMove={shiftPage}
+        />
+        </div>
 
         <aside className="panel right">
           {selectedEls.length > 1 ? (
@@ -960,6 +1146,7 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
                     <button className={selected.flipY ? 'active' : ''} onClick={() => patchSelected({ flipY: !selected.flipY })}>⇵ Flip V</button>
                   </div>
                   <RangeField label="Corner radius" value={selected.radius} min={0} max={Math.min(selected.width, selected.height) / 2} step={1} onStart={mark} onChange={(v) => patchSelected({ radius: v }, true)} />
+                  <BackgroundRemover el={selected} onApply={(patch) => patchSelected(patch)} />
                   <CropControls el={selected} mark={mark} setCrop={setCrop} />
                   <h4>Filters</h4>
                   <div className="grid3">
@@ -974,6 +1161,20 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
                 </>
               )}
 
+              <label className="field">
+                <span>Animation</span>
+                <select
+                  value={selected.animation ?? 'none'}
+                  onChange={(e) => {
+                    patchSelected({ animation: e.target.value as ElementAnimation });
+                    setPreviewStart(performance.now());
+                  }}
+                >
+                  {ANIMATIONS.map((a) => (
+                    <option key={a.value} value={a.value}>{a.label}</option>
+                  ))}
+                </select>
+              </label>
               <RangeField label="Transparency" value={selected.opacity} min={0} max={1} step={0.01} onStart={mark} onChange={(v) => patchSelected({ opacity: v }, true)} />
               <div className="grid2">
                 <NumberField label="X" value={Math.round(selected.x)} onChange={(v) => patchSelected({ x: v })} />
@@ -1000,11 +1201,40 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
             </>
           ) : (
             <>
-              <h3>Design</h3>
+              <h3>
+                Page {page + 1} <small className="hint">of {file.pages.length}</small>
+              </h3>
               <p className="hint">
                 {doc.width} × {doc.height}px. Click an element to edit it, or drag across the canvas to select several.
                 Drag to move; use the handles to resize or rotate. Hold Alt while dragging to turn off snapping.
               </p>
+              <h4>Animate this page</h4>
+              <div className="grid3">
+                {ANIMATIONS.map((a) => (
+                  <button
+                    key={a.value}
+                    className={doc.elements.length > 0 && doc.elements.every((e) => (e.animation ?? 'none') === a.value) ? 'active' : ''}
+                    onClick={() => {
+                      set((d) => animateAll(d, a.value));
+                      if (a.value !== 'none') setPreviewStart(performance.now());
+                    }}
+                    disabled={doc.elements.length === 0}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+              <button className="block" onClick={() => setPreviewStart(performance.now())} disabled={entranceLength(doc) === 0}>
+                ▶ Preview animation
+              </button>
+              <NumberField
+                label="Page length in present mode / video (s)"
+                value={pageDuration(file.pages[page])}
+                min={1}
+                max={60}
+                step={0.5}
+                onChange={setPageSeconds}
+              />
             </>
           )}
 
@@ -1060,6 +1290,17 @@ export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: De
       )}
 
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
+      {presenting !== null && <Presenter file={file} startPage={presenting} onClose={() => setPresenting(null)} />}
+      {videoProgress !== null && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <h3>Making your video…</h3>
+            <p className="hint">Each page plays once with its animations while it is recorded. Keep this tab open.</p>
+            <div className="progress"><div style={{ width: `${Math.round(videoProgress * 100)}%` }} /></div>
+            <p>{Math.round(videoProgress * 100)}%</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1138,6 +1379,103 @@ function CropControls({
           Reset crop
         </button>
       )}
+    </>
+  );
+}
+
+const pageThumbs = new WeakMap<object, { url: string; version: number }>();
+
+/** Strip of page thumbnails under the canvas, with page actions. */
+function PageStrip({
+  file,
+  current,
+  images,
+  imageVersion,
+  onSelect,
+  onAdd,
+  onDuplicate,
+  onDelete,
+  onMove,
+}: {
+  file: DesignFile;
+  current: number;
+  images: ImageCache;
+  /** Bumps when a photo finishes loading, so thumbnails drawn before that are refreshed. */
+  imageVersion: number;
+  onSelect: (i: number) => void;
+  onAdd: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onMove: (delta: number) => void;
+}) {
+  // Thumbnails are cached per page object, so only edited pages are redrawn.
+  const thumb = (i: number) => {
+    const p = file.pages[i];
+    const cached = pageThumbs.get(p);
+    if (cached && cached.version === imageVersion) return cached.url;
+    const url = designThumbnail(pageView(file, i), 120, images);
+    pageThumbs.set(p, { url, version: imageVersion });
+    return url;
+  };
+  return (
+    <div className="page-strip" aria-label="Pages">
+      <div className="page-list">
+        {file.pages.map((p, i) => (
+          <button
+            key={p.id}
+            className={`page-thumb ${i === current ? 'active' : ''}`}
+            onClick={() => onSelect(i)}
+            title={`Page ${i + 1}`}
+          >
+            <img src={thumb(i)} alt="" />
+            <span>{i + 1}</span>
+          </button>
+        ))}
+        <button className="page-add" onClick={onAdd} title="Add a blank page after this one">
+          + Page
+        </button>
+      </div>
+      <div className="page-actions">
+        <button onClick={() => onMove(-1)} disabled={current === 0} title="Move page left">◀</button>
+        <button onClick={() => onMove(1)} disabled={current === file.pages.length - 1} title="Move page right">▶</button>
+        <button onClick={onDuplicate} title="Duplicate page">Duplicate</button>
+        <button className="danger" onClick={onDelete} disabled={file.pages.length <= 1} title="Delete page">Delete</button>
+      </div>
+    </div>
+  );
+}
+
+/** Remove a plain background from a photo, with a strength slider and a way back. */
+function BackgroundRemover({ el, onApply }: { el: ImageElement; onApply: (patch: Partial<ImageElement>) => void }) {
+  const [tolerance, setTolerance] = useState(18);
+  const [working, setWorking] = useState(false);
+  const run = async () => {
+    setWorking(true);
+    try {
+      const original = el.originalSrc ?? el.src;
+      const out = await removeBackgroundFromImage(original, tolerance);
+      if (out.removed === 0) {
+        alert('No plain background found at the edges. Try a higher strength.');
+        return;
+      }
+      onApply({ src: out.src, originalSrc: original, naturalWidth: out.width, naturalHeight: out.height });
+    } catch {
+      alert('Could not process this photo.');
+    } finally {
+      setWorking(false);
+    }
+  };
+  return (
+    <>
+      <h4>Background</h4>
+      <RangeField label="Strength" value={tolerance} min={2} max={60} step={1} onChange={setTolerance} format={(v) => `${v}%`} />
+      <div className="row">
+        <button className="primary" onClick={run} disabled={working}>
+          {working ? 'Working…' : el.originalSrc ? 'Redo removal' : '✂ Remove background'}
+        </button>
+        {el.originalSrc && <button onClick={() => onApply({ src: el.originalSrc, originalSrc: undefined })}>Restore</button>}
+      </div>
+      <p className="hint">Works best on photos with a plain, even background (white, green screen, studio wall).</p>
     </>
   );
 }

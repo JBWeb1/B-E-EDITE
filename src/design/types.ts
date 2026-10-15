@@ -11,7 +11,11 @@ export interface ElementBase {
   rotation: number;
   opacity: number;
   locked?: boolean;
+  /** How the element enters when the page is presented or exported as a video. */
+  animation?: ElementAnimation;
 }
+
+export type ElementAnimation = 'none' | 'fade' | 'rise' | 'pop' | 'slide' | 'wipe';
 
 export interface TextElement extends ElementBase {
   type: 'text';
@@ -53,6 +57,8 @@ export interface ImageElement extends ElementBase {
   naturalWidth?: number;
   naturalHeight?: number;
   crop?: Crop;
+  /** The photo before its background was removed, so it can be restored. */
+  originalSrc?: string;
 }
 
 /** Which part of a picture is shown. */
@@ -68,6 +74,10 @@ export interface Crop {
 
 export type DesignElement = TextElement | ShapeElement | ImageElement;
 
+/**
+ * One page, seen as a stand-alone design. The editor and renderer work on this
+ * shape; a multi-page DesignFile is stored and edited one page view at a time.
+ */
 export interface DesignDoc {
   name: string;
   width: number;
@@ -84,4 +94,21 @@ export interface Gradient {
   to: string;
   /** Degrees; 0 = left to right, 90 = top to bottom. */
   angle: number;
+}
+
+export interface DesignPage {
+  id: string;
+  background: string;
+  gradient?: Gradient | null;
+  elements: DesignElement[];
+  /** Seconds the page shows for in present mode and video export. */
+  duration?: number;
+}
+
+/** A whole design: shared name and size, plus one or more pages. */
+export interface DesignFile {
+  name: string;
+  width: number;
+  height: number;
+  pages: DesignPage[];
 }

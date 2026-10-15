@@ -1,4 +1,5 @@
-import type { DesignDoc } from '../design/types';
+import { normalizeFile } from '../design/pages';
+import type { DesignDoc, DesignFile } from '../design/types';
 import type { VideoProject } from '../video/types';
 import { normalizeProject } from '../video/timeline';
 import { uid } from './id';
@@ -20,7 +21,7 @@ export const LEGACY_DESIGN_KEY = 'bee.design.autosave';
 
 export type ProjectKind = 'design' | 'video';
 
-export interface ProjectRecord<T = DesignDoc | VideoProject> {
+export interface ProjectRecord<T = DesignFile | VideoProject> {
   id: string;
   kind: ProjectKind;
   name: string;
@@ -68,8 +69,8 @@ export function putMedia(id: string, blob: Blob): Promise<void> {
   return request(MEDIA, 'readwrite', (s) => s.put(blob, id));
 }
 
-export function saveDesignProject(id: string, doc: DesignDoc, thumbnail?: string): Promise<void> {
-  const rec: ProjectRecord<DesignDoc> = { id, kind: 'design', name: doc.name, updatedAt: Date.now(), thumbnail, data: doc };
+export function saveDesignProject(id: string, file: DesignFile, thumbnail?: string): Promise<void> {
+  const rec: ProjectRecord<DesignFile> = { id, kind: 'design', name: file.name, updatedAt: Date.now(), thumbnail, data: file };
   return request(PROJECTS, 'readwrite', (s) => s.put(rec, id));
 }
 
@@ -101,7 +102,7 @@ async function migrateLegacy() {
     const raw = localStorage.getItem(LEGACY_DESIGN_KEY);
     if (raw) {
       const doc = JSON.parse(raw) as DesignDoc;
-      if (Array.isArray(doc?.elements) && doc.elements.length > 0) await saveDesignProject(newProjectId(), doc);
+      if (Array.isArray(doc?.elements) && doc.elements.length > 0) await saveDesignProject(newProjectId(), normalizeFile(doc));
       localStorage.removeItem(LEGACY_DESIGN_KEY);
     }
   } catch {
@@ -119,8 +120,9 @@ async function migrateLegacy() {
 
 function describe(rec: ProjectRecord): string {
   if (rec.kind === 'design') {
-    const d = rec.data as DesignDoc;
-    return `Design · ${d.width}×${d.height}`;
+    const d = normalizeFile(rec.data as DesignFile | DesignDoc);
+    const pages = d.pages.length > 1 ? ` · ${d.pages.length} pages` : '';
+    return `Design · ${d.width}×${d.height}${pages}`;
   }
   const v = rec.data as VideoProject;
   return `Video · ${v.clips.length} clip${v.clips.length === 1 ? '' : 's'}`;
@@ -136,9 +138,10 @@ export async function listProjects(): Promise<ProjectSummary[]> {
     .map((r) => ({ id: r.id, kind: r.kind, name: r.name, updatedAt: r.updatedAt, thumbnail: r.thumbnail, detail: describe(r) }));
 }
 
-export async function loadDesignProject(id: string): Promise<DesignDoc | null> {
-  const rec = await request<ProjectRecord<DesignDoc> | undefined>(PROJECTS, 'readonly', (s) => s.get(id));
-  return rec?.kind === 'design' ? rec.data : null;
+export async function loadDesignProject(id: string): Promise<DesignFile | null> {
+  // Projects saved before multi-page support hold a single-page DesignDoc.
+  const rec = await request<ProjectRecord<DesignFile | DesignDoc> | undefined>(PROJECTS, 'readonly', (s) => s.get(id));
+  return rec?.kind === 'design' ? normalizeFile(rec.data) : null;
 }
 
 /** Load a video project, recreating media URLs. Assets whose file is missing are dropped. */

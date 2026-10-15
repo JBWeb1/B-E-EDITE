@@ -377,3 +377,29 @@ export function scriptToCaptions(script: string, duration: number, start = 0): C
   }
   return out;
 }
+
+/** 0..1 volume multiplier for an audio clip's fades, `local` seconds after it starts. */
+export function audioFade(a: { in: number; out: number; fadeIn?: number; fadeOut?: number }, local: number): number {
+  const len = a.out - a.in;
+  let g = 1;
+  if (a.fadeIn && a.fadeIn > 0) g = Math.min(g, local / a.fadeIn);
+  if (a.fadeOut && a.fadeOut > 0) g = Math.min(g, (len - local) / a.fadeOut);
+  return Math.max(0, Math.min(1, g));
+}
+
+export interface ExportOptions {
+  fps: 30 | 60;
+  /** Video bits per second. */
+  bitrate: number;
+}
+
+export const EXPORT_QUALITIES = [
+  { label: 'Small file', bitrate: 3_000_000 },
+  { label: 'Standard', bitrate: 8_000_000 },
+  { label: 'High quality', bitrate: 16_000_000 },
+];
+
+/** Rough size of an export, in megabytes, for showing before the user starts. */
+export function estimateSizeMB(seconds: number, opts: ExportOptions, audioBitrate = 128_000): number {
+  return ((opts.bitrate + audioBitrate) * seconds) / 8 / 1_000_000;
+}

@@ -13,12 +13,20 @@ npm run build      # production build in dist/
 
 ## Features
 
+### ✨ Look & feel
+- Clean dark interface with an icon set, gradient accents, and smooth hover/focus states
+- Tidy top bar: every export option lives in one **Download** menu
+- Works on phones: panels stack, and tapping the open tab again folds the side panel away
+
 ### 📁 My projects
 - Every design and video is saved automatically in your browser (IndexedDB) and listed on the home screen with a preview
 - Open, search and delete projects; video media files are stored with the project
 
 ### 🎨 Design editor (Canva-style)
 - Canvas sizes for Instagram post/story, YouTube thumbnail, presentation, Facebook cover, A4 poster
+- **Multiple pages** (great for presentations and carousels): add, duplicate, reorder and delete pages from the page strip
+- **Present mode**: full-screen slideshow with arrow-key navigation
+- **Animations**: per-element entrances (fade, rise, pop, slide, wipe) or "Animate this page"; download the design as an **animated video**
 - 7 templates with previews (social, video, print, business), filterable by category
 - **Magic resize**: switch canvas size and the layout scales to fit
 - Text (heading / subheading / body / outlined / shadow), 10 shapes (rectangle, circle, triangle, star, line, heart, arrow, speech bubble, hexagon, diamond), emoji stickers, and image uploads
@@ -30,12 +38,13 @@ npm run build      # production build in dist/
 - Double-click text to edit it in place
 - Fonts, size, bold/italic, alignment, colors, line height, letter spacing, borders, corner radius, transparency
 - Text effects: shadow and outline
+- **Background remover** for photos with a plain background (white, green screen, studio wall), with a strength slider and Restore
 - Photo editing: **crop** (Original, 1:1, 4:5, 3:2, 16:9, 9:16 with zoom and position), flip, filter presets, brightness/contrast/saturation/blur/B&W
 - One-click swatches of colors already used in the design
 - Solid or **gradient** backgrounds
 - Layers panel, bring forward/back, lock, duplicate
 - Undo/redo, copy/paste, paste or drag-and-drop images
-- Export PNG/JPG at 0.5×, 1× or 2×, or a print-ready **PDF**; save/open editable `.bee.json` project files
+- Export PNG/JPG at 0.5×, 1× or 2×, a print-ready multi-page **PDF**, or an animated video; save/open editable `.bee.json` project files
 - First-time tips and a keyboard shortcuts panel (press **?**)
 
 ### 🎬 Video editor (CapCut-style)
@@ -53,10 +62,10 @@ npm run build      # production build in dist/
 - Emoji stickers
 - **Captions**: type a script and it becomes timed captions, or import/export `.srt` subtitle files (`.vtt` import too)
 - **Magnetic snapping**: dragged items snap to the playhead, clip edges and other items (hold **Alt** to turn off)
-- Music track with its own trim and volume controls and **waveforms**; overlapping audio and text stack into rows
+- Music track with its own trim, volume and **fade in/out** controls and **waveforms**; overlapping audio and text stack into rows
 - **Voice-over recording** from the microphone while the video plays
 - Undo/redo, keyboard shortcuts (Space, S, Del, ←/→)
-- Export to WebM (MP4 on Safari) with mixed audio
+- Export to WebM (MP4 on Safari) with mixed audio; choose quality (small / standard / high) and 30 or 60 fps, with a file-size estimate
 
 ## Project layout
 
@@ -80,16 +89,17 @@ Easier to use
 - [ ] Grouping
 - [x] Right-click context menus
 - [x] Template gallery with thumbnails and categories
-- [ ] Mobile/touch-friendly layout
+- [x] Phone-friendly layout
 
 Design
 - [x] Text effects (shadow, outline, letter spacing)
 - [ ] Google Fonts picker, curved text
 - [x] Image filters and flip
 - [x] Image crop
-- [ ] Background remover
+- [x] Background remover (plain backgrounds)
+- [ ] AI background remover for busy backgrounds
 - [x] PDF export
-- [ ] Multiple pages
+- [x] Multiple pages, present mode, animations
 - [x] Quick reuse of colors already in the design
 - [ ] Brand kit (saved colors, fonts, logos)
 - [x] Gradient backgrounds

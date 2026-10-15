@@ -88,6 +88,9 @@ export interface AudioClip {
   in: number;
   out: number;
   volume: number;
+  /** Seconds to fade the sound in at the start / out at the end. */
+  fadeIn?: number;
+  fadeOut?: number;
 }
 
 export interface VideoProject {

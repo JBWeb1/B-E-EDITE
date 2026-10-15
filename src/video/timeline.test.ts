@@ -19,6 +19,8 @@ import {
   NEUTRAL_FILTERS,
   activeAt,
   assignLanes,
+  audioFade,
+  estimateSizeMB,
   computePeaks,
   createOverlay,
   motionTransform,
@@ -250,5 +252,20 @@ over two rows
     expect(lines[1].end).toBeCloseTo(10);
     expect(lines[0].end).toBeLessThan(lines[1].end - lines[1].start);
     expect(scriptToCaptions('One. Two! Three?', 6).map((c) => c.text)).toEqual(['One.', 'Two!', 'Three?']);
+  });
+});
+
+describe('audio fades and export size', () => {
+  it('ramps volume in and out', () => {
+    const a = { in: 0, out: 10, fadeIn: 2, fadeOut: 4 };
+    expect(audioFade(a, 0)).toBe(0);
+    expect(audioFade(a, 1)).toBeCloseTo(0.5);
+    expect(audioFade(a, 5)).toBe(1);
+    expect(audioFade(a, 8)).toBeCloseTo(0.5);
+    expect(audioFade({ in: 0, out: 10 }, 0)).toBe(1);
+  });
+
+  it('estimates file size from bitrate and length', () => {
+    expect(estimateSizeMB(10, { fps: 30, bitrate: 8_000_000 }, 0)).toBe(10);
   });
 });

@@ -1,5 +1,6 @@
 import {
   activeAt,
+  audioFade,
   clipDuration,
   computePeaks,
   cssFilter,
@@ -11,6 +12,7 @@ import {
   textsAt,
   transitionAt,
 } from './timeline';
+import type { ExportOptions } from './timeline';
 import type { Clip, MediaAsset, OverlayClip, TextOverlay, VideoProject } from './types';
 
 /** Seconds of drift allowed between the clock and a playing media element before re-seeking. */
@@ -222,7 +224,7 @@ export class VideoEngine {
       if (!el) continue;
       const local = this.time - clip.start;
       if (local >= 0 && local < clip.out - clip.in) {
-        this.setVolume(el, clip.volume);
+        this.setVolume(el, clip.volume * audioFade(clip, local));
         this.align(el, clip.in + local);
       } else if (!el.paused) {
         el.pause();
@@ -442,7 +444,7 @@ export class VideoEngine {
   }
 
   /** Record the whole project in real time. Resolves with a WebM (or MP4 on Safari) blob. */
-  async record(onProgress?: (fraction: number) => void): Promise<Blob> {
+  async record(onProgress?: (fraction: number) => void, opts: ExportOptions = { fps: 30, bitrate: 8_000_000 }): Promise<Blob> {
     if (!this.project || this.duration <= 0) throw new Error('Nothing to export yet');
     this.pause();
     this.ensureAudio();
@@ -450,13 +452,13 @@ export class VideoEngine {
     const dest = audioCtx.createMediaStreamDestination();
     this.master!.connect(dest);
     const stream = new MediaStream([
-      ...this.canvas.captureStream(30).getVideoTracks(),
+      ...this.canvas.captureStream(opts.fps).getVideoTracks(),
       ...dest.stream.getAudioTracks(),
     ]);
     const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((m) =>
       MediaRecorder.isTypeSupported(m),
     );
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: opts.bitrate });
     const chunks: Blob[] = [];
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
 

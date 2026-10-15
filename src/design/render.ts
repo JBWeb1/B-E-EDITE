@@ -1,7 +1,10 @@
 import { cssFilter } from '../lib/filters';
 import { makePdf } from '../lib/pdf';
+import { animationAt, animationOrder } from './animate';
+import type { AnimFrame } from './animate';
 import { center, cropRect, gradientLine, wrapText } from './model';
-import type { DesignDoc, DesignElement, ShapeElement, TextElement } from './types';
+import { pageDuration, pageView } from './pages';
+import type { DesignDoc, DesignElement, DesignFile, ShapeElement, TextElement } from './types';
 
 /** Cache of decoded images keyed by src. Calls `onLoad` when a new image finishes loading. */
 export class ImageCache {
@@ -146,13 +149,23 @@ function shapePath(ctx: CanvasRenderingContext2D, el: ShapeElement) {
   }
 }
 
-function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: ImageCache) {
+function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: ImageCache, anim?: AnimFrame, page?: { width: number; height: number }) {
+  if (anim && anim.alpha <= 0) return;
   ctx.save();
-  ctx.globalAlpha = el.opacity;
+  ctx.globalAlpha = el.opacity * (anim?.alpha ?? 1);
   const c = center(el);
+  if (anim && page) ctx.translate(anim.dx * page.width, anim.dy * page.height);
   ctx.translate(c.x, c.y);
   ctx.rotate((el.rotation * Math.PI) / 180);
+  if (anim && anim.scale !== 1) ctx.scale(anim.scale, anim.scale);
   ctx.translate(-c.x, -c.y);
+  if (anim && anim.reveal < 1) {
+    ctx.beginPath();
+    // Pad so strokes and shadows at the edges are not cut off once fully revealed.
+    const pad = Math.max(el.width, el.height);
+    ctx.rect(el.x - pad, el.y - pad, (el.width + pad * 2) * anim.reveal, el.height + pad * 2);
+    ctx.clip();
+  }
 
   if (el.type === 'shape') {
     shapePath(ctx, el);
@@ -210,8 +223,11 @@ function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: I
   ctx.restore();
 }
 
-/** Draw the whole design (no editor overlays) in doc coordinates. */
-export function renderDesign(ctx: CanvasRenderingContext2D, doc: DesignDoc, images: ImageCache, skipId?: string) {
+/**
+ * Draw the whole design (no editor overlays) in doc coordinates. Pass `time`
+ * (seconds since the page appeared) to play element entrance animations.
+ */
+export function renderDesign(ctx: CanvasRenderingContext2D, doc: DesignDoc, images: ImageCache, skipId?: string, time?: number) {
   if (doc.gradient) {
     const [a, b] = gradientLine(doc.width, doc.height, doc.gradient.angle);
     const g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
@@ -222,9 +238,12 @@ export function renderDesign(ctx: CanvasRenderingContext2D, doc: DesignDoc, imag
     ctx.fillStyle = doc.background;
   }
   ctx.fillRect(0, 0, doc.width, doc.height);
-  for (const el of doc.elements) {
-    if (el.id !== skipId) drawElement(ctx, el, images);
-  }
+  const order = time === undefined ? null : animationOrder(doc.elements);
+  doc.elements.forEach((el, i) => {
+    if (el.id === skipId) return;
+    const anim = order && order[i] >= 0 ? animationAt(el.animation, order[i], time!) : undefined;
+    drawElement(ctx, el, images, anim, doc);
+  });
 }
 
 /** Render the design to an image blob at the given scale. Waits for images to decode. */
@@ -260,9 +279,68 @@ export function designThumbnail(doc: DesignDoc, maxSize = 240, images?: ImageCac
   return url;
 }
 
-/** Render the design as a one-page PDF (the page is a high-quality JPEG of the design). */
-export async function exportPdf(doc: DesignDoc, scale = 2): Promise<Blob> {
-  const jpeg = await exportDesign(doc, 'image/jpeg', scale);
-  const bytes = new Uint8Array(await jpeg.arrayBuffer());
-  return makePdf([{ jpeg: bytes, width: Math.round(doc.width * scale), height: Math.round(doc.height * scale), pageWidth: doc.width * 0.75, pageHeight: doc.height * 0.75 }]);
+/** Render every page of a design as a multi-page PDF (each page is a high-quality JPEG). */
+export async function exportPdf(file: DesignFile, scale = 2): Promise<Blob> {
+  const pages = [];
+  for (let i = 0; i < file.pages.length; i++) {
+    const jpeg = await exportDesign(pageView(file, i), 'image/jpeg', scale);
+    pages.push({
+      jpeg: new Uint8Array(await jpeg.arrayBuffer()),
+      width: Math.round(file.width * scale),
+      height: Math.round(file.height * scale),
+      pageWidth: file.width * 0.75,
+      pageHeight: file.height * 0.75,
+    });
+  }
+  return makePdf(pages);
+}
+
+/**
+ * Play every page with its animations and record it as a video (WebM, or MP4
+ * on Safari). Runs in real time: a 3-page design with 4s pages takes 12s.
+ */
+export async function exportDesignVideo(file: DesignFile, onProgress?: (fraction: number) => void): Promise<Blob> {
+  const images = new ImageCache(() => {});
+  await images.preload(file.pages.flatMap((p) => p.elements.flatMap((e) => (e.type === 'image' ? [e.src] : []))));
+  // Keep the video a sensible size: at most 1920px on the long side, even dimensions.
+  const scale = Math.min(1, 1920 / Math.max(file.width, file.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round((file.width * scale) / 2) * 2;
+  canvas.height = Math.round((file.height * scale) / 2) * 2;
+  const ctx = canvas.getContext('2d')!;
+  const stream = canvas.captureStream(30);
+  const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m));
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8_000_000 });
+  const chunks: Blob[] = [];
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+
+  const durations = file.pages.map(pageDuration);
+  const total = durations.reduce((a, b) => a + b, 0);
+  const draw = (t: number) => {
+    let page = 0;
+    let local = t;
+    while (page < durations.length - 1 && local >= durations[page]) local -= durations[page++];
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    renderDesign(ctx, pageView(file, page), images, undefined, local);
+  };
+
+  draw(0);
+  recorder.start(250);
+  const started = performance.now();
+  await new Promise<void>((resolve) => {
+    const tick = () => {
+      const t = (performance.now() - started) / 1000;
+      draw(Math.min(t, total - 0.001));
+      onProgress?.(Math.min(1, t / total));
+      if (t >= total) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await new Promise<void>((resolve) => {
+    recorder.onstop = () => resolve();
+    recorder.stop();
+  });
+  stream.getTracks().forEach((t) => t.stop());
+  return new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
 }

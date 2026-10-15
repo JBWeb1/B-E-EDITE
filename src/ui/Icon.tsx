@@ -1,0 +1,74 @@
+/** Small stroke icon set (24×24 grid), drawn with the current text color. */
+const PATHS = {
+  home: ['M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z'],
+  undo: ['M9 14 4 9l5-5', 'M4 9h10.5a5.5 5.5 0 0 1 0 11H11'],
+  redo: ['m15 14 5-5-5-5', 'M20 9H9.5a5.5 5.5 0 0 0 0 11H13'],
+  download: ['M12 3v12', 'm7 10 5 5 5-5', 'M5 21h14'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  minus: ['M5 12h14'],
+  text: ['M4 7V4h16v3', 'M9 20h6', 'M12 4v16'],
+  shapes: ['M8.3 10a.7.7 0 0 1-.6-1.1l3.7-6a.7.7 0 0 1 1.2 0l3.7 6a.7.7 0 0 1-.6 1.1z', 'M3 14h7v7H3z', 'M21 17.5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z'],
+  upload: ['M12 13v8', 'm8 17 4-4 4 4', 'M20 16.6A5 5 0 0 0 18 7h-1.3A8 8 0 1 0 4 15.3'],
+  layout: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M3 9h18', 'M9 21V9'],
+  droplet: ['M12 2.7s7 7.3 7 12.3a7 7 0 0 1-14 0c0-5 7-12.3 7-12.3z'],
+  film: ['M4 2h16a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z', 'M7 2v20', 'M17 2v20', 'M2 12h20', 'M2 7h5', 'M2 17h5', 'M17 17h5', 'M17 7h5'],
+  scissors: ['M9 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0z', 'M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0z', 'M20 4 8.1 15.9', 'M14.5 14.5 20 20', 'M8.1 8.1 12 12'],
+  copy: ['M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z', 'M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2'],
+  trash: ['M3 6h18', 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'],
+  help: ['M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z', 'M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3', 'M12 17h.01'],
+  present: ['M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M8 21h8', 'M12 17v4', 'M10 7l5 3-5 3z'],
+  chevronDown: ['m6 9 6 6 6-6'],
+  chevronLeft: ['m15 18-6-6 6-6'],
+  chevronRight: ['m9 18 6-6-6-6'],
+  layers: ['m12 2 10 5-10 5L2 7z', 'm2 17 10 5 10-5', 'm2 12 10 5 10-5'],
+  sparkles: ['M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z', 'M19 17v4', 'M17 19h4'],
+  music: ['M9 18V5l12-2v13', 'M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0z', 'M21 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z'],
+  mic: ['M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z', 'M19 10v2a7 7 0 0 1-14 0v-2', 'M12 19v3'],
+  x: ['M18 6 6 18', 'm6 6 12 12'],
+  check: ['M20 6 9 17l-5-5'],
+  image: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M11 9a2 2 0 1 1-4 0 2 2 0 0 1 4 0z', 'm21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'],
+  skipBack: ['M19 20 9 12l10-8z', 'M5 19V5'],
+  file: ['M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z', 'M14 2v6h6'],
+  zoomIn: ['M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0z', 'm21 21-4.3-4.3', 'M11 8v6', 'M8 11h6'],
+  search: ['M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0z', 'm21 21-4.3-4.3'],
+  keyboard: ['M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M6 8h.01', 'M10 8h.01', 'M14 8h.01', 'M18 8h.01', 'M8 12h8', 'M7 16h10'],
+  wand: ['m21.6 3.6-1.2-1.2a1.2 1.2 0 0 0-1.7 0L2.4 18.6a1.2 1.2 0 0 0 0 1.7l1.2 1.2a1.2 1.2 0 0 0 1.7 0L21.6 5.4a1.2 1.2 0 0 0 0-1.8', 'm14 7 3 3', 'M5 6v4', 'M19 14v4', 'M10 2v2', 'M7 8H3', 'M21 16h-4'],
+  panel: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M9 3v18'],
+  folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z'],
+  pip: ['M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M13 12h6v5h-6z'],
+  sticker: ['M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5z', 'M15 3v4a2 2 0 0 0 2 2h4', 'M8 13h.01', 'M16 13h.01', 'M10 16s.8 1 2 1 2-1 2-1'],
+} as const;
+
+export type IconName = keyof typeof PATHS | 'play' | 'pause';
+
+export function Icon({ name, size = 18, className }: { name: IconName; size?: number; className?: string }) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: '0 0 24 24',
+    className: `icon ${className ?? ''}`,
+    'aria-hidden': true,
+  } as const;
+  if (name === 'play') {
+    return (
+      <svg {...common} fill="currentColor">
+        <path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" />
+      </svg>
+    );
+  }
+  if (name === 'pause') {
+    return (
+      <svg {...common} fill="currentColor">
+        <rect x="6" y="4" width="4" height="16" rx="1" />
+        <rect x="14" y="4" width="4" height="16" rx="1" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      {PATHS[name].map((d) => (
+        <path key={d} d={d} />
+      ))}
+    </svg>
+  );
+}
