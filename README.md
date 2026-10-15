@@ -4,6 +4,15 @@
 
 An easy, browser-based creative editor that combines a **Canva-style design editor** and a **CapCut-style video editor**. Everything runs locally in the browser, with no server, no sign-up, and nothing to install.
 
+## Run it on your computer (double-click)
+
+1. Download the project: on GitHub click **Code → Download ZIP**, then unzip it.
+2. Double-click **`start-windows.bat`** (Windows) or **`start-mac-linux.command`** (Mac/Linux).
+3. The first time, it asks you to install [Node.js](https://nodejs.org/) (LTS) if you don't have it, then sets itself up.
+4. Your browser opens B-E Motion. Keep the small black window open while you use it.
+
+On a Mac, if it says the file is from an unidentified developer: right-click the file → **Open** → **Open**.
+
 ## Install it on your phone or computer
 
 B-E Motion is a **Progressive Web App**: open it in a browser once and install it like a normal app.
