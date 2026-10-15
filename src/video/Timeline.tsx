@@ -3,6 +3,8 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import { formatTime } from '../lib/download';
 import { Icon } from '../ui/Icon';
 import type { IconName } from '../ui/Icon';
+import { hasKeys, keyTimes } from './anim';
+import type { Keyframes } from './anim';
 import {
   assignLanes,
   clipDuration,
@@ -10,10 +12,12 @@ import {
   EFFECTS,
   layoutClips,
   moveItem,
+  overlayTracks,
   PEAKS_PER_SECOND,
   projectDuration,
   snapCandidates,
   snapTime,
+  trackOf,
   trimEnd,
   trimStart,
 } from './timeline';
@@ -57,11 +61,12 @@ type Drag =
   | { kind: 'trim-clip'; edge: 'start' | 'end'; clip: Clip; startX: number }
   | { kind: 'move-range'; key: RangeKey; item: RangeItem; startX: number; cands: number[] }
   | { kind: 'resize-range'; key: RangeKey; item: RangeItem; startX: number; cands: number[] }
-  | { kind: 'move-free'; key: FreeKey; item: FreeItem; startX: number; cands: number[] }
+  | { kind: 'move-free'; key: FreeKey; item: FreeItem; startX: number; startY: number; cands: number[] }
   | { kind: 'trim-free'; key: FreeKey; edge: 'start' | 'end'; item: FreeItem; startX: number; cands: number[] }
   | { kind: 'scrub' };
 
 const effectLabel = (type: EffectItem['type']) => EFFECTS.find((e) => e.type === type)?.label ?? type;
+const textLabel = (o: TextOverlay) => (o.shape ? `◆ ${o.shape}` : o.template ? `▣ ${o.text.split('\n')[0]}` : `T ${o.text}`);
 
 export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBegin, onChange, onCommit, onTransitionClick }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
@@ -77,7 +82,7 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
   const textLanes = assignLanes(project.texts, (o) => o.start, (o) => o.start + o.duration);
   const effectLanes = assignLanes(project.effects, (o) => o.start, (o) => o.start + o.duration);
   const audioLanes = assignLanes(project.audio, (a) => a.start, (a) => a.start + a.out - a.in);
-  const overlayLanes = assignLanes(project.overlays, (a) => a.start, (a) => a.start + a.out - a.in);
+  const videoTracks = overlayTracks(project.overlays);
   const laneHeight = (lanes: number[]) => (Math.max(0, ...lanes) + 1) * LANE + 4;
   /** Screen x (inside the timeline) of a time. */
   const xOf = (t: number) => HEAD_W + t * pps;
@@ -153,7 +158,15 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
       case 'move-free': {
         const r = snapRange(Math.max(0, d.item.start + dt), d.item.out - d.item.in, d.cands, e.altKey);
         setSnapAt(r.at);
-        updateFree(d.key, { ...d.item, start: Math.max(0, r.start) });
+        if (d.key === 'overlays') {
+          // Drag up or down to move a layer to another video track (up = higher track).
+          const o = d.item as OverlayClip;
+          const shift = Math.round(-(e.clientY - d.startY) / (LANE + 8));
+          const track = Math.max(2, Math.min(Math.max(...videoTracks, 2) + 1, trackOf(o) + shift));
+          updateFree(d.key, { ...o, start: Math.max(0, r.start), track });
+        } else {
+          updateFree(d.key, { ...d.item, start: Math.max(0, r.start) });
+        }
         break;
       }
       case 'trim-free': {
@@ -210,6 +223,25 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
     );
   };
 
+  /** Keyframe diamonds on the selected item (click one to jump the playhead to it). */
+  const diamonds = (id: string, keys: Keyframes | undefined, start: number, offset = 0) =>
+    selection?.id === id && hasKeys(keys)
+      ? keyTimes(keys).map((t) => (
+          <button
+            key={t}
+            className="kf-diamond"
+            style={{ left: t * pps + offset }}
+            title={`Keyframe at ${formatTime(start + t)}`}
+            aria-label="Keyframe"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSeek(start + t);
+            }}
+          />
+        ))
+      : null;
+
   // Ruler tick spacing that stays readable at any zoom.
   const step = [0.5, 1, 2, 5, 10, 15, 30, 60].find((s) => s * pps >= 70) ?? 120;
   const ticks = Array.from({ length: Math.ceil((width - HEAD_W) / pps / step) + 1 }, (_, i) => i * step);
@@ -224,9 +256,8 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
           style={{ left: xOf(o.start), width: o.duration * pps, top: 2 + lanes[i] * LANE, height: LANE - 4, bottom: 'auto' }}
           onPointerDown={(e) => begin(e, { kind: 'move-range', key, item: o, startX: e.clientX, cands: cands(o.id) }, { kind, id: o.id })}
         >
-          <span className="item-label">
-            {kind === 'text' ? <>T {(o as TextOverlay).text}</> : <>✦ {effectLabel((o as EffectItem).type)}</>}
-          </span>
+          <span className="item-label">{kind === 'text' ? textLabel(o as TextOverlay) : <>✦ {effectLabel((o as EffectItem).type)}</>}</span>
+          {kind === 'text' && diamonds(o.id, (o as TextOverlay).keys, o.start)}
           <span
             className="edge end"
             onPointerDown={(e) => begin(e, { kind: 'resize-range', key, item: o, startX: e.clientX, cands: cands(o.id) }, { kind, id: o.id })}
@@ -237,7 +268,7 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
   );
 
   const freeTrack = (key: FreeKey, items: FreeItem[], lanes: number[], kind: 'audio' | 'overlay', icon: IconName, label: string, toggleKey: keyof TrackState) => (
-    <div className={`track ${kind}-track ${tracks[toggleKey] ? 'track-off' : ''}`} style={{ height: laneHeight(lanes) }}>
+    <div key={label} className={`track ${kind}-track ${tracks[toggleKey] ? 'track-off' : ''}`} style={{ height: laneHeight(lanes) }}>
       {head(icon, label, toggleKey, kind === 'audio' ? 'mute' : 'eye')}
       {items.map((a, i) => {
         const asset = assetOf(a.assetId);
@@ -254,7 +285,7 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
               bottom: 'auto',
               backgroundImage: kind === 'overlay' && asset?.thumbnail ? `url(${asset.thumbnail})` : undefined,
             }}
-            onPointerDown={(e) => begin(e, { kind: 'move-free', key, item: a, startX: e.clientX, cands: cands(a.id) }, select)}
+            onPointerDown={(e) => begin(e, { kind: 'move-free', key, item: a, startX: e.clientX, startY: e.clientY, cands: cands(a.id) }, select)}
           >
             <span
               className="edge start"
@@ -264,8 +295,11 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
             />
             {kind === 'audio' && <Waveform peaks={asset?.peaks} from={a.in} to={a.out} />}
             <span className="item-label">
-              {kind === 'audio' ? '♪' : '⧉'} {asset?.name}
+              {kind === 'audio' ? '♪' : '⧉'} {(a as OverlayClip).chroma ? '🟩 ' : ''}
+              {(a as OverlayClip).reverse ? '⟲ ' : ''}
+              {asset?.name}
             </span>
+            {diamonds(a.id, a.keys, a.start)}
             <span
               className="edge end"
               onPointerDown={(e) =>
@@ -304,7 +338,11 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
 
         {project.effects.length > 0 && rangeTrack('effects', project.effects, effectLanes, 'effect', 'sparkles', 'Effects', 'effectsHidden')}
         {rangeTrack('texts', project.texts, textLanes, 'text', 'text', 'Text', 'textHidden')}
-        {project.overlays.length > 0 && freeTrack('overlays', project.overlays, overlayLanes, 'overlay', 'pip', 'Overlay', 'overlayHidden')}
+        {[...videoTracks].reverse().map((n) => {
+          const items = project.overlays.filter((o) => trackOf(o) === n);
+          const lanes = assignLanes(items, (a) => a.start, (a) => a.start + a.out - a.in);
+          return freeTrack('overlays', items, lanes, 'overlay', 'pip', `V${n}`, 'overlayHidden');
+        })}
 
         <div className={`track main-track ${tracks.mainMuted ? 'muted' : ''}`}>
           {head('film', 'Main', 'mainMuted', 'mute')}
@@ -332,12 +370,16 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
                 <span className="clip-meta">
                   <span className="clip-name">
                     {clip.speed !== 1 && <b>{clip.speed}× </b>}
+                    {clip.reverse && <b>⟲ </b>}
+                    {clip.ramp && clip.ramp !== 'none' && <b>⤳ </b>}
+                    {clip.chroma && <b>🟩 </b>}
                     {clip.motion && clip.motion !== 'none' && <b>⤢ </b>}
                     {clip.mirror && <b>⇋ </b>}
                     {asset?.name}
                   </span>
                   <span className="clip-len">{clipDuration(clip).toFixed(1)}s</span>
                 </span>
+                {diamonds(clip.id, clip.keys, start)}
                 <span
                   className="edge end"
                   onPointerDown={(e) =>

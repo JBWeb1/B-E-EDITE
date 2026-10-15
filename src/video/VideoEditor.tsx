@@ -14,9 +14,34 @@ import { lookAttributes, lookStyle, useLook } from '../lib/look';
 import { Icon } from '../ui/Icon';
 import type { IconName } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
-import { overlayBox, probeMedia, VideoEngine } from './engine';
+import { keyAt, setKey, transformAt } from './anim';
+import type { Keyframes } from './anim';
+import { loadFont, probeMedia, VideoEngine } from './engine';
+import { ExportDialog } from './ExportDialog';
+import type { VideoExportChoice } from './ExportDialog';
+import { mixSoundtrack } from './export';
+import { LOOKS } from './grade';
+import type { ColorGrade, LookId } from './grade';
+import {
+  AudioTools,
+  BlendField,
+  ColorSection,
+  CropSection,
+  GreenScreenSection,
+  KeyframeTools,
+  loadSavedLooks,
+  MaskSection,
+  saveLooks,
+  Section,
+  SpeedRampSection,
+  TransformFields,
+} from './inspector';
+import type { SavedLook } from './inspector';
+import { DEFAULT_KEY } from './keyer';
+import { clipFrame, hitFrame, overlayFrame } from './layers';
 import { SFX_CATEGORIES, SOUND_EFFECTS, soundEffectFile } from './sfx';
 import type { SoundEffect } from './sfx';
+import { ANIMATORS, FONTS, SHAPE_ANIMS, SHAPES, TEMPLATES, textBounds, WORD_MODES } from './textfx';
 import { HEAD_W, Timeline } from './Timeline';
 import type { Selection } from './Timeline';
 import {
@@ -28,17 +53,19 @@ import {
   createOverlay,
   createProject,
   createTextOverlay,
+  EFFECT_GROUPS,
   EFFECTS,
-  estimateSizeMB,
-  EXPORT_QUALITIES,
   FILTER_PRESETS,
+  freeTrack,
   insertClipAt,
+  isParticleEffect,
   layoutClips,
   locate,
   maxTransition,
   MOTIONS,
   NEUTRAL_FILTERS,
   normalizeProject,
+  overlayTracks,
   parseSubtitles,
   projectDuration,
   scriptToCaptions,
@@ -46,23 +73,30 @@ import {
   splitTexts,
   textsAt,
   toSrt,
+  trackOf,
   TRANSITIONS,
   trimAtPlayhead,
 } from './timeline';
-import type { ExportOptions } from './timeline';
 import type {
   AudioClip,
   Clip,
   ClipFilters,
   EffectItem,
   EffectType,
+  LayerProps,
   MediaAsset,
   Motion,
   OverlayClip,
+  ShapeAnim,
+  ShapeKind,
+  TextAnimator,
   TextOverlay,
+  TitleTemplate,
   Transition,
   TransitionType,
   VideoProject,
+  Watermark,
+  WordMode,
 } from './types';
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -102,11 +136,20 @@ const TEXT_PRESETS: { label: string; patch: Partial<TextOverlay>; preview: React
   },
 ];
 
+/** Caption styles for "Create captions": classic boxes or TikTok-style word by word. */
+const CAPTION_STYLES: { label: string; patch: Partial<TextOverlay> }[] = [
+  { label: 'Classic box', patch: { y: 0.86, size: 0.055, bold: true, background: '#111827', animation: 'none', words: 'off' } },
+  { label: 'TikTok highlight', patch: { y: 0.72, size: 0.075, bold: true, background: null, stroke: '#000000', color: '#ffffff', accent: '#facc15', animation: 'none', words: 'highlight', font: 'Impact, "Arial Black", sans-serif' } },
+  { label: 'One word at a time', patch: { y: 0.62, size: 0.12, bold: true, background: null, stroke: '#000000', color: '#ffffff', accent: '#ffffff', animation: 'none', words: 'single', font: 'Impact, "Arial Black", sans-serif' } },
+  { label: 'Build up', patch: { y: 0.75, size: 0.07, bold: true, background: null, stroke: '#000000', color: '#ffffff', accent: '#4ade80', animation: 'none', words: 'build' } },
+];
+
 const SHORTCUTS: Shortcut[] = [
   { keys: ['Space'], action: 'Play / pause' },
   { keys: ['Ctrl', 'B'], action: 'Split at the playhead (also S)' },
   { keys: ['Q'], action: 'Delete the part of the clip before the playhead' },
   { keys: ['W'], action: 'Delete the part of the clip after the playhead' },
+  { keys: ['K'], action: 'Add / remove a position keyframe on the selected item' },
   { keys: ['Del'], action: 'Delete selected' },
   { keys: ['←', '→'], action: 'Step one frame (Shift: 1 second)' },
   { keys: ['Home'], action: 'Go to start' },
@@ -124,21 +167,26 @@ const STICKERS = [
 
 const DEFAULT_TRANSITION: Transition = { type: 'fade', duration: 0.5 };
 
-type LibraryTab = 'media' | 'audio' | 'text' | 'stickers' | 'effects' | 'transitions' | 'filters';
+type LibraryTab = 'media' | 'audio' | 'text' | 'titles' | 'effects' | 'transitions' | 'filters';
 const LIBRARY_TABS: { id: LibraryTab; label: string; icon: IconName }[] = [
   { id: 'media', label: 'Media', icon: 'film' },
   { id: 'audio', label: 'Audio', icon: 'music' },
   { id: 'text', label: 'Text', icon: 'text' },
-  { id: 'stickers', label: 'Stickers', icon: 'smile' },
+  { id: 'titles', label: 'Titles', icon: 'layers' },
   { id: 'effects', label: 'Effects', icon: 'sparkles' },
   { id: 'transitions', label: 'Transitions', icon: 'shuffle' },
   { id: 'filters', label: 'Filters', icon: 'droplet' },
 ];
 
+/** Files the media library shows (fonts, watermark logos and built-in sounds live elsewhere). */
+const isLibraryAsset = (a: MediaAsset) => !a.sfxId && !a.logo && a.kind !== 'font';
+
 function isTyping(target: EventTarget | null) {
   const el = target as HTMLElement | null;
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
 }
+
+const clampLocal = (t: number, len: number) => Math.max(0, Math.min(len, t));
 
 export function VideoEditor({
   onExit,
@@ -161,26 +209,30 @@ export function VideoEditor({
   const [pps, setPps] = useState(60);
   const [tab, setTab] = useState<LibraryTab>('media');
   const [importing, setImporting] = useState(0);
-  const [exportProgress, setExportProgress] = useState<number | null>(null);
+  const [progress, setProgress] = useState<{ label: string; value: number } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [showLook, setShowLook] = useState(false);
   const look = useLook();
   const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
   const [exportDialog, setExportDialog] = useState(false);
-  const [exportOpts, setExportOpts] = useState<ExportOptions>({ fps: 30, bitrate: 8_000_000 });
   const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error' | null>(null);
   const [script, setScript] = useState('');
+  const [captionStyle, setCaptionStyle] = useState(0);
   const [previewing, setPreviewing] = useState<string | null>(null);
   const [transitionPick, setTransitionPick] = useState<TransitionType>('fade');
+  /** Waiting for a click on the player to pick a green-screen colour for this item. */
+  const [picking, setPicking] = useState<{ kind: 'clip' | 'overlay'; id: string } | null>(null);
+  const [myLooks, setMyLooks] = useState<SavedLook[]>(loadSavedLooks);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<VideoEngine | null>(null);
   const previewAudio = useRef<HTMLAudioElement | null>(null);
-  const textDragRef = useRef<{ id: string; kind: 'text' | 'overlay'; offX: number; offY: number } | null>(null);
+  const dragRef = useRef<{ id: string; kind: 'text' | 'overlay' | 'clip'; offX: number; offY: number; local: number } | null>(null);
 
   const duration = projectDuration(project);
+  const placed = layoutClips(project.clips);
   const selectedClip = selection?.kind === 'clip' ? project.clips.find((c) => c.id === selection.id) : undefined;
   const selectedText = selection?.kind === 'text' ? project.texts.find((t) => t.id === selection.id) : undefined;
   const selectedAudio = selection?.kind === 'audio' ? project.audio.find((a) => a.id === selection.id) : undefined;
@@ -189,6 +241,8 @@ export function VideoEditor({
   const currentClip = locate(project.clips, time);
   /** The clip edits apply to: the selected clip, or else the one under the playhead. */
   const targetClip = selectedClip ?? currentClip?.clip;
+  const assetOf = (id: string) => project.assets.find((a) => a.id === id);
+  const fonts = project.assets.filter((a) => a.kind === 'font' && a.family);
 
   useEffect(() => {
     const engine = new VideoEngine(canvasRef.current!);
@@ -204,6 +258,18 @@ export function VideoEditor({
   useEffect(() => {
     engineRef.current?.setProject(project);
   }, [project]);
+
+  // Uploaded fonts: load them once so text can use them (and redraw when ready).
+  const loadedFonts = useRef(new Set<string>());
+  useEffect(() => {
+    for (const a of project.assets) {
+      if (a.kind !== 'font' || !a.family || loadedFonts.current.has(a.id)) continue;
+      loadedFonts.current.add(a.id);
+      void loadFont(a.family, a.url)
+        .then(() => engineRef.current?.draw())
+        .catch(() => {});
+    }
+  }, [project.assets]);
 
   // Autosave the project (media files are stored once, at import time).
   useEffect(() => {
@@ -251,6 +317,23 @@ export function VideoEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [set],
   );
+
+  const uploadFont = async (file: File) => {
+    const family = file.name.replace(/\.[^.]+$/, '').replace(/[^\w -]/g, '').trim() || 'My font';
+    const id = uid('asset');
+    const url = URL.createObjectURL(file);
+    try {
+      await loadFont(family, url);
+    } catch {
+      alert('That font file could not be read. Use a .ttf, .otf, .woff or .woff2 file.');
+      return;
+    }
+    loadedFonts.current.add(id);
+    await putMedia(id, file).catch(() => setSaveState('error'));
+    const asset: MediaAsset = { id, kind: 'font', name: file.name, url, duration: 0, family };
+    set((p) => ({ ...p, assets: [...p.assets, asset] }));
+    if (selectedText) updateText({ font: `"${family}", Inter, sans-serif` });
+  };
 
   // ---------- Sound effects ----------
 
@@ -349,8 +432,9 @@ export function VideoEditor({
       set((p) => ({ ...p, texts: [...p.texts, copy] }));
       setSelection({ kind: 'text', id: copy.id });
     } else if (selectedOverlay) {
-      const copy = { ...selectedOverlay, id: uid('overlay'), start: selectedOverlay.start + selectedOverlay.out - selectedOverlay.in };
-      set((p) => ({ ...p, overlays: [...p.overlays, copy] }));
+      const start = selectedOverlay.start + selectedOverlay.out - selectedOverlay.in;
+      const copy = { ...selectedOverlay, id: uid('overlay'), start };
+      set((p) => ({ ...p, overlays: [...p.overlays, { ...copy, track: freeTrack(p.overlays, start, start + copy.out - copy.in) }] }));
       setSelection({ kind: 'overlay', id: copy.id });
     } else if (selectedEffect) {
       const copy = { ...selectedEffect, id: uid('fx'), start: selectedEffect.start + selectedEffect.duration };
@@ -381,9 +465,8 @@ export function VideoEditor({
 
   const addCaptions = (captions: { start: number; end: number; text: string }[]) => {
     if (captions.length === 0) return;
-    const items = captions.map((c) =>
-      createTextOverlay(c.start, { text: c.text, duration: c.end - c.start, y: 0.86, size: 0.055, bold: true, background: '#111827', animation: 'none' }),
-    );
+    const style = CAPTION_STYLES[captionStyle].patch;
+    const items = captions.map((c) => createTextOverlay(c.start, { ...style, text: c.text, duration: c.end - c.start }));
     set((p) => ({ ...p, texts: [...p.texts, ...items] }));
   };
 
@@ -393,7 +476,7 @@ export function VideoEditor({
     addCaptions(captions);
   };
 
-  const exportCaptions = () => downloadBlob(new Blob([toSrt(project.texts)], { type: 'text/plain' }), `${project.name || 'captions'}.srt`);
+  const exportCaptions = () => downloadBlob(new Blob([toSrt(project.texts.filter((t) => !t.shape && !t.template))], { type: 'text/plain' }), `${project.name || 'captions'}.srt`);
 
   const setTransition = (clipId: string, transition: Transition | undefined) =>
     set((p) => ({ ...p, clips: p.clips.map((c) => (c.id === clipId ? { ...c, transition } : c)) }));
@@ -407,12 +490,12 @@ export function VideoEditor({
   /** From the Transitions tab: apply to the selected clip, or the cut nearest the playhead. */
   const applyTransitionHere = (type: TransitionType) => {
     setTransitionPick(type);
-    const placed = layoutClips(project.clips).slice(1);
-    if (placed.length === 0) return;
+    const cuts = placed.slice(1);
+    if (cuts.length === 0) return;
     const pick =
       selectedClip && project.clips.indexOf(selectedClip) > 0
         ? selectedClip
-        : placed.reduce((best, p) => (Math.abs(p.start - time) < Math.abs(best.start - time) ? p : best)).clip;
+        : cuts.reduce((best, p) => (Math.abs(p.start - time) < Math.abs(best.start - time) ? p : best)).clip;
     setTransition(pick.id, { type, duration: Math.min(pick.transition?.duration ?? 0.5, maxTransition(pick)) });
     setSelection({ kind: 'clip', id: pick.id });
   };
@@ -426,8 +509,32 @@ export function VideoEditor({
   const applyFilter = (filters: ClipFilters, all = false) =>
     set((p) => ({ ...p, clips: p.clips.map((c) => (all || c.id === targetClip?.id ? { ...c, filters } : c)) }));
 
+  const applyLookPreset = (lookId: LookId) =>
+    targetClip && updateClip({ grade: { ...(targetClip.grade ?? { shadows: { hue: 0, amount: 0, luma: 0 }, midtones: { hue: 0, amount: 0, luma: 0 }, highlights: { hue: 0, amount: 0, luma: 0 }, lookAmount: 1, look: 'none' }), look: lookId } }, false, targetClip.id);
+
+  const saveCurrentLook = () => {
+    if (!targetClip) return;
+    const name = prompt('Name this look', `My look ${myLooks.length + 1}`);
+    if (!name) return;
+    const next = [...myLooks.filter((l) => l.name !== name), { name, filters: targetClip.filters, grade: targetClip.grade ?? null }];
+    setMyLooks(next);
+    saveLooks(next);
+  };
+
+  const applySavedLook = (l: SavedLook, all = false) =>
+    set((p) => ({
+      ...p,
+      clips: p.clips.map((c) => (all || c.id === targetClip?.id ? { ...c, filters: l.filters ?? c.filters, grade: l.grade ?? null } : c)),
+    }));
+
+  const deleteSavedLook = (name: string) => {
+    const next = myLooks.filter((l) => l.name !== name);
+    setMyLooks(next);
+    saveLooks(next);
+  };
+
   const addEffect = (type: EffectType) => {
-    const fx = createEffect(type, now(), { duration: type === 'flash' ? 1 : 3 });
+    const fx = createEffect(type, now(), { duration: type === 'flash' ? 1 : isParticleEffect(type) ? 4 : 3 });
     set((p) => ({ ...p, effects: [...p.effects, fx] }));
     setSelection({ kind: 'effect', id: fx.id });
   };
@@ -473,17 +580,52 @@ export function VideoEditor({
   const addToTimeline = (a: MediaAsset) =>
     set((p) => (a.kind === 'audio' ? { ...p, audio: [...p.audio, createAudioClip(a, time)] } : { ...p, clips: [...p.clips, createClip(a)] }));
 
+  /** Put a photo/video on the lowest video track (2+) that has room at the playhead. */
+  const addAsLayer = (a: MediaAsset) => {
+    const o = createOverlay(a, time);
+    set((p) => ({ ...p, overlays: [...p.overlays, { ...o, track: freeTrack(p.overlays, o.start, o.start + o.out - o.in) }] }));
+    setSelection({ kind: 'overlay', id: o.id });
+  };
+
   const toggleFullscreen = () => {
     if (document.fullscreenElement) void document.exitFullscreen();
     else void frameRef.current?.requestFullscreen?.().catch(() => {});
+  };
+
+  // ---------- Local times & keyframes ----------
+
+  const clipStart = (id: string) => placed.find((p) => p.clip.id === id)?.start ?? 0;
+  const clipLocal = (c: Clip) => clampLocal(time - clipStart(c.id), clipDuration(c));
+  const overlayLocal = (o: OverlayClip) => clampLocal(time - o.start, o.out - o.in);
+  const textLocal = (o: TextOverlay) => clampLocal(time - o.start, o.duration);
+
+  /** K: add or remove a position keyframe on the selected item at the playhead. */
+  const togglePositionKey = () => {
+    const item = selectedClip ?? selectedOverlay ?? selectedText;
+    if (!item) return;
+    const local = selectedClip ? clipLocal(selectedClip) : selectedOverlay ? overlayLocal(selectedOverlay) : textLocal(selectedText!);
+    const tr = transformAt(item as LayerProps, local, 1, selectedOverlay ? { x: selectedOverlay.x, y: selectedOverlay.y, scale: selectedOverlay.scale, opacity: selectedOverlay.opacity } : {});
+    const has = keyAt(item.keys?.x, local);
+    const keys: Keyframes = { ...item.keys };
+    if (has) {
+      keys.x = item.keys?.x?.filter((k) => k !== has);
+      keys.y = item.keys?.y?.filter((k) => Math.abs(k.t - local) > 1 / 60);
+    } else {
+      keys.x = setKey(item.keys?.x, local, tr.x);
+      keys.y = setKey(item.keys?.y, local, tr.y);
+    }
+    if (selectedClip) updateClip({ keys });
+    else if (selectedOverlay) updateOverlay({ keys });
+    else updateText({ keys });
   };
 
   // Keyboard shortcuts: one window listener that always calls the latest handler.
   const keyHandler = useRef<(e: KeyboardEvent) => void>();
   {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && exportDialog) {
-        setExportDialog(false);
+      if (e.key === 'Escape' && picking) {
+        setPicking(null);
+        if (engineRef.current) engineRef.current.keyingOff = false;
         return;
       }
       // Off while typing, while a dialog/menu is open (Space during an export would pause
@@ -508,6 +650,8 @@ export function VideoEditor({
         trimPlayhead('before');
       } else if (key === 'w' && !mod) {
         trimPlayhead('after');
+      } else if (key === 'k' && !mod) {
+        togglePositionKey();
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         removeSelected();
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -530,69 +674,145 @@ export function VideoEditor({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Drag text and picture-in-picture overlays directly on the preview.
+  // ---------- Player: pick colours, select and drag things ----------
+
   const previewPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     return { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height };
   };
+
+  const startPick = (target: { kind: 'clip' | 'overlay'; id: string }) => {
+    engineRef.current?.pause();
+    setPicking(target);
+  };
+
   const onPreviewDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const p = previewPoint(e);
+    const W = project.width;
+    const H = project.height;
+    if (picking) {
+      const color = engineRef.current?.sampleColor(p.x, p.y) ?? DEFAULT_KEY.color;
+      const fn = (x: LayerProps) => ({ ...x, chroma: { ...(x.chroma ?? DEFAULT_KEY), color } });
+      if (picking.kind === 'clip') set((pr) => ({ ...pr, clips: pr.clips.map((c) => (c.id === picking.id ? (fn(c) as Clip) : c)) }));
+      else set((pr) => ({ ...pr, overlays: pr.overlays.map((o) => (o.id === picking.id ? (fn(o) as OverlayClip) : o)) }));
+      setPicking(null);
+      return;
+    }
     const ctx = e.currentTarget.getContext('2d')!;
-    const hit = [...textsAt(project.texts, time)].reverse().find((o) => {
-      const size = o.size * project.height;
-      ctx.font = `${o.bold ? 'bold ' : ''}${size}px Inter, system-ui, sans-serif`;
-      const lines = o.text.split('\n');
-      const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) / project.width;
-      const h = (lines.length * size * 1.2) / project.height;
-      return Math.abs(p.x - o.x) <= w / 2 + 0.02 && Math.abs(p.y - o.y) <= h / 2 + 0.02;
+    const px = p.x * W;
+    const py = p.y * H;
+    const textHit = [...textsAt(project.texts, time)].reverse().find((o) => {
+      const local = time - o.start;
+      const tr = transformAt(o, local, 1, { x: o.x, y: o.y });
+      const b = textBounds(ctx, o, W, H);
+      const anchorLeft = o.template?.startsWith('lower-third');
+      const cx = anchorLeft ? tr.x + (b.w * tr.scale) / 2 : tr.x;
+      return hitFrame({ cx: cx * W, cy: tr.y * H, w: b.w * W * tr.scale, h: b.h * H * tr.scale, rotation: tr.rotation, opacity: 1 }, px, py, 12);
     });
-    const overlayHit = hit
-      ? undefined
-      : [...project.overlays].reverse().find((o) => {
-          if (time < o.start || time >= o.start + o.out - o.in) return false;
-          const asset = project.assets.find((a) => a.id === o.assetId);
-          if (!asset) return false;
-          const b = overlayBox(o, asset, project.width, project.height);
-          const px = p.x * project.width;
-          const py = p.y * project.height;
-          return px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
-        });
-    const target = hit ?? overlayHit;
-    if (!target) return;
-    const kind = hit ? 'text' : 'overlay';
-    setSelection({ kind, id: target.id });
-    textDragRef.current = { id: target.id, kind, offX: p.x - target.x, offY: p.y - target.y };
+    let hit: { kind: 'text' | 'overlay' | 'clip'; id: string; x: number; y: number; local: number } | null = null;
+    if (textHit) {
+      const local = time - textHit.start;
+      const tr = transformAt(textHit, local, 1, { x: textHit.x, y: textHit.y });
+      hit = { kind: 'text', id: textHit.id, x: tr.x, y: tr.y, local };
+    } else {
+      const layers = [...project.overlays].filter((o) => time >= o.start && time < o.start + o.out - o.in).sort((a, b) => trackOf(b) - trackOf(a));
+      const layer = layers.find((o) => {
+        const asset = assetOf(o.assetId);
+        return asset && hitFrame(overlayFrame(o, asset, W, H, time - o.start), px, py);
+      });
+      if (layer) {
+        const f = overlayFrame(layer, assetOf(layer.assetId)!, W, H, time - layer.start);
+        hit = { kind: 'overlay', id: layer.id, x: f.cx / W, y: f.cy / H, local: time - layer.start };
+      } else if (currentClip && selection?.kind === 'clip' && selection.id === currentClip.clip.id) {
+        // The main clip moves only once it is selected, so clicks don't nudge it by accident.
+        const asset = assetOf(currentClip.clip.assetId);
+        const local = time - currentClip.start;
+        const f = asset && clipFrame(currentClip.clip, asset, W, H, local, local / clipDuration(currentClip.clip));
+        if (f && hitFrame(f, px, py)) {
+          const tr = transformAt(currentClip.clip, local);
+          hit = { kind: 'clip', id: currentClip.clip.id, x: tr.x, y: tr.y, local };
+        }
+      }
+    }
+    if (!hit) return;
+    setSelection({ kind: hit.kind, id: hit.id });
+    dragRef.current = { id: hit.id, kind: hit.kind, offX: p.x - hit.x, offY: p.y - hit.y, local: hit.local };
     mark();
     e.currentTarget.setPointerCapture(e.pointerId);
   };
+
   const onPreviewMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    const d = textDragRef.current;
+    const d = dragRef.current;
     if (!d) return;
     const p = previewPoint(e);
-    const clamp = (v: number) => Math.max(0, Math.min(1, v));
-    const move = <T extends { id: string; x: number; y: number }>(o: T): T => (o.id === d.id ? { ...o, x: clamp(p.x - d.offX), y: clamp(p.y - d.offY) } : o);
-    setTransient((proj) => (d.kind === 'text' ? { ...proj, texts: proj.texts.map(move) } : { ...proj, overlays: proj.overlays.map(move) }));
+    const x = p.x - d.offX;
+    const y = p.y - d.offY;
+    // Animated position: dragging sets a keyframe at the playhead instead of moving every frame.
+    const move = <T extends { id: string; keys?: Keyframes; x?: number; y?: number }>(o: T): T => {
+      if (o.id !== d.id) return o;
+      if (o.keys?.x?.length || o.keys?.y?.length) {
+        return { ...o, keys: { ...o.keys, x: setKey(o.keys?.x, d.local, x), y: setKey(o.keys?.y, d.local, y) } };
+      }
+      return { ...o, x, y };
+    };
+    setTransient((proj) =>
+      d.kind === 'text' ? { ...proj, texts: proj.texts.map(move) } : d.kind === 'overlay' ? { ...proj, overlays: proj.overlays.map(move) } : { ...proj, clips: proj.clips.map(move) },
+    );
   };
 
-  const doExport = async () => {
+  // ---------- Export ----------
+
+  const doExport = async (c: VideoExportChoice) => {
     const engine = engineRef.current;
     if (!engine || duration <= 0) return;
     setExportDialog(false);
     setSelection(null);
-    setExportProgress(0);
+    setProgress({ label: 'Exporting video…', value: 0 });
     try {
-      const blob = await engine.record(setExportProgress, exportOpts);
+      const blob = await engine.record((v) => setProgress({ label: 'Exporting video…', value: v }), c);
       downloadBlob(blob, `${project.name || 'video'}.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Export failed');
     } finally {
-      setExportProgress(null);
+      setProgress(null);
+    }
+  };
+
+  const saveFrame = async (type: 'image/png' | 'image/jpeg', width: number, height: number) => {
+    const blob = await engineRef.current?.captureFrame(type, width, height);
+    if (blob) downloadBlob(blob, `${project.name || 'frame'} ${formatTime(time).replace(/[:.]/g, '-')}.${type === 'image/png' ? 'png' : 'jpg'}`);
+  };
+
+  const saveAudio = async () => {
+    setExportDialog(false);
+    setProgress({ label: 'Saving audio…', value: 0 });
+    try {
+      const blob = await mixSoundtrack(project, (v) => setProgress({ label: 'Saving audio…', value: v }));
+      downloadBlob(blob, `${project.name || 'audio'}.wav`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not save the audio');
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  const setWatermark = (w: Watermark | null, live = false) => (live ? setTransient : set)((p) => ({ ...p, watermark: w }));
+
+  const uploadLogo = async (file: File) => {
+    try {
+      const asset = await addAssetFile(file, { logo: true });
+      set((p) => ({
+        ...p,
+        assets: [...p.assets, asset],
+        watermark: { ...(p.watermark ?? { text: '', position: 'bottom-right', opacity: 0.8, size: 0.16 }), assetId: asset.id },
+      }));
+    } catch {
+      alert('That image could not be used as a logo.');
     }
   };
 
   /** Picture used for the filter previews: the clip under the playhead, else any visual. */
-  const previewThumb =
-    project.assets.find((a) => a.id === targetClip?.assetId)?.thumbnail ?? project.assets.find((a) => a.thumbnail)?.thumbnail;
+  const previewThumb = assetOf(targetClip?.assetId ?? '')?.thumbnail ?? project.assets.find((a) => a.thumbnail && isLibraryAsset(a))?.thumbnail;
 
   const library: Record<LibraryTab, ReactNode> = {
     media: (
@@ -611,40 +831,30 @@ export function VideoEditor({
           />
         </label>
         {importing > 0 && <p className="hint">Importing {importing} file(s)…</p>}
-        {project.assets.filter((a) => !a.sfxId).length === 0 && (
+        {project.assets.filter(isLibraryAsset).length === 0 && (
           <div className="library-empty">
             <Icon name="film" size={28} />
             <p>Drop videos, photos or music here, or click Import.</p>
           </div>
         )}
         <div className="asset-grid">
-          {project.assets
-            .filter((a) => !a.sfxId)
-            .map((a) => (
-              <div key={a.id} className="card asset">
-                {a.thumbnail ? <img src={a.thumbnail} alt="" /> : <div className="asset-icon">♪</div>}
-                <span className="asset-dur">{a.kind === 'image' ? 'Photo' : formatTime(a.duration)}</span>
-                <span className="asset-name" title={a.name}>{a.name}</span>
-                <button className="asset-add" title="Add to timeline" onClick={() => addToTimeline(a)} aria-label="Add to timeline">
-                  <Icon name="plus" size={16} />
+          {project.assets.filter(isLibraryAsset).map((a) => (
+            <div key={a.id} className="card asset">
+              {a.thumbnail ? <img src={a.thumbnail} alt="" /> : <div className="asset-icon">♪</div>}
+              <span className="asset-dur">{a.kind === 'image' ? 'Photo' : formatTime(a.duration)}</span>
+              <span className="asset-name" title={a.name}>{a.name}</span>
+              <button className="asset-add" title="Add to the main track" onClick={() => addToTimeline(a)} aria-label="Add to timeline">
+                <Icon name="plus" size={16} />
+              </button>
+              {a.kind !== 'audio' && (
+                <button className="asset-add asset-overlay" title="Add on a video track above, at the playhead (picture-in-picture, green screen, layers)" onClick={() => addAsLayer(a)} aria-label="Add as picture-in-picture">
+                  <Icon name="pip" size={15} />
                 </button>
-                {a.kind !== 'audio' && (
-                  <button
-                    className="asset-add asset-overlay"
-                    title="Add on top as picture-in-picture, at the playhead"
-                    onClick={() => {
-                      const o = createOverlay(a, time);
-                      set((p) => ({ ...p, overlays: [...p.overlays, o] }));
-                      setSelection({ kind: 'overlay', id: o.id });
-                    }}
-                    aria-label="Add as picture-in-picture"
-                  >
-                    <Icon name="pip" size={15} />
-                  </button>
-                )}
-              </div>
-            ))}
+              )}
+            </div>
+          ))}
         </div>
+        {project.assets.some(isLibraryAsset) && <p className="hint">＋ adds to the main track. ⧉ puts it on a video track above (layers, green screen, picture-in-picture).</p>}
       </>
     ),
     audio: (
@@ -726,7 +936,28 @@ export function VideoEditor({
             </button>
           ))}
         </div>
+        <h4>Animated text</h4>
+        <div className="grid3 animator-grid">
+          {ANIMATORS.filter((a) => a.value !== 'none').map((a) => (
+            <button
+              key={a.value}
+              className={`animator-card anim-${a.value}`}
+              aria-label={`Animated text: ${a.label}`}
+              onClick={() => addText({ text: a.label.toUpperCase(), y: 0.5, size: 0.11, animation: 'none', animator: a.value, duration: 3 })}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
         <h4>Captions</h4>
+        <label className="field">
+          <span>Caption style</span>
+          <select value={captionStyle} onChange={(e) => setCaptionStyle(Number(e.target.value))} aria-label="Caption style">
+            {CAPTION_STYLES.map((s, i) => (
+              <option key={s.label} value={i}>{s.label}</option>
+            ))}
+          </select>
+        </label>
         <label className="field">
           <span>Captions from a script</span>
           <textarea
@@ -762,11 +993,63 @@ export function VideoEditor({
           </label>
           <button onClick={exportCaptions} disabled={project.texts.length === 0}>Download .srt</button>
         </div>
+        <h4>Fonts</h4>
+        <label className="button block">
+          <Icon name="upload" /> Upload a font
+          <input
+            type="file"
+            accept=".ttf,.otf,.woff,.woff2,font/*"
+            hidden
+            aria-label="Upload font"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              if (f) void uploadFont(f);
+            }}
+          />
+        </label>
+        {fonts.length > 0 && (
+          <div className="font-list">
+            {fonts.map((f) => (
+              <button key={f.id} style={{ fontFamily: `"${f.family}"` }} onClick={() => addText({ text: f.family ?? 'Text', font: `"${f.family}", Inter, sans-serif`, y: 0.5, size: 0.1 })}>
+                {f.family}
+              </button>
+            ))}
+          </div>
+        )}
       </>
     ),
-    stickers: (
+    titles: (
       <>
-        <p className="hint">Added at the playhead. Drag them on the player.</p>
+        <p className="hint">Animated titles: just type your words and pick colours. Added at the playhead.</p>
+        <div className="template-grid">
+          {TEMPLATES.map((t) => (
+            <button
+              key={t.value}
+              className={`template-tile tpl-${t.value}`}
+              aria-label={`Title: ${t.label}`}
+              onClick={() => addText({ bold: true, color: '#ffffff', animation: 'none', accent: look.accent ?? undefined, ...t.patch, template: t.value })}
+            >
+              <span className="tpl-art" />
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </div>
+        <h4>Shapes</h4>
+        <div className="shape-grid">
+          {SHAPES.map((s) => (
+            <button
+              key={s.value}
+              className={`shape-tile shp-${s.value}`}
+              aria-label={`Shape: ${s.label}`}
+              title={s.label}
+              onClick={() => addText({ text: '', shape: s.value, size: s.value === 'line' || s.value === 'arrow' ? 0.08 : 0.2, color: '#ffffff', animation: 'none', shapeAnim: 'draw', duration: 3 })}
+            >
+              <ShapeIcon shape={s.value} />
+            </button>
+          ))}
+        </div>
+        <h4>Stickers</h4>
         <div className="sticker-grid">
           {STICKERS.map((em) => (
             <button key={em} onClick={() => addText({ text: em, y: 0.3, x: 0.5, size: 0.16, bold: false, animation: 'pop' })} title="Add sticker">
@@ -779,14 +1062,19 @@ export function VideoEditor({
     effects: (
       <>
         <p className="hint">Added at the playhead on the Effects track. Drag its edges to change how long it lasts.</p>
-        <div className="fx-grid">
-          {EFFECTS.map((fx) => (
-            <button key={fx.type} className="fx-card" onClick={() => addEffect(fx.type)} title={fx.hint}>
-              <span className={`fx-thumb fx-${fx.type}`} style={previewThumb ? { backgroundImage: `url(${previewThumb})` } : undefined} />
-              <span className="fx-label">{fx.label}</span>
-            </button>
-          ))}
-        </div>
+        {EFFECT_GROUPS.map((g) => (
+          <div key={g}>
+            <h4>{g}</h4>
+            <div className="fx-grid">
+              {EFFECTS.filter((fx) => fx.group === g).map((fx) => (
+                <button key={fx.type} className="fx-card" onClick={() => addEffect(fx.type)} title={fx.hint}>
+                  <span className={`fx-thumb fx-${fx.type}`} style={previewThumb ? { backgroundImage: `url(${previewThumb})` } : undefined} />
+                  <span className="fx-label">{fx.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </>
     ),
     transitions: (
@@ -823,6 +1111,34 @@ export function VideoEditor({
             </button>
           ))}
         </div>
+        <h4>Cinematic looks</h4>
+        <div className="grid3 looks-grid">
+          {LOOKS.filter((l) => l.id !== 'none').map((l) => (
+            <button key={l.id} className={targetClip?.grade?.look === l.id ? 'active' : ''} disabled={!targetClip} onClick={() => applyLookPreset(l.id)}>
+              {l.label}
+            </button>
+          ))}
+        </div>
+        <h4>My looks</h4>
+        {myLooks.length === 0 && <p className="hint">Make a clip look just right (filters, looks, colour wheels), then save it here to reuse with one click.</p>}
+        <div className="my-looks">
+          {myLooks.map((l) => (
+            <div key={l.name} className="my-look">
+              <button onClick={() => applySavedLook(l)} disabled={!targetClip} title="Apply to this clip">
+                {l.name}
+              </button>
+              <button className="icon-btn" onClick={() => applySavedLook(l, true)} title="Apply to every clip" aria-label={`Apply ${l.name} to all clips`}>
+                <Icon name="copy" size={14} />
+              </button>
+              <button className="icon-btn" onClick={() => deleteSavedLook(l.name)} title="Delete this look" aria-label={`Delete ${l.name}`}>
+                <Icon name="trash" size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button className="block" disabled={!targetClip} onClick={saveCurrentLook}>
+          Save this clip's look
+        </button>
         <button className="block" disabled={!targetClip} onClick={() => targetClip && applyFilter(targetClip.filters, true)}>
           Apply this clip's filter to all clips
         </button>
@@ -830,9 +1146,11 @@ export function VideoEditor({
     ),
   };
 
+  const overlayAsset = selectedOverlay && assetOf(selectedOverlay.assetId);
+
   return (
     <div
-      className="editor video cc"
+      className={`editor video cc ${picking ? 'picking' : ''}`}
       style={lookStyle(look)}
       {...lookAttributes(look)}
       onDragOver={(e) => e.preventDefault()}
@@ -875,7 +1193,7 @@ export function VideoEditor({
           <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="help" />
           </button>
-          <button className="primary" onClick={() => setExportDialog(true)} disabled={duration <= 0 || exportProgress !== null}>
+          <button className="primary" onClick={() => setExportDialog(true)} disabled={duration <= 0 || progress !== null}>
             <Icon name="download" /> <span className="label">Export</span>
           </button>
         </div>
@@ -907,6 +1225,7 @@ export function VideoEditor({
         <main className="preview-area cc-player">
           <div className="cc-panel-head">
             <span>Player</span>
+            {picking && <span className="pick-hint">Click the background colour to remove · Esc to cancel</span>}
           </div>
           <div className="preview-frame" ref={frameRef}>
             <canvas
@@ -915,16 +1234,16 @@ export function VideoEditor({
               style={{ aspectRatio: `${project.width} / ${project.height}` }}
               onPointerDown={onPreviewDown}
               onPointerMove={onPreviewMove}
-              onPointerUp={() => (textDragRef.current = null)}
+              onPointerUp={() => (dragRef.current = null)}
             />
-            {project.clips.length === 0 && project.texts.length === 0 && <div className="preview-empty">Import a video or photo to get started</div>}
+            {project.clips.length === 0 && project.texts.length === 0 && project.overlays.length === 0 && <div className="preview-empty">Import a video or photo to get started</div>}
             <FirstRunTips
               storageKey="bee.tips.video"
               title="Welcome to the video editor 🎬"
               tips={[
                 'Import clips: they line up on the timeline automatically.',
                 'Drag clips to reorder, drag their edges to trim, and press Ctrl+B to split.',
-                'Browse Audio, Text, Effects, Transitions and Filters at the top left. Press ? for shortcuts.',
+                'Select anything and press ◆ in Details to animate it with keyframes. Press ? for shortcuts.',
               ]}
             />
           </div>
@@ -951,6 +1270,11 @@ export function VideoEditor({
                 title="Aspect ratio"
                 aria-label="Aspect ratio"
               >
+                {!ASPECTS.some((a) => a.width === project.width && a.height === project.height) && (
+                  <option value={`${project.width}x${project.height}`}>
+                    {project.width}×{project.height}
+                  </option>
+                )}
                 {ASPECTS.map((a) => (
                   <option key={a.label} value={`${a.width}x${a.height}`}>{a.label}</option>
                 ))}
@@ -969,61 +1293,31 @@ export function VideoEditor({
           <div className="cc-details-body">
             {selectedClip ? (
               <ClipInspector
+                key={selectedClip.id}
                 clip={selectedClip}
-                assetName={project.assets.find((a) => a.id === selectedClip.assetId)?.name ?? ''}
-                isVideo={project.assets.find((a) => a.id === selectedClip.assetId)?.kind === 'video'}
+                asset={assetOf(selectedClip.assetId)}
                 isFirst={project.clips[0]?.id === selectedClip.id}
+                local={clipLocal(selectedClip)}
+                picking={picking?.id === selectedClip.id}
                 mark={mark}
                 update={updateClip}
                 updateFilters={updateFilters}
                 applyTransitionToAll={applyTransitionToAll}
+                onSeekLocal={(t) => seek(clipStart(selectedClip.id) + t)}
+                onPick={() => (picking ? setPicking(null) : startPick({ kind: 'clip', id: selectedClip.id }))}
+                onSaveLook={saveCurrentLook}
               />
             ) : selectedText ? (
-              <>
-                <h3>Text</h3>
-                <label className="field">
-                  <span>Content</span>
-                  <textarea rows={3} value={selectedText.text} onFocus={mark} onChange={(e) => updateText({ text: e.target.value }, true)} />
-                </label>
-                <RangeField label="Size" value={selectedText.size} min={0.02} max={0.3} step={0.005} onStart={mark} onChange={(v) => updateText({ size: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
-                <ColorField label="Color" value={selectedText.color} onStart={mark} onChange={(v) => updateText({ color: v }, true)} />
-                <div className="row">
-                  <button className={selectedText.bold ? 'active' : ''} onClick={() => updateText({ bold: !selectedText.bold })}><b>B</b></button>
-                  <button className={selectedText.background ? 'active' : ''} onClick={() => updateText({ background: selectedText.background ? null : '#111827' })}>
-                    Box
-                  </button>
-                  <button className={selectedText.stroke ? 'active' : ''} onClick={() => updateText({ stroke: selectedText.stroke ? null : '#111111' })}>
-                    Outline
-                  </button>
-                  <button className={selectedText.glow ? 'active' : ''} onClick={() => updateText({ glow: selectedText.glow ? null : '#22d3ee' })}>
-                    Neon
-                  </button>
-                </div>
-                {selectedText.background && selectedText.background.startsWith('#') && (
-                  <ColorField label="Box color" value={selectedText.background} onStart={mark} onChange={(v) => updateText({ background: v }, true)} />
-                )}
-                {selectedText.stroke && <ColorField label="Outline color" value={selectedText.stroke} onStart={mark} onChange={(v) => updateText({ stroke: v }, true)} />}
-                {selectedText.glow && <ColorField label="Neon color" value={selectedText.glow} onStart={mark} onChange={(v) => updateText({ glow: v }, true)} />}
-                <label className="field">
-                  <span>Animation</span>
-                  <select value={selectedText.animation} onChange={(e) => updateText({ animation: e.target.value as TextOverlay['animation'] })}>
-                    <option value="none">None</option>
-                    <option value="fade">Fade</option>
-                    <option value="pop">Pop</option>
-                    <option value="slide">Slide up</option>
-                  </select>
-                </label>
-                <h4>Position</h4>
-                <div className="row">
-                  <button onClick={() => updateText({ x: 0.5, y: 0.15 })}>Top</button>
-                  <button onClick={() => updateText({ x: 0.5, y: 0.5 })}>Center</button>
-                  <button onClick={() => updateText({ x: 0.5, y: 0.85 })}>Bottom</button>
-                </div>
-                <div className="grid2">
-                  <NumberField label="Start (s)" value={selectedText.start} min={0} step={0.1} onChange={(v) => updateText({ start: v })} />
-                  <NumberField label="Length (s)" value={selectedText.duration} min={0.2} step={0.1} onChange={(v) => updateText({ duration: v })} />
-                </div>
-              </>
+              <TextInspector
+                key={selectedText.id}
+                text={selectedText}
+                fonts={fonts}
+                local={textLocal(selectedText)}
+                mark={mark}
+                update={updateText}
+                onSeekLocal={(t) => seek(selectedText.start + t)}
+                onUploadFont={(f) => void uploadFont(f)}
+              />
             ) : selectedEffect ? (
               <>
                 <h3>Effect</h3>
@@ -1036,37 +1330,42 @@ export function VideoEditor({
                   </select>
                 </label>
                 <RangeField label="Strength" value={selectedEffect.intensity} min={0.1} max={1} step={0.01} onStart={mark} onChange={(v) => updateEffect({ intensity: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+                {['shake', 'glitch', 'light-leak', 'chromatic', ...EFFECTS.filter((e) => isParticleEffect(e.type)).map((e) => e.type)].includes(selectedEffect.type) && (
+                  <RangeField label="Speed" value={selectedEffect.speed ?? 1} min={0.2} max={3} step={0.05} onStart={mark} onChange={(v) => updateEffect({ speed: v }, true)} format={(v) => `${v.toFixed(2)}×`} />
+                )}
                 <div className="grid2">
                   <NumberField label="Start (s)" value={selectedEffect.start} min={0} step={0.1} onChange={(v) => updateEffect({ start: v })} />
                   <NumberField label="Length (s)" value={selectedEffect.duration} min={0.2} step={0.1} onChange={(v) => updateEffect({ duration: v })} />
                 </div>
               </>
-            ) : selectedOverlay ? (
-              <>
-                <h3>Overlay</h3>
-                <p className="hint">{project.assets.find((a) => a.id === selectedOverlay.assetId)?.name} · drag it on the player to move it.</p>
-                <RangeField label="Size" value={selectedOverlay.scale} min={0.1} max={1} step={0.01} onStart={mark} onChange={(v) => updateOverlay({ scale: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
-                <RangeField label="Opacity" value={selectedOverlay.opacity} min={0.1} max={1} step={0.01} onStart={mark} onChange={(v) => updateOverlay({ opacity: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
-                <RangeField label="Rounded corners" value={selectedOverlay.rounded} min={0} max={0.5} step={0.01} onStart={mark} onChange={(v) => updateOverlay({ rounded: v }, true)} format={(v) => `${Math.round(v * 200)}%`} />
-                {project.assets.find((a) => a.id === selectedOverlay.assetId)?.kind === 'video' && (
-                  <RangeField label="Volume" value={selectedOverlay.volume} min={0} max={2} step={0.05} onStart={mark} onChange={(v) => updateOverlay({ volume: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
-                )}
-                <h4>Position</h4>
-                <div className="grid3">
-                  <button onClick={() => updateOverlay({ x: 0.25, y: 0.28 })}>↖ Top left</button>
-                  <button onClick={() => updateOverlay({ x: 0.5, y: 0.5 })}>Center</button>
-                  <button onClick={() => updateOverlay({ x: 0.75, y: 0.28 })}>↗ Top right</button>
-                  <button onClick={() => updateOverlay({ x: 0.25, y: 0.72 })}>↙ Bottom left</button>
-                  <button onClick={() => updateOverlay({ x: 0.5, y: 0.5, scale: 1 })}>Full frame</button>
-                  <button onClick={() => updateOverlay({ x: 0.75, y: 0.72 })}>↘ Bottom right</button>
-                </div>
-                <NumberField label="Start (s)" value={selectedOverlay.start} min={0} step={0.1} onChange={(v) => updateOverlay({ start: v })} />
-              </>
+            ) : selectedOverlay && overlayAsset ? (
+              <OverlayInspector
+                key={selectedOverlay.id}
+                o={selectedOverlay}
+                asset={overlayAsset}
+                tracks={overlayTracks(project.overlays)}
+                local={overlayLocal(selectedOverlay)}
+                picking={picking?.id === selectedOverlay.id}
+                mark={mark}
+                update={updateOverlay}
+                onSeekLocal={(t) => seek(selectedOverlay.start + t)}
+                onPick={() => (picking ? setPicking(null) : startPick({ kind: 'overlay', id: selectedOverlay.id }))}
+                onTrack={(track) => updateOverlay({ track: track === 'new' ? Math.max(1, ...overlayTracks(project.overlays)) + 1 : track })}
+              />
             ) : selectedAudio ? (
               <>
                 <h3>Audio</h3>
-                <p className="hint">{project.assets.find((a) => a.id === selectedAudio.assetId)?.name}</p>
-                <RangeField label="Volume" value={selectedAudio.volume} min={0} max={2} step={0.05} onStart={mark} onChange={(v) => updateAudio({ volume: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+                <p className="hint">{assetOf(selectedAudio.assetId)?.name}</p>
+                <AudioTools
+                  volume={selectedAudio.volume}
+                  keys={selectedAudio.keys}
+                  local={clampLocal(time - selectedAudio.start, selectedAudio.out - selectedAudio.in)}
+                  denoise={selectedAudio.denoise}
+                  mark={mark}
+                  onVolume={(v, live) => updateAudio({ volume: v }, live)}
+                  onKeys={(keys, live) => updateAudio({ keys }, live)}
+                  onDenoise={(v) => updateAudio({ denoise: v })}
+                />
                 <RangeField label="Fade in" value={selectedAudio.fadeIn ?? 0} min={0} max={Math.min(5, (selectedAudio.out - selectedAudio.in) / 2)} step={0.1} onStart={mark} onChange={(v) => updateAudio({ fadeIn: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
                 <RangeField label="Fade out" value={selectedAudio.fadeOut ?? 0} min={0} max={Math.min(5, (selectedAudio.out - selectedAudio.in) / 2)} step={0.1} onStart={mark} onChange={(v) => updateAudio({ fadeOut: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
                 <NumberField label="Start (s)" value={selectedAudio.start} min={0} step={0.1} onChange={(v) => updateAudio({ start: v })} />
@@ -1137,6 +1436,24 @@ export function VideoEditor({
           >
             <Icon name="mirror" />
           </button>
+          <button
+            className={`icon-btn ${targetClip?.reverse ? 'on' : ''}`}
+            onClick={() => targetClip && updateClip({ reverse: !targetClip.reverse }, false, targetClip.id)}
+            disabled={!targetClip}
+            title="Play the clip backwards"
+            aria-label="Reverse"
+          >
+            <Icon name="undo" />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={togglePositionKey}
+            disabled={!selectedClip && !selectedOverlay && !selectedText}
+            title="Add / remove a position keyframe at the playhead (K)"
+            aria-label="Keyframe"
+          >
+            <Icon name="diamond" />
+          </button>
         </div>
         <div className="cc-tools end">
           <button className="icon-btn" onClick={() => setPps((v) => Math.max(10, Math.round(v / 1.4)))} title="Zoom out" aria-label="Zoom out timeline">
@@ -1170,46 +1487,28 @@ export function VideoEditor({
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
 
       {exportDialog && (
-        <div className="modal-backdrop" data-modal onPointerDown={(e) => e.target === e.currentTarget && setExportDialog(false)}>
-          <div className="modal" role="dialog" aria-label="Export video">
-            <h3>Export video</h3>
-            <p className="hint">
-              {project.width} × {project.height} · {formatTime(duration)}
-            </p>
-            <h4>Quality</h4>
-            <div className="segmented">
-              {EXPORT_QUALITIES.map((q) => (
-                <button key={q.label} className={exportOpts.bitrate === q.bitrate ? 'active' : ''} onClick={() => setExportOpts((o) => ({ ...o, bitrate: q.bitrate }))}>
-                  {q.label}
-                </button>
-              ))}
-            </div>
-            <h4>Frame rate</h4>
-            <div className="segmented">
-              {([30, 60] as const).map((fps) => (
-                <button key={fps} className={exportOpts.fps === fps ? 'active' : ''} onClick={() => setExportOpts((o) => ({ ...o, fps }))}>
-                  {fps} fps{fps === 60 ? ' (smoother)' : ''}
-                </button>
-              ))}
-            </div>
-            <p className="hint">About {estimateSizeMB(duration, exportOpts).toFixed(1)} MB. The video plays through once while it records.</p>
-            <div className="row">
-              <button onClick={() => setExportDialog(false)}>Cancel</button>
-              <button className="primary" onClick={doExport}>Export</button>
-            </div>
-          </div>
-        </div>
+        <ExportDialog
+          project={project}
+          duration={duration}
+          onClose={() => setExportDialog(false)}
+          onExport={(c) => void doExport(c)}
+          onSaveFrame={(type, w, h) => void saveFrame(type, w, h)}
+          onSaveAudio={() => void saveAudio()}
+          onWatermark={setWatermark}
+          onLogo={(f) => void uploadLogo(f)}
+          onAspect={(width, height) => set((p) => ({ ...p, width, height }))}
+        />
       )}
 
-      {exportProgress !== null && (
+      {progress !== null && (
         <div className="modal-backdrop" data-modal>
           <div className="modal">
-            <h3>Exporting video…</h3>
-            <p className="hint">The video plays through once while it is recorded. Keep this tab open.</p>
+            <h3>{progress.label}</h3>
+            <p className="hint">Keep this tab open until it finishes.</p>
             <div className="progress">
-              <div style={{ width: `${Math.round(exportProgress * 100)}%` }} />
+              <div style={{ width: `${Math.round(progress.value * 100)}%` }} />
             </div>
-            <p>{Math.round(exportProgress * 100)}%</p>
+            <p>{Math.round(progress.value * 100)}%</p>
           </div>
         </div>
       )}
@@ -1217,48 +1516,90 @@ export function VideoEditor({
   );
 }
 
-type ClipTab = 'basic' | 'speed' | 'audio' | 'adjust';
+/** Small drawing of a shape for the Shapes grid. */
+function ShapeIcon({ shape }: { shape: ShapeKind }) {
+  const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+  const solid = { fill: 'currentColor' };
+  const shapes: Record<ShapeKind, ReactNode> = {
+    rect: <rect x="3" y="7" width="18" height="11" rx="1.5" {...solid} />,
+    circle: <circle cx="12" cy="12" r="8" {...solid} />,
+    ring: <circle cx="12" cy="12" r="8" {...common} />,
+    line: <path d="M3 12h18" {...common} />,
+    arrow: <path d="M3 12h17M14 6l6 6-6 6" {...common} />,
+    star: <path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z" {...solid} />,
+    heart: <path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" {...solid} />,
+    burst: <path d="M12 2l1.8 4.2L18 4l-1.4 4.4L21 10l-4.2 1.8L18 16l-4.4-1.4L12 19l-1.8-4.4L6 16l1.4-4.2L3 10l4.4-1.6L6 4l4.2 2.2z" {...solid} />,
+    check: <path d="M4 12l5 5L20 6" {...common} />,
+    cross: <path d="M6 6l12 12M18 6L6 18" {...common} />,
+    triangle: <path d="M12 4l9 16H3z" {...solid} />,
+  };
+  return (
+    <svg viewBox="0 0 24 24" width={26} height={26} aria-hidden>
+      {shapes[shape]}
+    </svg>
+  );
+}
+
+type ClipTab = 'basic' | 'animate' | 'cutout' | 'speed' | 'audio' | 'color';
+
+function SubTabs<T extends string>({ tabs, current, onChange }: { tabs: { id: T; label: string }[]; current: T; onChange: (t: T) => void }) {
+  return (
+    <div className="cc-subtabs" role="tablist">
+      {tabs.map((t) => (
+        <button key={t.id} role="tab" aria-selected={current === t.id} className={current === t.id ? 'active' : ''} onClick={() => onChange(t.id)}>
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function ClipInspector({
   clip,
-  assetName,
-  isVideo,
+  asset,
   isFirst,
+  local,
+  picking,
   mark,
   update,
   updateFilters,
   applyTransitionToAll,
+  onSeekLocal,
+  onPick,
+  onSaveLook,
 }: {
   clip: Clip;
-  assetName: string;
-  isVideo: boolean;
+  asset: MediaAsset | undefined;
   isFirst: boolean;
+  local: number;
+  picking: boolean;
   mark: () => void;
   update: (patch: Partial<Clip>, live?: boolean) => void;
   updateFilters: (patch: Partial<ClipFilters>) => void;
   applyTransitionToAll: (t: Transition | undefined) => void;
+  onSeekLocal: (t: number) => void;
+  onPick: () => void;
+  onSaveLook: () => void;
 }) {
   const [tab, setTab] = useState<ClipTab>('basic');
+  const isVideo = asset?.kind === 'video';
   const f = clip.filters;
   const maxFade = Math.min(3, clipDuration(clip) / 2);
   const tabs: { id: ClipTab; label: string }[] = [
     { id: 'basic', label: 'Video' },
+    { id: 'animate', label: 'Animate' },
+    { id: 'cutout', label: 'Cutout' },
     { id: 'speed', label: 'Speed' },
     ...(isVideo ? [{ id: 'audio' as const, label: 'Audio' }] : []),
-    { id: 'adjust', label: 'Adjust' },
+    { id: 'color', label: 'Color' },
   ];
   const current = tabs.some((t) => t.id === tab) ? tab : 'basic';
+  const base = { x: clip.x ?? 0.5, y: clip.y ?? 0.5, scale: clip.scale ?? 1, rotation: clip.rotation ?? 0, opacity: clip.opacity ?? 1 };
   return (
     <>
-      <div className="cc-subtabs" role="tablist">
-        {tabs.map((t) => (
-          <button key={t.id} role="tab" aria-selected={current === t.id} className={current === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <SubTabs tabs={tabs} current={current} onChange={setTab} />
       <p className="hint">
-        {assetName} · {clipDuration(clip).toFixed(2)}s
+        {asset?.name} · {clipDuration(clip).toFixed(2)}s
       </p>
 
       {current === 'basic' && (
@@ -1266,6 +1607,9 @@ function ClipInspector({
           <div className="row">
             <button className={clip.mirror ? 'active' : ''} onClick={() => update({ mirror: !clip.mirror })}>
               <Icon name="mirror" size={16} /> Mirror
+            </button>
+            <button className={clip.reverse ? 'active' : ''} onClick={() => update({ reverse: !clip.reverse })}>
+              <Icon name="undo" size={16} /> Reverse
             </button>
           </div>
           <label className="field">
@@ -1313,6 +1657,30 @@ function ClipInspector({
         </>
       )}
 
+      {current === 'animate' && (
+        <>
+          <TransformFields item={clip} base={base} local={local} mark={mark} onBase={(patch, live) => update(patch, live)} update={update} />
+          <KeyframeTools item={clip} local={local} length={clipDuration(clip)} base={base} mark={mark} onSeekLocal={onSeekLocal} update={update} />
+        </>
+      )}
+
+      {current === 'cutout' && (
+        <>
+          <Section title="Crop" defaultOpen>
+            <CropSection crop={clip.crop} size={{ w: asset?.width ?? 16, h: asset?.height ?? 9 }} mark={mark} update={update} />
+          </Section>
+          <Section title="Green screen" defaultOpen={!!clip.chroma}>
+            <GreenScreenSection layer={clip} picking={picking} mark={mark} update={update} onPick={onPick} />
+          </Section>
+          <Section title="Mask" defaultOpen={!!clip.mask}>
+            <MaskSection layer={clip} local={local} mark={mark} update={update} />
+          </Section>
+          <Section title="Blend mode">
+            <BlendField value={clip.blend} onChange={(blend) => update({ blend })} />
+          </Section>
+        </>
+      )}
+
       {current === 'speed' && (
         <>
           <div className="speed-grid">
@@ -1331,12 +1699,22 @@ function ClipInspector({
             </select>
           </label>
           <p className="hint">Faster makes the clip shorter on the timeline; slower makes it longer.</p>
+          <SpeedRampSection ramp={clip.ramp} reverse={clip.reverse} update={(patch) => update(patch)} />
         </>
       )}
 
       {current === 'audio' && isVideo && (
         <>
-          <RangeField label="Volume" value={clip.volume} min={0} max={2} step={0.05} onStart={mark} onChange={(v) => update({ volume: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+          <AudioTools
+            volume={clip.volume}
+            keys={clip.keys}
+            local={local}
+            denoise={clip.denoise}
+            mark={mark}
+            onVolume={(v, live) => update({ volume: v }, live)}
+            onKeys={(keys, live) => update({ keys }, live)}
+            onDenoise={(v) => update({ denoise: v })}
+          />
           <div className="row">
             <button className={clip.volume === 0 ? 'active' : ''} onClick={() => update({ volume: clip.volume === 0 ? 1 : 0 })}>
               <Icon name={clip.volume === 0 ? 'volumeOff' : 'volume'} size={16} /> {clip.volume === 0 ? 'Unmute clip' : 'Mute clip'}
@@ -1345,19 +1723,333 @@ function ClipInspector({
         </>
       )}
 
-      {current === 'adjust' && (
+      {current === 'color' && (
         <>
-          <h4>Filters</h4>
-          <div className="grid3">
-            {FILTER_PRESETS.map((p) => (
-              <button key={p.label} className={sameFilters(f, p.filters) ? 'active' : ''} onClick={() => update({ filters: p.filters })}>
-                {p.label}
-              </button>
-            ))}
+          <Section title="Filters" defaultOpen>
+            <div className="grid3">
+              {FILTER_PRESETS.map((p) => (
+                <button key={p.label} className={sameFilters(f, p.filters) ? 'active' : ''} onClick={() => update({ filters: p.filters })}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <FilterSliders filters={f} mark={mark} onChange={updateFilters} />
+            <button className="block" onClick={() => update({ filters: NEUTRAL_FILTERS })}>Reset adjustments</button>
+          </Section>
+          <Section title="Colour grading" defaultOpen>
+            <ColorSection grade={clip.grade} mark={mark} onChange={(grade: ColorGrade | null, live) => update({ grade }, live)} />
+          </Section>
+          <button className="block" onClick={onSaveLook}>
+            Save as my look
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
+type OverlayTab = 'layer' | 'animate' | 'cutout' | 'color' | 'audio';
+
+function OverlayInspector({
+  o,
+  asset,
+  tracks,
+  local,
+  picking,
+  mark,
+  update,
+  onSeekLocal,
+  onPick,
+  onTrack,
+}: {
+  o: OverlayClip;
+  asset: MediaAsset;
+  tracks: number[];
+  local: number;
+  picking: boolean;
+  mark: () => void;
+  update: (patch: Partial<OverlayClip>, live?: boolean) => void;
+  onSeekLocal: (t: number) => void;
+  onPick: () => void;
+  onTrack: (t: number | 'new') => void;
+}) {
+  const [tab, setTab] = useState<OverlayTab>('layer');
+  const isVideo = asset.kind === 'video';
+  const tabs: { id: OverlayTab; label: string }[] = [
+    { id: 'layer', label: 'Layer' },
+    { id: 'animate', label: 'Animate' },
+    { id: 'cutout', label: 'Cutout' },
+    { id: 'color', label: 'Color' },
+    ...(isVideo ? [{ id: 'audio' as const, label: 'Audio' }] : []),
+  ];
+  const current = tabs.some((t) => t.id === tab) ? tab : 'layer';
+  const base = { x: o.x, y: o.y, scale: o.scale, rotation: o.rotation ?? 0, opacity: o.opacity };
+  const len = o.out - o.in;
+  return (
+    <>
+      <SubTabs tabs={tabs} current={current} onChange={setTab} />
+      <p className="hint">
+        {asset.name} · track V{trackOf(o)} · drag it on the player to move it.
+      </p>
+      {current === 'layer' && (
+        <>
+          <label className="field">
+            <span>Video track</span>
+            <select value={trackOf(o)} onChange={(e) => onTrack(e.target.value === 'new' ? 'new' : Number(e.target.value))} aria-label="Video track">
+              {tracks.map((t) => (
+                <option key={t} value={t}>V{t}</option>
+              ))}
+              <option value="new">+ New track on top</option>
+            </select>
+          </label>
+          <BlendField value={o.blend} onChange={(blend) => update({ blend })} />
+          <RangeField label="Rounded corners" value={o.rounded} min={0} max={0.5} step={0.01} onStart={mark} onChange={(v) => update({ rounded: v }, true)} format={(v) => `${Math.round(v * 200)}%`} />
+          <div className="row">
+            <button className={o.shadow !== false ? 'active' : ''} onClick={() => update({ shadow: o.shadow === false })}>Shadow</button>
+            <button className={o.reverse ? 'active' : ''} onClick={() => update({ reverse: !o.reverse })}>
+              <Icon name="undo" size={15} /> Reverse
+            </button>
           </div>
-          <h4>Adjust</h4>
-          <FilterSliders filters={f} mark={mark} onChange={updateFilters} />
-          <button className="block" onClick={() => update({ filters: NEUTRAL_FILTERS })}>Reset adjustments</button>
+          <h4>Position</h4>
+          <div className="grid3">
+            <button onClick={() => update({ x: 0.25, y: 0.28 })}>↖ Top left</button>
+            <button onClick={() => update({ x: 0.5, y: 0.5 })}>Center</button>
+            <button onClick={() => update({ x: 0.75, y: 0.28 })}>↗ Top right</button>
+            <button onClick={() => update({ x: 0.25, y: 0.72 })}>↙ Bottom left</button>
+            <button onClick={() => update({ x: 0.5, y: 0.5, scale: 1, rounded: 0 })}>Full frame</button>
+            <button onClick={() => update({ x: 0.75, y: 0.72 })}>↘ Bottom right</button>
+          </div>
+          <NumberField label="Start (s)" value={o.start} min={0} step={0.1} onChange={(v) => update({ start: v })} />
+        </>
+      )}
+      {current === 'animate' && (
+        <>
+          <TransformFields item={o} base={base} local={local} mark={mark} onBase={(patch, live) => update(patch, live)} update={update} sizeRange={[0.05, 1.5]} />
+          <KeyframeTools item={o} local={local} length={len} base={base} mark={mark} onSeekLocal={onSeekLocal} update={update} />
+        </>
+      )}
+      {current === 'cutout' && (
+        <>
+          <Section title="Green screen" defaultOpen>
+            <GreenScreenSection layer={o} picking={picking} mark={mark} update={update} onPick={onPick} />
+          </Section>
+          <Section title="Mask" defaultOpen={!!o.mask}>
+            <MaskSection layer={o} local={local} mark={mark} update={update} />
+          </Section>
+          <Section title="Crop">
+            <CropSection crop={o.crop} size={{ w: asset.width ?? 16, h: asset.height ?? 9 }} mark={mark} update={update} />
+          </Section>
+        </>
+      )}
+      {current === 'color' && (
+        <>
+          <Section title="Filters" defaultOpen>
+            <div className="grid3">
+              {FILTER_PRESETS.map((p) => (
+                <button key={p.label} className={sameFilters(o.filters, p.filters) ? 'active' : ''} onClick={() => update({ filters: p.filters })}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <FilterSliders filters={o.filters ?? NEUTRAL_FILTERS} mark={mark} onChange={(patch) => update({ filters: { ...(o.filters ?? NEUTRAL_FILTERS), ...patch } }, true)} />
+          </Section>
+          <Section title="Colour grading" defaultOpen>
+            <ColorSection grade={o.grade} mark={mark} onChange={(grade, live) => update({ grade }, live)} />
+          </Section>
+        </>
+      )}
+      {current === 'audio' && isVideo && (
+        <AudioTools
+          volume={o.volume}
+          keys={o.keys}
+          local={local}
+          denoise={o.denoise}
+          mark={mark}
+          onVolume={(v, live) => update({ volume: v }, live)}
+          onKeys={(keys, live) => update({ keys }, live)}
+          onDenoise={(v) => update({ denoise: v })}
+        />
+      )}
+    </>
+  );
+}
+
+type TextTab = 'text' | 'style' | 'animate';
+
+function TextInspector({
+  text,
+  fonts,
+  local,
+  mark,
+  update,
+  onSeekLocal,
+  onUploadFont,
+}: {
+  text: TextOverlay;
+  fonts: MediaAsset[];
+  local: number;
+  mark: () => void;
+  update: (patch: Partial<TextOverlay>, live?: boolean) => void;
+  onSeekLocal: (t: number) => void;
+  onUploadFont: (f: File) => void;
+}) {
+  const [tab, setTab] = useState<TextTab>('text');
+  const isShape = !!text.shape;
+  const tabs: { id: TextTab; label: string }[] = [
+    { id: 'text', label: isShape ? 'Shape' : text.template ? 'Title' : 'Text' },
+    { id: 'style', label: 'Style' },
+    { id: 'animate', label: 'Animate' },
+  ];
+  const base = { x: text.x, y: text.y, scale: 1, rotation: text.rotation ?? 0, opacity: 1 };
+  const fontOptions = [...FONTS, ...fonts.map((f) => ({ family: `"${f.family}", Inter, sans-serif`, label: `${f.family} (yours)` }))];
+  return (
+    <>
+      <SubTabs tabs={tabs} current={tab} onChange={setTab} />
+      {tab === 'text' && (
+        <>
+          {!isShape && (
+            <label className="field">
+              <span>{text.template ? 'Words (new line = second line)' : 'Content'}</span>
+              <textarea rows={3} value={text.text} onFocus={mark} onChange={(e) => update({ text: e.target.value }, true)} aria-label="Text content" />
+            </label>
+          )}
+          {text.template && (
+            <label className="field">
+              <span>Title template</span>
+              <select value={text.template} onChange={(e) => update({ template: e.target.value as TitleTemplate })} aria-label="Title template">
+                {TEMPLATES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {isShape && (
+            <>
+              <label className="field">
+                <span>Shape</span>
+                <select value={text.shape} onChange={(e) => update({ shape: e.target.value as ShapeKind, aspect: undefined })} aria-label="Shape">
+                  {SHAPES.map((s) => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Animation</span>
+                <select value={text.shapeAnim ?? 'draw'} onChange={(e) => update({ shapeAnim: e.target.value as ShapeAnim })} aria-label="Shape animation">
+                  {SHAPE_ANIMS.map((s) => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </label>
+              <RangeField
+                label="Width"
+                value={text.aspect ?? SHAPES.find((s) => s.value === text.shape)?.aspect ?? 1}
+                min={0.2}
+                max={10}
+                step={0.05}
+                onStart={mark}
+                onChange={(v) => update({ aspect: v }, true)}
+                format={(v) => `${v.toFixed(1)}×`}
+              />
+              <button className={text.outline ? 'active block' : 'block'} onClick={() => update({ outline: !text.outline })}>
+                Outline only
+              </button>
+            </>
+          )}
+          {!isShape && !text.template && (
+            <>
+              <label className="field">
+                <span>Letter animation</span>
+                <select value={text.animator ?? 'none'} onChange={(e) => update({ animator: e.target.value as TextAnimator })} aria-label="Letter animation">
+                  {ANIMATORS.map((a) => (
+                    <option key={a.value} value={a.value}>{a.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Word by word (TikTok captions)</span>
+                <select value={text.words ?? 'off'} onChange={(e) => update({ words: e.target.value as WordMode })} aria-label="Word by word">
+                  {WORD_MODES.map((w) => (
+                    <option key={w.value} value={w.value}>{w.label} — {w.hint}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Entrance</span>
+                <select value={text.animation} onChange={(e) => update({ animation: e.target.value as TextOverlay['animation'] })} aria-label="Entrance">
+                  <option value="none">None</option>
+                  <option value="fade">Fade</option>
+                  <option value="pop">Pop</option>
+                  <option value="slide">Slide up</option>
+                </select>
+              </label>
+            </>
+          )}
+          <div className="grid2">
+            <NumberField label="Start (s)" value={text.start} min={0} step={0.1} onChange={(v) => update({ start: v })} />
+            <NumberField label="Length (s)" value={text.duration} min={0.2} step={0.1} onChange={(v) => update({ duration: v })} />
+          </div>
+        </>
+      )}
+      {tab === 'style' && (
+        <>
+          <RangeField label="Size" value={text.size} min={0.02} max={0.5} step={0.005} onStart={mark} onChange={(v) => update({ size: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+          <ColorField label={isShape ? 'Colour' : 'Text colour'} value={text.color} onStart={mark} onChange={(v) => update({ color: v }, true)} />
+          {(text.template || (text.words && text.words !== 'off')) && (
+            <ColorField label="Accent colour" value={text.accent ?? (text.template ? '#00c8d2' : '#facc15')} onStart={mark} onChange={(v) => update({ accent: v }, true)} />
+          )}
+          {!isShape && (
+            <>
+              <label className="field">
+                <span>Font</span>
+                <select value={text.font ?? FONTS[0].family} onChange={(e) => update({ font: e.target.value })} aria-label="Font">
+                  {fontOptions.map((f) => (
+                    <option key={f.family} value={f.family}>{f.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="button block">
+                <Icon name="upload" size={15} /> Upload a font
+                <input
+                  type="file"
+                  accept=".ttf,.otf,.woff,.woff2,font/*"
+                  hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) onUploadFont(f);
+                  }}
+                />
+              </label>
+              <div className="row">
+                <button className={text.bold ? 'active' : ''} onClick={() => update({ bold: !text.bold })}><b>B</b></button>
+                <button className={text.italic ? 'active' : ''} onClick={() => update({ italic: !text.italic })}><i>I</i></button>
+                <button className={text.background ? 'active' : ''} onClick={() => update({ background: text.background ? null : '#111827' })}>Box</button>
+                <button className={text.stroke ? 'active' : ''} onClick={() => update({ stroke: text.stroke ? null : '#111111' })}>Outline</button>
+              </div>
+            </>
+          )}
+          <div className="row">
+            <button className={text.glow ? 'active' : ''} onClick={() => update({ glow: text.glow ? null : '#22d3ee' })}>Neon glow</button>
+            {isShape && (
+              <button className={text.stroke ? 'active' : ''} onClick={() => update({ stroke: text.stroke ? null : '#111111' })}>Border</button>
+            )}
+          </div>
+          {text.background && text.background.startsWith('#') && <ColorField label="Box colour" value={text.background} onStart={mark} onChange={(v) => update({ background: v }, true)} />}
+          {text.stroke && <ColorField label="Outline colour" value={text.stroke} onStart={mark} onChange={(v) => update({ stroke: v }, true)} />}
+          {text.glow && <ColorField label="Neon colour" value={text.glow} onStart={mark} onChange={(v) => update({ glow: v }, true)} />}
+          <h4>Position</h4>
+          <div className="row">
+            <button onClick={() => update({ x: 0.5, y: 0.15 })}>Top</button>
+            <button onClick={() => update({ x: 0.5, y: 0.5 })}>Center</button>
+            <button onClick={() => update({ x: 0.5, y: 0.85 })}>Bottom</button>
+          </div>
+        </>
+      )}
+      {tab === 'animate' && (
+        <>
+          <TransformFields item={text} base={base} local={local} mark={mark} onBase={(patch, live) => update(patch, live)} update={update} sizeLabel="Scale" sizeRange={[0, 4]} />
+          <KeyframeTools item={text} local={local} length={text.duration} base={base} mark={mark} onSeekLocal={onSeekLocal} update={update} />
         </>
       )}
     </>

@@ -1,11 +1,14 @@
 import { uid } from '../lib/id';
 import { NEUTRAL_FILTERS } from '../lib/filters';
+import { sliceKeys, sourceTimeAt } from './anim';
+import type { ParticleKind } from './particles';
 import type { AudioClip, Clip, EffectItem, EffectType, MediaAsset, Motion, OverlayClip, TextOverlay, TransitionType, VideoProject } from './types';
 
 export const DEFAULT_IMAGE_SECONDS = 3;
 export const MIN_CLIP_SECONDS = 0.1;
 
 export { cssFilter, FILTER_PRESETS, NEUTRAL_FILTERS } from '../lib/filters';
+export { textAnimation } from './textfx';
 
 export const ASPECTS = [
   { label: '16:9 Landscape', width: 1280, height: 720 },
@@ -97,7 +100,7 @@ export function projectDuration(p: VideoProject): number {
 export function locate(clips: Clip[], t: number): (PlacedClip & { sourceTime: number }) | null {
   for (const placed of layoutClips(clips)) {
     if (t >= placed.start && t < placed.end) {
-      return { ...placed, sourceTime: placed.clip.in + (t - placed.start) * placed.clip.speed };
+      return { ...placed, sourceTime: sourceTimeAt(placed.clip, t - placed.start) };
     }
   }
   return null;
@@ -107,10 +110,14 @@ export function locate(clips: Clip[], t: number): (PlacedClip & { sourceTime: nu
 export function splitClips(clips: Clip[], t: number): Clip[] {
   const hit = locate(clips, t);
   if (!hit) return clips;
-  const { clip, index, sourceTime } = hit;
+  const { clip, index, sourceTime, start } = hit;
   if (sourceTime - clip.in < MIN_CLIP_SECONDS || clip.out - sourceTime < MIN_CLIP_SECONDS) return clips;
-  const left: Clip = { ...clip, out: sourceTime, fadeOut: 0 };
-  const right: Clip = { ...clip, id: uid('clip'), in: sourceTime, fadeIn: 0, transition: undefined };
+  // A reversed clip plays from `out` down to `in`, so its first half is the end of the source.
+  const first = clip.reverse ? { in: sourceTime } : { out: sourceTime };
+  const second = clip.reverse ? { out: sourceTime } : { in: sourceTime };
+  const cut = t - start;
+  const left: Clip = { ...clip, ...first, fadeOut: 0, keys: sliceKeys(clip.keys, 0, cut) };
+  const right: Clip = { ...clip, ...second, id: uid('clip'), fadeIn: 0, transition: undefined, keys: sliceKeys(clip.keys, cut, Infinity) };
   return [...clips.slice(0, index), left, right, ...clips.slice(index + 1)];
 }
 
@@ -119,8 +126,8 @@ export function splitTexts(texts: TextOverlay[], t: number): TextOverlay[] {
   return texts.flatMap((o) => {
     if (t - o.start < MIN_CLIP_SECONDS || o.start + o.duration - t < MIN_CLIP_SECONDS) return [o];
     return [
-      { ...o, duration: t - o.start },
-      { ...o, id: uid('text'), start: t, duration: o.start + o.duration - t },
+      { ...o, duration: t - o.start, keys: sliceKeys(o.keys, 0, t - o.start) },
+      { ...o, id: uid('text'), start: t, duration: o.start + o.duration - t, keys: sliceKeys(o.keys, t - o.start, Infinity) },
     ];
   });
 }
@@ -164,27 +171,6 @@ export function fadeOpacity(clip: Clip, local: number): number {
 
 export function textsAt(texts: TextOverlay[], t: number): TextOverlay[] {
   return texts.filter((o) => t >= o.start && t < o.start + o.duration);
-}
-
-/** Opacity, scale and y-offset (fraction of frame) of a text overlay's entrance/exit animation. */
-export function textAnimation(o: TextOverlay, t: number): { alpha: number; scale: number; dy: number } {
-  const local = t - o.start;
-  const remaining = o.start + o.duration - t;
-  const d = Math.min(0.4, o.duration / 3);
-  const inP = Math.min(1, local / d);
-  const outP = Math.min(1, remaining / d);
-  switch (o.animation) {
-    case 'fade':
-      return { alpha: Math.min(inP, outP), scale: 1, dy: 0 };
-    case 'pop': {
-      const ease = 1 - Math.pow(1 - inP, 3);
-      return { alpha: Math.min(1, inP * 2, outP), scale: 0.5 + 0.5 * ease + Math.sin(inP * Math.PI) * 0.1, dy: 0 };
-    }
-    case 'slide':
-      return { alpha: Math.min(inP, outP), scale: 1, dy: (1 - inP) * 0.08 };
-    default:
-      return { alpha: 1, scale: 1, dy: 0 };
-  }
 }
 
 export const PEAKS_PER_SECOND = 20;
@@ -263,6 +249,22 @@ export function createOverlay(asset: MediaAsset, start: number): OverlayClip {
     volume: 1,
     rounded: 0.08,
   };
+}
+
+/** The video track an overlay sits on (2 = just above the main track). */
+export const trackOf = (o: OverlayClip) => Math.max(2, o.track ?? 2);
+
+/** Track numbers in use, lowest first (always includes 2 when there are overlays). */
+export function overlayTracks(overlays: OverlayClip[]): number[] {
+  return [...new Set(overlays.map(trackOf))].sort((a, b) => a - b);
+}
+
+/** Lowest video track (2 and up) with room for an item from `start` to `end`. */
+export function freeTrack(overlays: OverlayClip[], start: number, end: number, ignoreId?: string): number {
+  for (let track = 2; ; track++) {
+    const busy = overlays.some((o) => o.id !== ignoreId && trackOf(o) === track && start < o.start + o.out - o.in - 1e-6 && end > o.start + 1e-6);
+    if (!busy) return track;
+  }
 }
 
 /** Items on a free-floating track (audio, overlays) that are playing at time `t`. */
@@ -408,16 +410,34 @@ export function estimateSizeMB(seconds: number, opts: ExportOptions, audioBitrat
 
 // ---------- Effects ----------
 
-export const EFFECTS: { type: EffectType; label: string; hint: string }[] = [
-  { type: 'shake', label: 'Shake', hint: 'Camera shake' },
-  { type: 'zoom-pulse', label: 'Zoom pulse', hint: 'Beat-style punch-in' },
-  { type: 'flash', label: 'Flash', hint: 'White flash at the start' },
-  { type: 'glow', label: 'Dreamy glow', hint: 'Soft bloom' },
-  { type: 'vignette', label: 'Vignette', hint: 'Darker edges' },
-  { type: 'grain', label: 'Film grain', hint: 'Old film texture' },
-  { type: 'vhs', label: 'VHS', hint: 'Retro tape lines' },
-  { type: 'letterbox', label: 'Cinema bars', hint: 'Black bars, movie look' },
+export type EffectGroup = 'Motion' | 'Look' | 'Light' | 'Particles';
+
+export const EFFECTS: { type: EffectType; label: string; hint: string; group: EffectGroup }[] = [
+  { type: 'shake', label: 'Shake', hint: 'Camera shake (set its speed)', group: 'Motion' },
+  { type: 'zoom-pulse', label: 'Zoom pulse', hint: 'Beat-style punch-in', group: 'Motion' },
+  { type: 'glitch', label: 'Glitch', hint: 'Digital glitch jumps', group: 'Motion' },
+  { type: 'flash', label: 'Flash', hint: 'White flash at the start', group: 'Light' },
+  { type: 'glow', label: 'Dreamy glow', hint: 'Soft bloom', group: 'Light' },
+  { type: 'light-leak', label: 'Light leak', hint: 'Warm film light sweeping across', group: 'Light' },
+  { type: 'lens-flare', label: 'Lens flare', hint: 'Sun flare that drifts', group: 'Light' },
+  { type: 'vignette', label: 'Vignette', hint: 'Darker edges', group: 'Look' },
+  { type: 'grain', label: 'Film grain', hint: 'Old film texture', group: 'Look' },
+  { type: 'vhs', label: 'VHS', hint: 'Retro tape lines', group: 'Look' },
+  { type: 'chromatic', label: 'Chromatic', hint: 'Red/blue colour fringes', group: 'Look' },
+  { type: 'blur', label: 'Blur', hint: 'Soft focus', group: 'Look' },
+  { type: 'letterbox', label: 'Cinema bars', hint: 'Black bars, movie look', group: 'Look' },
+  { type: 'confetti', label: 'Confetti', hint: 'Party confetti falling', group: 'Particles' },
+  { type: 'sparkles', label: 'Sparkles', hint: 'Twinkling stars', group: 'Particles' },
+  { type: 'snow', label: 'Snow', hint: 'Gentle snowfall', group: 'Particles' },
+  { type: 'hearts', label: 'Hearts', hint: 'Floating hearts', group: 'Particles' },
+  { type: 'bubbles', label: 'Bubbles', hint: 'Rising bubbles', group: 'Particles' },
+  { type: 'dust', label: 'Dust', hint: 'Floating dust in the light', group: 'Particles' },
 ];
+
+export const EFFECT_GROUPS: EffectGroup[] = ['Motion', 'Light', 'Look', 'Particles'];
+
+const PARTICLE_TYPES: EffectType[] = ['confetti', 'snow', 'sparkles', 'hearts', 'dust', 'bubbles'];
+export const isParticleEffect = (t: EffectType) => PARTICLE_TYPES.includes(t);
 
 export function createEffect(type: EffectType, start: number, patch: Partial<EffectItem> = {}): EffectItem {
   return { id: uid('fx'), type, start, duration: 3, intensity: 0.7, ...patch };
@@ -436,22 +456,96 @@ export interface EffectFrame {
   glow: number;
   /** Height of each black bar as a fraction of the frame height. */
   bars: number;
+  /** Blur radius as a fraction of the frame width. */
+  blur: number;
+  /** Colour fringe offset as a fraction of the frame width. */
+  chromatic: number;
+  /** 0..1, the glitch's slices this frame (0 = none). */
+  glitch: number;
+  /** Seed so glitch slices change every few frames. */
+  glitchSeed: number;
+  /** 0..1 strength and 0..1 position of a light leak sweeping across. */
+  leak: number;
+  leakPos: number;
+  /** 0..1 strength and position (fractions) of a lens flare. */
+  flare: number;
+  flareX: number;
+  flareY: number;
+  particles: { kind: ParticleKind; local: number; intensity: number; speed: number }[];
 }
 
-export const NO_EFFECT: EffectFrame = { dx: 0, dy: 0, scale: 1, flash: 0, vignette: 0, grain: 0, scanlines: 0, glow: 0, bars: 0 };
+export const NO_EFFECT: EffectFrame = {
+  dx: 0,
+  dy: 0,
+  scale: 1,
+  flash: 0,
+  vignette: 0,
+  grain: 0,
+  scanlines: 0,
+  glow: 0,
+  bars: 0,
+  blur: 0,
+  chromatic: 0,
+  glitch: 0,
+  glitchSeed: 0,
+  leak: 0,
+  leakPos: 0,
+  flare: 0,
+  flareX: 0,
+  flareY: 0,
+  particles: [],
+};
 
 /** How every effect active at time `t` changes the frame (effects add up). */
 export function effectFrame(effects: EffectItem[], t: number): EffectFrame {
-  const f = { ...NO_EFFECT };
+  const f: EffectFrame = { ...NO_EFFECT, particles: [] };
   for (const e of effects) {
     const local = t - e.start;
     if (local < 0 || local >= e.duration) continue;
     const k = Math.max(0, Math.min(1, e.intensity));
+    const speed = e.speed ?? 1;
+    if (isParticleEffect(e.type)) {
+      f.particles.push({ kind: e.type as ParticleKind, local, intensity: k, speed });
+      continue;
+    }
     switch (e.type) {
       case 'shake': {
         // Smooth pseudo-random wobble from summed sines (same result for the same time).
-        f.dx += k * 0.02 * (Math.sin(local * 47) + 0.6 * Math.sin(local * 83 + 1.3));
-        f.dy += k * 0.02 * (Math.sin(local * 53 + 0.7) + 0.6 * Math.sin(local * 71 + 2.1));
+        const s = local * speed;
+        f.dx += k * 0.02 * (Math.sin(s * 47) + 0.6 * Math.sin(s * 83 + 1.3));
+        f.dy += k * 0.02 * (Math.sin(s * 53 + 0.7) + 0.6 * Math.sin(s * 71 + 2.1));
+        break;
+      }
+      case 'blur':
+        f.blur = Math.max(f.blur, k * 0.012);
+        break;
+      case 'chromatic':
+        f.chromatic = Math.max(f.chromatic, k * 0.008 * (0.7 + 0.3 * Math.sin(local * 5 * speed)));
+        break;
+      case 'glitch': {
+        // Bursts: mostly calm, with sharp glitchy moments; slices change 15 times a second.
+        const step = Math.floor(local * 15 * speed);
+        const r = Math.abs(Math.sin(step * 12.9898 + 4.1) * 43758.5453) % 1;
+        const burst = local < 0.3 || r > 0.62;
+        if (burst) {
+          f.glitch = Math.max(f.glitch, k);
+          f.glitchSeed = step + 1;
+          f.chromatic = Math.max(f.chromatic, k * 0.01);
+          f.dx += k * 0.01 * (r - 0.5);
+        }
+        break;
+      }
+      case 'light-leak': {
+        const p = (local * 0.25 * speed) % 1;
+        f.leak = Math.max(f.leak, k * Math.min(1, local / 0.5, (e.duration - local) / 0.5));
+        f.leakPos = p;
+        break;
+      }
+      case 'lens-flare': {
+        f.flare = Math.max(f.flare, k * Math.min(1, local / 0.4, (e.duration - local) / 0.4));
+        const u = e.duration > 0 ? local / e.duration : 0;
+        f.flareX = 0.15 + 0.7 * u;
+        f.flareY = 0.22 + 0.06 * Math.sin(u * Math.PI);
         break;
       }
       case 'zoom-pulse': {
@@ -503,6 +597,8 @@ export function insertClipAt(clips: Clip[], t: number, clip: Clip): Clip[] {
 export function trimAtPlayhead(clips: Clip[], t: number, side: 'before' | 'after'): Clip[] {
   const hit = locate(clips, t);
   if (!hit) return clips;
-  const next = side === 'before' ? trimStart(hit.clip, hit.sourceTime) : trimEnd(hit.clip, hit.sourceTime, Infinity);
+  // On a reversed clip, "before the playhead" is the later part of the source.
+  const cutStart = (side === 'before') !== !!hit.clip.reverse;
+  const next = cutStart ? trimStart(hit.clip, hit.sourceTime) : trimEnd(hit.clip, hit.sourceTime, Infinity);
   return clips.map((c) => (c.id === hit.clip.id ? next : c));
 }

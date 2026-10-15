@@ -1,3 +1,11 @@
+import { rampRate, valueAt } from './anim';
+import { denoiseFilters, watermarkBox } from './export';
+import { gradeFilterMarkup, gradeId, isNeutral } from './grade';
+import { ChromaKeyer } from './keyer';
+import { blendOp, blurSamples, clipFrame, cropRect, overlayFrame } from './layers';
+import type { LayerFrame } from './layers';
+import { drawParticles, heartPath, particlesAt, starPath } from './particles';
+import { drawTextItem } from './textfx';
 import {
   activeAt,
   audioFade,
@@ -8,17 +16,40 @@ import {
   cssFilter,
   fadeOpacity,
   locate,
-  motionTransform,
   projectDuration,
-  textAnimation,
   textsAt,
+  trackOf,
   transitionAt,
 } from './timeline';
-import type { EffectFrame, ExportOptions } from './timeline';
-import type { Clip, MediaAsset, OverlayClip, TextOverlay, VideoProject } from './types';
+import type { EffectFrame } from './timeline';
+import type { Clip, LayerProps, MediaAsset, OverlayClip, TextOverlay, VideoProject } from './types';
 
 /** Seconds of drift allowed between the clock and a playing media element before re-seeking. */
 const DRIFT_TOLERANCE = 0.3;
+
+export interface RecordOptions {
+  /** Output size in pixels (defaults to the project size). */
+  width?: number;
+  height?: number;
+  fps: number;
+  /** Video bits per second. */
+  bitrate: number;
+}
+
+/** Everything `paintLayer` needs to draw one clip or layer. */
+interface PaintJob {
+  source: CanvasImageSource;
+  src: { sx: number; sy: number; sw: number; sh: number };
+  layer: LayerProps & { filters?: Parameters<typeof cssFilter>[0] };
+  /** Where the layer is at a local time (several times for motion blur). */
+  frameAt: (local: number) => LayerFrame;
+  local: number;
+  alpha: number;
+  rounded?: number;
+  shadow?: boolean;
+  /** Flip the picture left-to-right (in place). */
+  mirror?: boolean;
+}
 
 /**
  * Plays a VideoProject onto a canvas. One engine drives both the live preview
@@ -34,15 +65,23 @@ export class VideoEngine {
   private overlayVideos = new Map<string, HTMLVideoElement>();
   private blurCanvas = document.createElement('canvas');
   private gains = new Map<HTMLMediaElement, GainNode>();
+  private denoisers = new Map<HTMLMediaElement, { hp: BiquadFilterNode; lp: BiquadFilterNode }>();
   private audioCtx: AudioContext | null = null;
   private master: GainNode | null = null;
   private raf = 0;
   private clockStart = 0;
   private timeAtStart = 0;
   private endedListeners = new Set<() => void>();
+  private keyer = new ChromaKeyer();
+  /** Pixels per project pixel (above 1 while exporting at a higher resolution). */
+  private scale = 1;
+  /** Frame rate used for motion blur. */
+  private fps = 30;
 
   time = 0;
   playing = false;
+  /** Turn green-screen removal off (while the user picks the key colour). */
+  keyingOff = false;
   onTime: ((t: number) => void) | null = null;
   onPlayingChange: ((playing: boolean) => void) | null = null;
 
@@ -56,15 +95,23 @@ export class VideoEngine {
 
   setProject(p: VideoProject) {
     this.project = p;
-    if (this.canvas.width !== p.width || this.canvas.height !== p.height) {
-      this.canvas.width = p.width;
-      this.canvas.height = p.height;
-    }
+    this.resize();
     this.syncElements(p);
     if (!this.playing) {
       this.time = Math.min(this.time, this.duration);
       this.sync();
       this.draw();
+    }
+  }
+
+  private resize() {
+    const p = this.project;
+    if (!p) return;
+    const w = Math.round(p.width * this.scale);
+    const h = Math.round(p.height * this.scale);
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.width = w;
+      this.canvas.height = h;
     }
   }
 
@@ -131,13 +178,20 @@ export class VideoEngine {
     return v;
   }
 
-  /** Route an element through the Web Audio graph (for per-clip volume and export mixing). */
+  /** Route an element through Web Audio: noise-reduction filters, then a per-clip volume. */
   private connect(el: HTMLMediaElement) {
     if (!this.audioCtx || !this.master || this.gains.has(el)) return;
     const source = this.audioCtx.createMediaElementSource(el);
+    const hp = this.audioCtx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 10;
+    const lp = this.audioCtx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 22000;
     const gain = this.audioCtx.createGain();
-    source.connect(gain).connect(this.master);
+    source.connect(hp).connect(lp).connect(gain).connect(this.master);
     this.gains.set(el, gain);
+    this.denoisers.set(el, { hp, lp });
   }
 
   /** Must be called from a user gesture the first time (browser autoplay rules). */
@@ -214,10 +268,20 @@ export class VideoEngine {
     const hit = locate(p.clips, this.time);
     for (const [assetId, v] of this.videos) {
       if (hit && hit.clip.assetId === assetId) {
-        v.playbackRate = hit.clip.speed;
-        const muted = p.tracks?.mainMuted ? 0 : 1;
-        this.setVolume(v, muted * hit.clip.volume * fadeOpacity(hit.clip, this.time - hit.start));
-        this.align(v, hit.sourceTime);
+        const clip = hit.clip;
+        const local = this.time - hit.start;
+        const len = clipDuration(clip);
+        const muted = p.tracks?.mainMuted || clip.reverse ? 0 : 1;
+        this.setVolume(v, muted * clip.volume * fadeOpacity(clip, local) * valueAt(clip.keys?.volume, local, 1));
+        this.setDenoise(v, clip.denoise);
+        if (clip.reverse) {
+          // Browsers can't play video backwards, so step through it frame by frame.
+          if (!v.paused) v.pause();
+          if (Math.abs(v.currentTime - hit.sourceTime) > 0.03) v.currentTime = hit.sourceTime;
+        } else {
+          v.playbackRate = Math.max(0.0625, Math.min(16, clip.speed * rampRate(clip.ramp, len > 0 ? local / len : 0)));
+          this.align(v, hit.sourceTime);
+        }
       } else if (!v.paused) {
         v.pause();
       }
@@ -227,7 +291,8 @@ export class VideoEngine {
       if (!el) continue;
       const local = this.time - clip.start;
       if (local >= 0 && local < clip.out - clip.in) {
-        this.setVolume(el, (p.tracks?.audioMuted ? 0 : 1) * clip.volume * audioFade(clip, local));
+        this.setVolume(el, (p.tracks?.audioMuted ? 0 : 1) * clip.volume * audioFade(clip, local) * valueAt(clip.keys?.volume, local, 1));
+        this.setDenoise(el, clip.denoise);
         this.align(el, clip.in + local);
       } else if (!el.paused) {
         el.pause();
@@ -238,8 +303,16 @@ export class VideoEngine {
       const v = this.overlayVideos.get(o.id);
       if (!v) continue;
       if (active.has(o.id)) {
-        this.setVolume(v, p.tracks?.overlayHidden ? 0 : o.volume);
-        this.align(v, o.in + (this.time - o.start));
+        const local = this.time - o.start;
+        this.setVolume(v, p.tracks?.overlayHidden ? 0 : o.volume * valueAt(o.keys?.volume, local, 1));
+        this.setDenoise(v, o.denoise);
+        if (o.reverse) {
+          if (!v.paused) v.pause();
+          const target = o.out - local;
+          if (Math.abs(v.currentTime - target) > 0.03) v.currentTime = target;
+        } else {
+          this.align(v, o.in + local);
+        }
       } else if (!v.paused) {
         v.pause();
       }
@@ -266,6 +339,15 @@ export class VideoEngine {
     else el.volume = Math.max(0, Math.min(1, volume));
   }
 
+  private setDenoise(el: HTMLMediaElement, level = 0) {
+    const f = this.denoisers.get(el);
+    if (!f) return;
+    const d = denoiseFilters(level);
+    if (f.hp.frequency.value !== d.highpass) f.hp.frequency.value = d.highpass;
+    if (f.lp.frequency.value !== d.lowpass) f.lp.frequency.value = d.lowpass;
+  }
+
+  /** Draw the frame at the current time. */
   draw() {
     const p = this.project;
     const ctx = this.ctx;
@@ -273,12 +355,14 @@ export class VideoEngine {
     const W = p.width;
     const H = p.height;
     ctx.save();
+    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
     ctx.globalAlpha = 1;
     ctx.filter = 'none';
+    ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = p.background;
     ctx.fillRect(0, 0, W, H);
 
-    // Effects that move the picture (shake, zoom pulse) wrap the clip and overlays;
+    // Effects that move the picture (shake, zoom pulse) wrap the clips and layers;
     // the rest are painted over the finished frame below.
     const fx = p.tracks?.effectsHidden ? NO_EFFECT : effectFrame(p.effects ?? [], this.time);
     ctx.save();
@@ -295,7 +379,7 @@ export class VideoEngine {
       const asset = p.assets.find((a) => a.id === hit.clip.assetId);
       const source = asset ? this.sourceFor(asset) : null;
       const alpha = fadeOpacity(hit.clip, this.time - hit.start);
-      const progress = (this.time - hit.start) / clipDuration(hit.clip);
+      const local = this.time - hit.start;
       const tr = transitionAt(hit, this.time);
       // The outgoing clip is shown as its last drawn frame, so transitions work even
       // between two halves of the same video (which share one <video> element).
@@ -307,12 +391,12 @@ export class VideoEngine {
           if (!source || !asset) return;
           ctx.save();
           transform?.();
-          this.drawClip(source, asset, hit.clip, alpha * a, progress);
+          this.drawMainClip(source, asset, hit.clip, alpha * a, local);
           ctx.restore();
         };
         switch (tr.type) {
           case 'fade':
-            ctx.drawImage(snap, 0, 0);
+            ctx.drawImage(snap, 0, 0, W, H);
             current(q);
             break;
           case 'black':
@@ -320,18 +404,18 @@ export class VideoEngine {
             ctx.fillRect(0, 0, W, H);
             if (q < 0.5) {
               ctx.globalAlpha = 1 - q * 2;
-              ctx.drawImage(snap, 0, 0);
+              ctx.drawImage(snap, 0, 0, W, H);
               ctx.globalAlpha = 1;
             } else {
               current(q * 2 - 1);
             }
             break;
           case 'slide':
-            ctx.drawImage(snap, -q * W, 0);
+            ctx.drawImage(snap, -q * W, 0, W, H);
             current(1, () => ctx.translate((1 - q) * W, 0));
             break;
           case 'zoom':
-            ctx.drawImage(snap, 0, 0);
+            ctx.drawImage(snap, 0, 0, W, H);
             current(q, () => {
               const z = 1 + 0.35 * (1 - q);
               ctx.translate(W / 2, H / 2);
@@ -340,7 +424,7 @@ export class VideoEngine {
             });
             break;
           case 'wipe':
-            ctx.drawImage(snap, 0, 0);
+            ctx.drawImage(snap, 0, 0, W, H);
             current(1, () => {
               ctx.beginPath();
               ctx.rect(0, 0, q * W, H);
@@ -349,50 +433,362 @@ export class VideoEngine {
             break;
         }
       } else if (source && asset) {
-        this.drawClip(source, asset, hit.clip, alpha, progress);
-        if (!tr) this.takeSnapshot(hit.clip.id, W, H);
+        this.drawMainClip(source, asset, hit.clip, alpha, local);
+        if (!tr) this.takeSnapshot(hit.clip.id);
       }
     }
 
-    if (!p.tracks?.overlayHidden) for (const o of activeAt(p.overlays, this.time)) this.drawOverlay(o, p);
+    // Upper video tracks, lowest first, so higher tracks cover lower ones.
+    if (!p.tracks?.overlayHidden) {
+      const layers = activeAt(p.overlays, this.time).sort((a, b) => trackOf(a) - trackOf(b));
+      for (const o of layers) this.drawOverlay(o, p);
+    }
     ctx.restore();
-    this.drawEffects(fx, W, H);
+    this.drawEffects(fx);
 
     // Animations only run during playback so paused frames always show text clearly.
-    if (!p.tracks?.textHidden) for (const o of textsAt(p.texts, this.time)) drawText(ctx, o, this.time, W, H, this.playing);
+    if (!p.tracks?.textHidden) for (const o of textsAt(p.texts, this.time)) this.drawTextLayer(o, W, H);
+    if (p.watermark) this.drawWatermark(W, H);
     ctx.restore();
   }
 
+  private drawTextLayer(o: TextOverlay, W: number, H: number) {
+    const ctx = this.ctx;
+    if (!o.motionBlur || !this.playing || !o.keys) {
+      drawTextItem(ctx, o, this.time, W, H, this.playing);
+      return;
+    }
+    const times = blurSamples(this.time, this.fps);
+    this.accumulate(times.length, (c, i) => drawTextItem(c, o, times[i], W, H, true));
+  }
+
+  /**
+   * Motion blur: draw something several times into a scratch canvas, adding the copies
+   * together at 1/n strength each, then put the averaged result on the frame.
+   */
+  private accumulate(n: number, drawCopy: (ctx: CanvasRenderingContext2D, i: number) => void, blend: GlobalCompositeOperation = 'source-over') {
+    const acc = this.scratch('acc', this.canvas.width, this.canvas.height);
+    const a = acc.getContext('2d')!;
+    a.setTransform(1, 0, 0, 1, 0, 0);
+    a.clearRect(0, 0, acc.width, acc.height);
+    for (let i = 0; i < n; i++) {
+      a.save();
+      a.setTransform(this.scale, 0, 0, this.scale, 0, 0);
+      a.globalCompositeOperation = 'lighter';
+      a.globalAlpha = 1 / n;
+      drawCopy(a, i);
+      a.restore();
+    }
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = blend;
+    ctx.drawImage(acc, 0, 0);
+    ctx.restore();
+  }
+
+  private scratchCanvases = new Map<string, HTMLCanvasElement>();
+  private scratch(name: string, w: number, h: number): HTMLCanvasElement {
+    let c = this.scratchCanvases.get(name);
+    if (!c) {
+      c = document.createElement('canvas');
+      this.scratchCanvases.set(name, c);
+    }
+    if (c.width !== w || c.height !== h) {
+      c.width = Math.max(1, w);
+      c.height = Math.max(1, h);
+    }
+    return c;
+  }
+
+  /** Make sure an SVG filter for a colour grade exists in the page; returns its CSS reference. */
+  private gradeFilter(layer: LayerProps): string {
+    const g = layer.grade;
+    if (!g || isNeutral(g)) return '';
+    const id = gradeId(g);
+    if (!document.getElementById(id)) {
+      let host: Element | null = document.getElementById('bem-grade-defs');
+      if (!host) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', '0');
+        svg.setAttribute('height', '0');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.style.position = 'absolute';
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        defs.id = 'bem-grade-defs';
+        svg.appendChild(defs);
+        document.body.appendChild(svg);
+        host = defs;
+      }
+      host.insertAdjacentHTML('beforeend', gradeFilterMarkup(g));
+    }
+    return `url(#${id})`;
+  }
+
+  /**
+   * Draw one clip/layer: crop → colour → green screen → mask, then place it with
+   * its position, angle, opacity, blend mode and (optionally) motion blur.
+   */
+  private paintLayer(job: PaintJob) {
+    const ctx = this.ctx;
+    const { layer, src } = job;
+    const filter = [this.gradeFilter(layer), cssFilter(layer.filters)].filter((f) => f && f !== 'none').join(' ') || 'none';
+    const keyed = !!layer.chroma && !this.keyingOff;
+    const masked = !!layer.mask && layer.mask.shape !== 'none';
+    const f0 = job.frameAt(job.local);
+
+    let image: CanvasImageSource = job.source;
+    let rect = src;
+    if (keyed || masked) {
+      // Work at the size the layer is drawn (capped), so keying stays fast.
+      const px = Math.min(1, 2560 / Math.max(f0.w * this.scale, f0.h * this.scale, 1));
+      const bw = Math.max(2, Math.round(f0.w * this.scale * px));
+      const bh = Math.max(2, Math.round(f0.h * this.scale * px));
+      const buf = this.scratch('layer', bw, bh);
+      const b = buf.getContext('2d')!;
+      b.setTransform(1, 0, 0, 1, 0, 0);
+      b.globalCompositeOperation = 'source-over';
+      b.clearRect(0, 0, bw, bh);
+      b.filter = filter;
+      b.drawImage(job.source, src.sx, src.sy, src.sw, src.sh, 0, 0, bw, bh);
+      b.filter = 'none';
+      let out: HTMLCanvasElement = buf;
+      if (keyed) {
+        const k = this.keyer.process(buf, layer.chroma!);
+        if (k !== buf) {
+          b.clearRect(0, 0, bw, bh);
+          b.drawImage(k, 0, 0);
+        }
+        out = buf;
+      }
+      if (masked) {
+        const m = layer.mask!;
+        const k = layer.keys;
+        const ms = valueAt(k?.maskScale, job.local, m.scale ?? 1);
+        this.applyMask(b, bw, bh, { ...m, x: valueAt(k?.maskX, job.local, m.x), y: valueAt(k?.maskY, job.local, m.y), w: m.w * ms, h: m.h * ms });
+      }
+      image = out;
+      rect = { sx: 0, sy: 0, sw: bw, sh: bh };
+    }
+
+    const drawAt = (c: CanvasRenderingContext2D, f: LayerFrame, alpha: number) => {
+      c.save();
+      c.globalAlpha *= alpha * f.opacity;
+      c.translate(f.cx, f.cy);
+      if (f.rotation) c.rotate((f.rotation * Math.PI) / 180);
+      if (job.mirror) c.scale(-1, 1);
+      const x = -f.w / 2;
+      const y = -f.h / 2;
+      if (job.shadow && !keyed && !masked) {
+        c.save();
+        c.shadowColor = 'rgba(0,0,0,0.4)';
+        c.shadowBlur = 20;
+        c.fillStyle = '#000';
+        c.beginPath();
+        c.roundRect(x, y, f.w, f.h, (job.rounded ?? 0) * Math.min(f.w, f.h));
+        c.fill();
+        c.restore();
+      }
+      if (job.rounded && !keyed && !masked) {
+        c.beginPath();
+        c.roundRect(x, y, f.w, f.h, job.rounded * Math.min(f.w, f.h));
+        c.clip();
+      }
+      if (image === job.source) c.filter = filter;
+      c.drawImage(image, rect.sx, rect.sy, rect.sw, rect.sh, x, y, f.w, f.h);
+      c.restore();
+    };
+
+    const blend = blendOp(layer.blend);
+    if (layer.motionBlur && this.playing) {
+      const times = blurSamples(job.local, this.fps);
+      const frames = times.map((t) => job.frameAt(t));
+      const moved = frames.some((f) => Math.abs(f.cx - f0.cx) > 0.5 || Math.abs(f.cy - f0.cy) > 0.5 || Math.abs(f.w - f0.w) > 0.5 || Math.abs(f.rotation - f0.rotation) > 0.2);
+      if (moved) {
+        this.accumulate(frames.length, (c, i) => drawAt(c, frames[i], job.alpha), blend);
+        return;
+      }
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = blend;
+    drawAt(ctx, f0, job.alpha);
+    ctx.restore();
+  }
+
+  /** Keep only the mask shape (or everything but it), with a soft edge. */
+  private applyMask(b: CanvasRenderingContext2D, w: number, h: number, m: NonNullable<LayerProps['mask']>) {
+    const mask = this.scratch('mask', w, h);
+    const mc = mask.getContext('2d')!;
+    mc.setTransform(1, 0, 0, 1, 0, 0);
+    mc.clearRect(0, 0, w, h);
+    const feather = Math.max(0, m.feather) * Math.min(w, h);
+    mc.filter = feather > 0.5 ? `blur(${feather / 2}px)` : 'none';
+    mc.fillStyle = '#fff';
+    mc.translate(m.x * w, m.y * h);
+    const mw = m.w * w;
+    const mh = m.h * h;
+    mc.beginPath();
+    switch (m.shape) {
+      case 'rect':
+        mc.rect(-mw / 2, -mh / 2, mw, mh);
+        mc.fill();
+        break;
+      case 'ellipse':
+        mc.ellipse(0, 0, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+        mc.fill();
+        break;
+      case 'diamond':
+        mc.moveTo(0, -mh / 2);
+        mc.lineTo(mw / 2, 0);
+        mc.lineTo(0, mh / 2);
+        mc.lineTo(-mw / 2, 0);
+        mc.closePath();
+        mc.fill();
+        break;
+      case 'star':
+        mc.scale(mw / mh, 1);
+        starPath(mc, mh / 2, 5, 0.45);
+        mc.fill();
+        break;
+      case 'heart':
+        mc.scale(mw / mh, 1);
+        mc.translate(0, mh * 0.08);
+        heartPath(mc, mh * 1.1);
+        mc.fill();
+        break;
+    }
+    mc.filter = 'none';
+    b.save();
+    b.setTransform(1, 0, 0, 1, 0, 0);
+    b.globalCompositeOperation = m.invert ? 'destination-out' : 'destination-in';
+    b.drawImage(mask, 0, 0);
+    b.restore();
+  }
+
   private fxCanvas = document.createElement('canvas');
+  private tmpCanvas = document.createElement('canvas');
   private grainCanvas: HTMLCanvasElement | null = null;
   private scanCanvas: HTMLCanvasElement | null = null;
 
-  /** Paint the frame-wide effects (glow, vignette, grain, scanlines, flash, bars). */
-  private drawEffects(fx: EffectFrame, W: number, H: number) {
+  /** Copy of the frame so far, in device pixels. */
+  private copyFrame(): HTMLCanvasElement {
+    const c = this.fxCanvas;
+    if (c.width !== this.canvas.width || c.height !== this.canvas.height) {
+      c.width = this.canvas.width;
+      c.height = this.canvas.height;
+    }
+    const g = c.getContext('2d')!;
+    g.clearRect(0, 0, c.width, c.height);
+    g.drawImage(this.canvas, 0, 0);
+    return c;
+  }
+
+  /** Paint the frame-wide effects. Works in device pixels. */
+  private drawEffects(fx: EffectFrame) {
     const ctx = this.ctx;
-    if (fx.glow > 0) {
-      const c = this.fxCanvas;
-      if (c.width !== W || c.height !== H) {
-        c.width = W;
-        c.height = H;
+    const PW = this.canvas.width;
+    const PH = this.canvas.height;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (fx.blur > 0) {
+      const c = this.copyFrame();
+      ctx.filter = `blur(${Math.max(1, fx.blur * PW)}px)`;
+      ctx.drawImage(c, 0, 0);
+      ctx.filter = 'none';
+    }
+    if (fx.glitch > 0) {
+      const c = this.copyFrame();
+      const rnd = (k: number) => Math.abs(Math.sin(fx.glitchSeed * 91.3 + k * 17.7) * 43758.5453) % 1;
+      const slices = 3 + Math.floor(rnd(1) * 6);
+      for (let i = 0; i < slices; i++) {
+        const y = rnd(i + 2) * PH;
+        const h = (0.01 + rnd(i + 30) * 0.08) * PH;
+        const dx = (rnd(i + 60) - 0.5) * 0.12 * PW * fx.glitch;
+        ctx.drawImage(c, 0, y, PW, h, dx, y, PW, h);
       }
-      const g = c.getContext('2d')!;
-      g.clearRect(0, 0, W, H);
-      g.drawImage(this.canvas, 0, 0);
+    }
+    if (fx.chromatic > 0) {
+      const c = this.copyFrame();
+      const t = this.tmpCanvas;
+      if (t.width !== PW || t.height !== PH) {
+        t.width = PW;
+        t.height = PH;
+      }
+      const tc = t.getContext('2d')!;
+      const d = fx.chromatic * PW;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, PW, PH);
+      for (const [color, off] of [['#ff0000', -d], ['#00ff00', 0], ['#0000ff', d]] as const) {
+        tc.globalCompositeOperation = 'source-over';
+        tc.drawImage(c, 0, 0);
+        tc.globalCompositeOperation = 'multiply';
+        tc.fillStyle = color;
+        tc.fillRect(0, 0, PW, PH);
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.drawImage(t, off, 0);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    if (fx.glow > 0) {
+      const c = this.copyFrame();
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
       ctx.globalAlpha = 0.55 * fx.glow;
-      ctx.filter = `blur(${Math.round(W / 90)}px) brightness(1.15)`;
+      ctx.filter = `blur(${Math.round(PW / 90)}px) brightness(1.15)`;
       ctx.drawImage(c, 0, 0);
       ctx.restore();
     }
+    if (fx.leak > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      const cx = (-0.2 + 1.4 * fx.leakPos) * PW;
+      const g = ctx.createRadialGradient(cx, PH * 0.3, 0, cx, PH * 0.3, PW * 0.6);
+      g.addColorStop(0, `rgba(255,170,90,${0.75 * fx.leak})`);
+      g.addColorStop(0.45, `rgba(255,90,120,${0.35 * fx.leak})`);
+      g.addColorStop(1, 'rgba(255,60,120,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, PW, PH);
+      ctx.restore();
+    }
+    if (fx.flare > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      const fx0 = fx.flareX * PW;
+      const fy0 = fx.flareY * PH;
+      const r = Math.min(PW, PH);
+      const sun = ctx.createRadialGradient(fx0, fy0, 0, fx0, fy0, r * 0.35);
+      sun.addColorStop(0, `rgba(255,255,240,${0.95 * fx.flare})`);
+      sun.addColorStop(0.15, `rgba(255,220,160,${0.55 * fx.flare})`);
+      sun.addColorStop(1, 'rgba(255,200,120,0)');
+      ctx.fillStyle = sun;
+      ctx.fillRect(0, 0, PW, PH);
+      // Ghosts along the line through the centre of the frame.
+      const ghosts = [
+        [0.4, 0.06, '120,200,255'],
+        [0.7, 0.03, '255,160,220'],
+        [1.2, 0.09, '160,255,200'],
+        [1.5, 0.045, '255,220,140'],
+      ] as const;
+      for (const [k, size, rgb] of ghosts) {
+        const gx = fx0 + (PW / 2 - fx0) * k * 2;
+        const gy = fy0 + (PH / 2 - fy0) * k * 2;
+        const gg = ctx.createRadialGradient(gx, gy, 0, gx, gy, r * size);
+        gg.addColorStop(0, `rgba(${rgb},${0.35 * fx.flare})`);
+        gg.addColorStop(1, `rgba(${rgb},0)`);
+        ctx.fillStyle = gg;
+        ctx.beginPath();
+        ctx.arc(gx, gy, r * size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
     if (fx.vignette > 0) {
-      const r = Math.hypot(W, H) / 2;
-      const grad = ctx.createRadialGradient(W / 2, H / 2, r * 0.35, W / 2, H / 2, r);
+      const r = Math.hypot(PW, PH) / 2;
+      const grad = ctx.createRadialGradient(PW / 2, PH / 2, r * 0.35, PW / 2, PH / 2, r);
       grad.addColorStop(0, 'rgba(0,0,0,0)');
       grad.addColorStop(1, `rgba(0,0,0,${0.85 * fx.vignette})`);
       ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillRect(0, 0, PW, PH);
     }
     if (fx.grain > 0) {
       if (!this.grainCanvas) {
@@ -411,12 +807,12 @@ export class VideoEngine {
       const pattern = ctx.createPattern(this.grainCanvas, 'repeat');
       if (pattern) {
         // A new random offset each frame makes the grain dance like real film.
-        pattern.setTransform(new DOMMatrix().translate(Math.random() * 256, Math.random() * 256));
+        pattern.setTransform(new DOMMatrix().translate(Math.random() * 256, Math.random() * 256).scale(this.scale));
         ctx.save();
         ctx.globalCompositeOperation = 'overlay';
         ctx.globalAlpha = 0.45 * fx.grain;
         ctx.fillStyle = pattern;
-        ctx.fillRect(0, 0, W, H);
+        ctx.fillRect(0, 0, PW, PH);
         ctx.restore();
       }
     }
@@ -432,31 +828,60 @@ export class VideoEngine {
       }
       const pattern = ctx.createPattern(this.scanCanvas, 'repeat');
       if (pattern) {
+        pattern.setTransform(new DOMMatrix().scale(this.scale));
         ctx.save();
         ctx.globalAlpha = fx.scanlines;
         ctx.fillStyle = pattern;
-        ctx.fillRect(0, 0, W, H);
+        ctx.fillRect(0, 0, PW, PH);
         // A warm/cool colour cast, like worn tape.
         ctx.globalCompositeOperation = 'soft-light';
         ctx.globalAlpha = 0.35 * fx.scanlines;
         ctx.fillStyle = '#ff2fa0';
-        ctx.fillRect(0, 0, W, H);
+        ctx.fillRect(0, 0, PW, PH);
         ctx.restore();
       }
     }
+    for (const part of fx.particles) drawParticles(ctx, particlesAt(part.kind, part.local, part.intensity, part.speed), PW, PH);
     if (fx.flash > 0.01) {
       ctx.save();
       ctx.globalAlpha = fx.flash;
       ctx.fillStyle = '#fff';
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillRect(0, 0, PW, PH);
       ctx.restore();
     }
     if (fx.bars > 0) {
       ctx.fillStyle = '#000';
-      const h = fx.bars * H;
-      ctx.fillRect(0, 0, W, h);
-      ctx.fillRect(0, H - h, W, h);
+      const h = fx.bars * PH;
+      ctx.fillRect(0, 0, PW, h);
+      ctx.fillRect(0, PH - h, PW, h);
     }
+    ctx.restore();
+  }
+
+  private drawWatermark(W: number, H: number) {
+    const p = this.project!;
+    const wm = p.watermark!;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, wm.opacity));
+    const logo = wm.assetId ? this.images.get(wm.assetId) : undefined;
+    if (logo?.complete && logo.naturalWidth > 0) {
+      const w = wm.size * W;
+      const h = (w * logo.naturalHeight) / logo.naturalWidth;
+      const { x, y } = watermarkBox(wm.position, w, h, W, H);
+      ctx.drawImage(logo, x, y, w, h);
+    } else if (wm.text) {
+      const size = Math.max(10, wm.size * 0.22 * H);
+      ctx.font = `600 ${size}px Inter, system-ui, sans-serif`;
+      ctx.textBaseline = 'top';
+      const w = ctx.measureText(wm.text).width;
+      const { x, y } = watermarkBox(wm.position, w, size * 1.2, W, H);
+      ctx.shadowColor = 'rgba(0,0,0,0.6)';
+      ctx.shadowBlur = size * 0.3;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(wm.text, x, y);
+    }
+    ctx.restore();
   }
 
   /** PNG of the clip frame at the playhead (without text), for "freeze frame". */
@@ -467,16 +892,48 @@ export class VideoEngine {
     return new Promise((resolve) => source.toBlob((b) => resolve(b), 'image/png'));
   }
 
+  /** The whole frame at the playhead as PNG or JPEG, at `width`×`height` (defaults to the project size). */
+  async captureFrame(type: 'image/png' | 'image/jpeg', width?: number, height?: number): Promise<Blob | null> {
+    const p = this.project;
+    if (!p) return null;
+    const prev = this.scale;
+    if (width && height) {
+      this.scale = width / p.width;
+      this.resize();
+    }
+    this.draw();
+    const blob = await new Promise<Blob | null>((resolve) => this.canvas.toBlob((b) => resolve(b), type, 0.92));
+    this.scale = prev;
+    this.resize();
+    this.draw();
+    return blob;
+  }
+
+  /** Colour of the picture under a point (fractions of the frame), ignoring green-screen removal. */
+  sampleColor(fx: number, fy: number): string {
+    const prev = this.keyingOff;
+    this.keyingOff = true;
+    this.draw();
+    const x = Math.max(0, Math.min(this.canvas.width - 1, Math.round(fx * this.canvas.width)));
+    const y = Math.max(0, Math.min(this.canvas.height - 1, Math.round(fy * this.canvas.height)));
+    const d = this.ctx.getImageData(x, y, 1, 1).data;
+    this.keyingOff = prev;
+    this.draw();
+    return '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
+  }
+
   private snapshot = document.createElement('canvas');
   private snapshotClipId: string | null = null;
 
   /** Remember the frame just drawn (without text) as the outgoing frame for a transition. */
-  private takeSnapshot(clipId: string, W: number, H: number) {
-    if (this.snapshot.width !== W || this.snapshot.height !== H) {
-      this.snapshot.width = W;
-      this.snapshot.height = H;
+  private takeSnapshot(clipId: string) {
+    if (this.snapshot.width !== this.canvas.width || this.snapshot.height !== this.canvas.height) {
+      this.snapshot.width = this.canvas.width;
+      this.snapshot.height = this.canvas.height;
     }
-    this.snapshot.getContext('2d')!.drawImage(this.canvas, 0, 0);
+    const s = this.snapshot.getContext('2d')!;
+    s.clearRect(0, 0, this.snapshot.width, this.snapshot.height);
+    s.drawImage(this.canvas, 0, 0);
     this.snapshotClipId = clipId;
   }
 
@@ -492,32 +949,32 @@ export class VideoEngine {
     return null;
   }
 
-  /** Draw a clip's frame letterboxed into the canvas, with its filters, motion and background fill. */
-  private drawClip(source: CanvasImageSource, asset: MediaAsset, clip: Clip, alpha: number, progress: number) {
+  /** Draw a main-track clip: background fill, then the picture with all its layer settings. */
+  private drawMainClip(source: CanvasImageSource, asset: MediaAsset, clip: Clip, alpha: number, local: number) {
     const ctx = this.ctx;
-    const W = this.canvas.width;
-    const H = this.canvas.height;
+    const p = this.project!;
+    const W = p.width;
+    const H = p.height;
+    const len = clipDuration(clip);
+    const progress = len > 0 ? local / len : 0;
     const sw = asset.width ?? W;
     const sh = asset.height ?? H;
-    const scale = Math.min(W / sw, H / sh);
-    const dw = sw * scale;
-    const dh = sh * scale;
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    if (this.project?.fill === 'blur' && (dw < W - 1 || dh < H - 1)) this.drawBlurredFill(source, sw, sh, W, H);
-    const m = motionTransform(clip.motion, progress);
-    if (m.scale !== 1 || m.dx !== 0) {
-      ctx.translate(W / 2 + m.dx * W, H / 2);
-      ctx.scale(m.scale, m.scale);
-      ctx.translate(-W / 2, -H / 2);
+    const f0 = clipFrame(clip, asset, W, H, local, progress);
+    if (p.fill === 'blur' && (f0.w < W - 1 || f0.h < H - 1 || f0.rotation !== 0)) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      this.drawBlurredFill(source, sw, sh, W, H);
+      ctx.restore();
     }
-    if (clip.mirror) {
-      ctx.translate(W, 0);
-      ctx.scale(-1, 1);
-    }
-    ctx.filter = cssFilter(clip.filters);
-    ctx.drawImage(source, (W - dw) / 2, (H - dh) / 2, dw, dh);
-    ctx.restore();
+    this.paintLayer({
+      source,
+      src: cropRect(sw, sh, clip.crop),
+      layer: clip,
+      frameAt: (t) => clipFrame(clip, asset, W, H, t, len > 0 ? t / len : 0),
+      local,
+      alpha,
+      mirror: clip.mirror,
+    });
   }
 
   /** Fill the frame with a soft, darkened, zoomed copy of the clip (cheap blur via downscaling). */
@@ -531,7 +988,7 @@ export class VideoEngine {
     const ctx = this.ctx;
     ctx.save();
     ctx.imageSmoothingQuality = 'high';
-    ctx.filter = 'blur(12px) brightness(0.7)';
+    ctx.filter = `blur(${12 * this.scale}px) brightness(0.7)`;
     ctx.drawImage(small, -W * 0.05, -H * 0.05, W * 1.1, H * 1.1);
     ctx.restore();
   }
@@ -547,20 +1004,18 @@ export class VideoEngine {
       source = this.sourceFor(asset);
     }
     if (!source) return;
-    const box = overlayBox(o, asset, p.width, p.height);
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.globalAlpha = o.opacity;
-    ctx.shadowColor = 'rgba(0,0,0,0.4)';
-    ctx.shadowBlur = 20;
-    ctx.beginPath();
-    ctx.roundRect(box.x, box.y, box.w, box.h, o.rounded * Math.min(box.w, box.h));
-    ctx.fillStyle = '#000';
-    ctx.fill();
-    ctx.shadowColor = 'transparent';
-    ctx.clip();
-    ctx.drawImage(source, box.x, box.y, box.w, box.h);
-    ctx.restore();
+    const sw = asset.width ?? p.width;
+    const sh = asset.height ?? p.height;
+    this.paintLayer({
+      source,
+      src: cropRect(sw, sh, o.crop),
+      layer: o,
+      frameAt: (t) => overlayFrame(o, asset, p.width, p.height, t),
+      local: this.time - o.start,
+      alpha: 1,
+      rounded: o.rounded,
+      shadow: o.shadow ?? true,
+    });
   }
 
   onEnded(fn: () => void) {
@@ -569,17 +1024,22 @@ export class VideoEngine {
   }
 
   /** Record the whole project in real time. Resolves with a WebM (or MP4 on Safari) blob. */
-  async record(onProgress?: (fraction: number) => void, opts: ExportOptions = { fps: 30, bitrate: 8_000_000 }): Promise<Blob> {
-    if (!this.project || this.duration <= 0) throw new Error('Nothing to export yet');
+  async record(onProgress?: (fraction: number) => void, opts: RecordOptions = { fps: 30, bitrate: 8_000_000 }): Promise<Blob> {
+    const p = this.project;
+    if (!p || this.duration <= 0) throw new Error('Nothing to export yet');
     this.pause();
     this.ensureAudio();
+    const prevScale = this.scale;
+    const prevFps = this.fps;
+    if (opts.width && opts.height) {
+      this.scale = opts.width / p.width;
+      this.resize();
+    }
+    this.fps = opts.fps;
     const audioCtx = this.audioCtx!;
     const dest = audioCtx.createMediaStreamDestination();
     this.master!.connect(dest);
-    const stream = new MediaStream([
-      ...this.canvas.captureStream(opts.fps).getVideoTracks(),
-      ...dest.stream.getAudioTracks(),
-    ]);
+    const stream = new MediaStream([...this.canvas.captureStream(opts.fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
     const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((m) =>
       MediaRecorder.isTypeSupported(m),
     );
@@ -587,30 +1047,37 @@ export class VideoEngine {
     const chunks: Blob[] = [];
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
 
-    this.seek(0);
-    await new Promise((r) => setTimeout(r, 400)); // let the first frame decode
+    try {
+      this.seek(0);
+      await new Promise((r) => setTimeout(r, 400)); // let the first frame decode
 
-    const done = new Promise<void>((resolve) => {
-      const off = this.onEnded(() => {
-        off();
-        resolve();
+      const done = new Promise<void>((resolve) => {
+        const off = this.onEnded(() => {
+          off();
+          resolve();
+        });
       });
-    });
-    const prevOnTime = this.onTime;
-    this.onTime = (t) => {
-      prevOnTime?.(t);
-      onProgress?.(t / this.duration);
-    };
-    recorder.start(250);
-    this.play();
-    await done;
-    this.onTime = prevOnTime;
-    await new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve();
-      recorder.stop();
-    });
-    this.master!.disconnect(dest);
-    stream.getTracks().forEach((t) => t.stop());
+      const prevOnTime = this.onTime;
+      this.onTime = (t) => {
+        prevOnTime?.(t);
+        onProgress?.(t / this.duration);
+      };
+      recorder.start(250);
+      this.play();
+      await done;
+      this.onTime = prevOnTime;
+      await new Promise<void>((resolve) => {
+        recorder.onstop = () => resolve();
+        recorder.stop();
+      });
+    } finally {
+      this.master!.disconnect(dest);
+      stream.getTracks().forEach((t) => t.stop());
+      this.scale = prevScale;
+      this.fps = prevFps;
+      this.resize();
+      this.draw();
+    }
     return new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
   }
 
@@ -624,52 +1091,6 @@ export class VideoEngine {
     this.overlayVideos.forEach((v) => v.pause());
     void this.audioCtx?.close();
   }
-}
-
-export function drawText(ctx: CanvasRenderingContext2D, o: TextOverlay, t: number, W: number, H: number, animate = true) {
-  const { alpha, scale, dy } = animate ? textAnimation(o, t) : { alpha: 1, scale: 1, dy: 0 };
-  if (alpha <= 0) return;
-  const size = o.size * H;
-  const lines = o.text.split('\n');
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.translate(o.x * W, (o.y + dy) * H);
-  ctx.scale(scale, scale);
-  ctx.font = `${o.bold ? 'bold ' : ''}${size}px Inter, system-ui, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const lh = size * 1.2;
-  const totalH = lh * lines.length;
-  if (o.background) {
-    const w = Math.max(...lines.map((l) => ctx.measureText(l).width));
-    const pad = size * 0.3;
-    ctx.fillStyle = o.background;
-    ctx.beginPath();
-    ctx.roundRect(-w / 2 - pad, -totalH / 2 - pad / 2, w + pad * 2, totalH + pad, pad);
-    ctx.fill();
-  } else if (!o.glow) {
-    ctx.shadowColor = 'rgba(0,0,0,0.6)';
-    ctx.shadowBlur = size * 0.15;
-  }
-  const yOf = (i: number) => -totalH / 2 + lh * (i + 0.5);
-  if (o.glow) {
-    // Neon: a coloured halo drawn twice so it is bright, then crisp letters on top.
-    ctx.shadowColor = o.glow;
-    ctx.shadowBlur = size * 0.45;
-    ctx.fillStyle = o.glow;
-    for (let pass = 0; pass < 2; pass++) lines.forEach((line, i) => ctx.fillText(line, 0, yOf(i)));
-    ctx.shadowBlur = size * 0.12;
-  }
-  if (o.stroke) {
-    ctx.strokeStyle = o.stroke;
-    ctx.lineWidth = size * 0.14;
-    ctx.lineJoin = 'round';
-    lines.forEach((line, i) => ctx.strokeText(line, 0, yOf(i)));
-    ctx.shadowColor = 'transparent';
-  }
-  ctx.fillStyle = o.color;
-  lines.forEach((line, i) => ctx.fillText(line, 0, yOf(i)));
-  ctx.restore();
 }
 
 /** Read duration, size and a thumbnail for an imported file. */
@@ -716,7 +1137,6 @@ export async function probeMedia(file: File, id: string): Promise<MediaAsset> {
   return asset;
 }
 
-
 async function decodeAudio(file: File): Promise<AudioBuffer | null> {
   try {
     const ctx = new OfflineAudioContext(1, 1, 44100);
@@ -726,10 +1146,10 @@ async function decodeAudio(file: File): Promise<AudioBuffer | null> {
   }
 }
 
-/** Where an overlay is drawn, in project pixels. */
-export function overlayBox(o: OverlayClip, asset: MediaAsset, W: number, H: number) {
-  const aspect = (asset.height ?? 9) / (asset.width ?? 16);
-  const w = o.scale * W;
-  const h = w * aspect;
-  return { x: o.x * W - w / 2, y: o.y * H - h / 2, w, h };
+/** Load an uploaded font file so text can use it. Returns the family name. */
+export async function loadFont(family: string, url: string): Promise<string> {
+  const face = new FontFace(family, `url(${url})`);
+  await face.load();
+  document.fonts.add(face);
+  return family;
 }

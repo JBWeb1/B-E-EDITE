@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "test": "vitest run",
-    "test:e2e": "node e2e/full.mjs"
+    "test:e2e": "node e2e/full.mjs",
+    "test:e2e:pro": "node e2e/pro.mjs"
   },
   "dependencies": {
     "react": "18.3.1",

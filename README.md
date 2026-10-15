@@ -47,6 +47,7 @@ npm test           # unit tests
 npm run build      # production build in dist/
 npm run preview    # serve the production build on http://localhost:4173
 npm run test:e2e   # full browser test against the preview (needs `npx playwright install chromium` once)
+npm run test:e2e:pro  # browser test for the pro tools (green screen, keyframes, export…)
 ```
 
 ## Features
@@ -88,6 +89,24 @@ npm run test:e2e   # full browser test against the preview (needs `npx playwrigh
 - First-time tips and a keyboard shortcuts panel (press **?**)
 
 ### 🎬 Video editor (CapCut-style)
+
+**Pro tools (After Effects-style, made simple)**
+
+- **Keyframes**: press ◆ next to position, size, rotation, opacity (or volume, or a mask) to animate it; diamonds appear on the timeline (click one to jump to it). Easing presets — Smooth, Bounce, Elastic, Snap, Hold — instead of a graph editor. **K** adds a position keyframe; dragging an animated item on the player sets a keyframe
+- **One-click animations**: fade, zoom, slide, rise, pop, spin, slow drift; plus **motion blur** and **wiggle** (handheld shake) switches
+- **Multiple video tracks** (V2, V3, …): put photos/videos on layers above the main track; drag a layer up or down to change its track
+- **Green screen**: one click removes a green or blue background (runs on the graphics card), or click **Pick colour** and then the background on the player; soft-edge and green-glow controls
+- **Masks**: circle, rectangle, heart, star, diamond with a soft edge and invert; masks can move and grow with keyframes
+- **Crop** (free or 16:9 / 9:16 / 1:1 / 4:5) and **blend modes** (screen, multiply, overlay, add…)
+- **Speed ramps** (Montage, Hero, Bullet, Flash in/out) and **play backwards**
+- **Colour grading**: three colour wheels (shadows, midtones, highlights) and cinematic **looks** (Teal & orange, Cinematic, Vintage, Noir, Golden hour, Cyberpunk…); **save your own looks** and reuse them with one click
+- **Audio**: volume that rises and falls over time (volume keyframes) and **noise reduction** (light / medium / strong)
+- **Text**: letter-by-letter animations (typewriter, wave, bounce, glitch, rainbow…), **TikTok-style word-by-word captions**, your **own fonts** (.ttf/.otf/.woff)
+- **Titles**: animated name captions (lower thirds), subscribe button, countdown, title reveal, breaking news, location, quote, social handle, chapter — just type your words and pick colours
+- **Shapes**: animated boxes, circles, rings, lines, arrows, stars, hearts, bursts, ticks — they draw on, pop, spin or pulse
+- **More effects**: glitch, chromatic aberration, blur, light leak, lens flare, and particles (confetti, sparkles, snow, hearts, bubbles, dust) with a speed control
+- **Export**: one-click presets for YouTube (1080p, 4K, Shorts), TikTok, Instagram (Reels, post, portrait); resolution up to **4K**, **24–60 fps**, quality; **watermark** (text or your logo); save the current **frame as PNG/JPEG**, or the **soundtrack as WAV**
+
 - **CapCut-style workspace**: library tabs on the left (Media, Audio, Text, Stickers, Effects, Transitions, Filters), player in the middle, details on the right, and a full-width multi-track timeline with track headers to hide or mute each track
 - **Sound effects library**: 19 built-in sounds (whoosh, riser, glitch, boom, pop, ding, shutter, coin, applause…) — preview with ▶ and add with ＋ at the playhead
 - **Video effects track**: shake, zoom pulse, flash, dreamy glow, vignette, film grain, VHS and cinema bars, with a strength slider

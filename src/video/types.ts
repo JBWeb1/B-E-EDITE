@@ -1,6 +1,9 @@
 import type { Filters } from '../lib/filters';
+import type { Keyframes, Ramp } from './anim';
+import type { ColorGrade } from './grade';
+import type { ChromaKey } from './keyer';
 
-export type AssetKind = 'video' | 'image' | 'audio';
+export type AssetKind = 'video' | 'image' | 'audio' | 'font';
 
 export interface MediaAsset {
   id: string;
@@ -17,6 +20,10 @@ export interface MediaAsset {
   peaks?: number[];
   /** Set when the file is one of the built-in sound effects (so it is added only once). */
   sfxId?: string;
+  /** Font assets: the family name to use in text. */
+  family?: string;
+  /** Logo used as the export watermark (not shown in the media library). */
+  logo?: boolean;
 }
 
 export type TransitionType = 'fade' | 'black' | 'slide' | 'zoom' | 'wipe';
@@ -29,8 +36,58 @@ export interface Transition {
 
 export type ClipFilters = Filters;
 
+export type BlendMode = 'normal' | 'screen' | 'multiply' | 'overlay' | 'lighten' | 'darken' | 'add' | 'difference' | 'soft-light' | 'color-dodge';
+
+export type MaskShape = 'none' | 'rect' | 'ellipse' | 'heart' | 'star' | 'diamond';
+
+export interface Mask {
+  shape: MaskShape;
+  /** Centre and size as fractions of the layer. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Soft edge, 0..0.5 of the layer's shorter side. */
+  feather: number;
+  /** Show everything except the shape. */
+  invert: boolean;
+  /** Overall size multiplier (animatable as `maskScale`). */
+  scale?: number;
+}
+
+/** Cut away the edges of a picture, as fractions 0..0.45 of each side. */
+export interface Crop {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** Pro settings shared by main-track clips and layers on the upper video tracks. */
+export interface LayerProps {
+  /** Position, size, angle and see-through level (keyframes in `keys` animate them). */
+  x?: number;
+  y?: number;
+  scale?: number;
+  rotation?: number;
+  opacity?: number;
+  keys?: Keyframes;
+  crop?: Crop | null;
+  chroma?: ChromaKey | null;
+  mask?: Mask | null;
+  blend?: BlendMode;
+  motionBlur?: boolean;
+  wiggle?: { amount: number; speed: number } | null;
+  grade?: ColorGrade | null;
+  /** Play backwards. */
+  reverse?: boolean;
+  ramp?: Ramp;
+  /** Audio noise reduction, 0 (off) to 3 (strong). */
+  denoise?: number;
+}
+
 /** A clip on the main (magnetic) track. Clips play back to back. */
-export interface Clip {
+export interface Clip extends LayerProps {
   id: string;
   assetId: string;
   /** Source in/out points in seconds. */
@@ -51,8 +108,8 @@ export interface Clip {
 
 export type Motion = 'none' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right';
 
-/** A photo or video layered on top of the main track (picture-in-picture). */
-export interface OverlayClip {
+/** A photo or video layered on top of the main track (picture-in-picture), on video track 2 and up. */
+export interface OverlayClip extends Omit<LayerProps, 'x' | 'y' | 'scale' | 'opacity'> {
   id: string;
   assetId: string;
   start: number;
@@ -67,6 +124,11 @@ export interface OverlayClip {
   volume: number;
   /** Rounded corners as a fraction of the overlay's shorter side. */
   rounded: number;
+  /** Video track number: 2 is just above the main track, higher numbers are drawn on top. */
+  track?: number;
+  filters?: Filters;
+  /** Soft shadow behind the layer. */
+  shadow?: boolean;
 }
 
 export interface TextOverlay {
@@ -87,9 +149,69 @@ export interface TextOverlay {
   stroke?: string | null;
   /** Coloured glow behind the letters ("neon"). */
   glow?: string | null;
+  /** Font family (built-in or uploaded). */
+  font?: string;
+  italic?: boolean;
+  /** Size multiplier and see-through level (animatable; `size` stays the text size). */
+  scale?: number;
+  opacity?: number;
+  rotation?: number;
+  keys?: Keyframes;
+  wiggle?: { amount: number; speed: number } | null;
+  motionBlur?: boolean;
+  /** Letter-by-letter animation style. */
+  animator?: TextAnimator;
+  /** TikTok-style word-by-word captions. */
+  words?: WordMode;
+  /** Highlight colour for word captions and title templates. */
+  accent?: string;
+  /** Draw an animated title template instead of plain text. */
+  template?: TitleTemplate;
+  /** Draw a shape instead of text (graphics live on the text track too). */
+  shape?: ShapeKind;
+  /** Shape width / height. */
+  aspect?: number;
+  outline?: boolean;
+  shapeAnim?: ShapeAnim;
 }
 
-export type EffectType = 'shake' | 'zoom-pulse' | 'flash' | 'vignette' | 'grain' | 'vhs' | 'glow' | 'letterbox';
+export type TextAnimator = 'none' | 'typewriter' | 'wave' | 'bounce' | 'glitch' | 'fade-letters' | 'rise' | 'zoom' | 'flicker' | 'rainbow' | 'spin';
+export type WordMode = 'off' | 'highlight' | 'single' | 'build';
+export type TitleTemplate =
+  | 'lower-third-bar'
+  | 'lower-third-box'
+  | 'lower-third-line'
+  | 'subscribe'
+  | 'countdown'
+  | 'title-reveal'
+  | 'breaking-news'
+  | 'location'
+  | 'quote'
+  | 'social'
+  | 'chapter';
+export type ShapeKind = 'rect' | 'circle' | 'ring' | 'line' | 'arrow' | 'star' | 'heart' | 'burst' | 'check' | 'cross' | 'triangle';
+export type ShapeAnim = 'none' | 'draw' | 'pop' | 'spin' | 'pulse';
+
+export type EffectType =
+  | 'shake'
+  | 'zoom-pulse'
+  | 'flash'
+  | 'vignette'
+  | 'grain'
+  | 'vhs'
+  | 'glow'
+  | 'letterbox'
+  | 'blur'
+  | 'chromatic'
+  | 'glitch'
+  | 'light-leak'
+  | 'lens-flare'
+  | 'confetti'
+  | 'snow'
+  | 'sparkles'
+  | 'hearts'
+  | 'dust'
+  | 'bubbles';
 
 /** A video effect applied to the whole frame for a stretch of time (its own track). */
 export interface EffectItem {
@@ -99,6 +221,8 @@ export interface EffectItem {
   duration: number;
   /** 0..1 strength. */
   intensity: number;
+  /** How fast it moves (shake, particles), 1 = normal. */
+  speed?: number;
 }
 
 /** Per-track switches from the timeline's track headers. */
@@ -120,6 +244,24 @@ export interface AudioClip {
   /** Seconds to fade the sound in at the start / out at the end. */
   fadeIn?: number;
   fadeOut?: number;
+  /** Volume keyframes (`volume`, multiplies `volume`). */
+  keys?: Keyframes;
+  /** Noise reduction, 0 (off) to 3 (strong). */
+  denoise?: number;
+}
+
+export type WatermarkPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
+
+export interface Watermark {
+  /** Text watermark (used when there is no logo). */
+  text: string;
+  /** Logo image asset. */
+  assetId?: string;
+  position: WatermarkPosition;
+  /** 0..1. */
+  opacity: number;
+  /** Width (logo) or text height as a fraction of the frame. */
+  size: number;
 }
 
 export interface VideoProject {
@@ -136,4 +278,6 @@ export interface VideoProject {
   overlays: OverlayClip[];
   effects: EffectItem[];
   tracks?: TrackState;
+  /** Shown in exports (and the preview) when set. */
+  watermark?: Watermark | null;
 }
