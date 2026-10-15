@@ -938,39 +938,6 @@ kbd {
   min-height: 0;
 }
 
-.rail {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 8px;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-}
-
-.rail button {
-  flex-direction: column;
-  gap: 5px;
-  width: 64px;
-  padding: 10px 4px;
-  font-size: 11px;
-  font-weight: 500;
-  background: transparent;
-  border-color: transparent;
-  color: var(--muted);
-  border-radius: var(--radius);
-}
-
-.rail button:hover:not(:disabled) {
-  background: var(--surface-2);
-  border-color: transparent;
-  color: var(--text);
-}
-
-.rail button.active {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-
 .panel {
   width: 288px;
   flex-shrink: 0;
@@ -1975,21 +1942,6 @@ kbd {
     flex-direction: column;
     overflow-y: auto;
   }
-  .rail {
-    flex-direction: row;
-    justify-content: space-around;
-    padding: 4px;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-    overflow-x: auto;
-    flex: none;
-  }
-  .rail button {
-    flex: 1;
-    width: auto;
-    min-width: 56px;
-    padding: 6px 2px;
-  }
   .panel,
   .panel.right {
     width: 100%;
@@ -2106,10 +2058,10 @@ kbd {
 }
 
 /* =========================================================
-   Video editor — CapCut-style layout and colours
+   Editors — CapCut-style layout and colours (video and design)
    ========================================================= */
 
-.editor.video {
+.editor.cc {
   --bg: #0f0f10;
   --surface: #18181a;
   --surface-2: #1f1f22;
@@ -2124,18 +2076,18 @@ kbd {
   background: var(--bg);
 }
 
-.editor.video .primary {
+.editor.cc .primary {
   box-shadow: 0 4px 14px rgba(0, 200, 210, 0.25);
 }
 
-.editor.video .workspace {
+.editor.cc .workspace {
   flex: 1;
   min-height: 0;
   gap: 4px;
   padding: 4px 4px 0;
 }
 
-.editor.video .panel {
+.editor.cc .panel {
   border: 0;
   border-radius: 8px;
   padding: 0;
@@ -2600,7 +2552,7 @@ kbd {
 
 /* Timeline */
 
-.editor.video .timeline {
+.editor.cc .timeline {
   margin: 0 4px 4px;
   border: 0;
   border-radius: 0 0 8px 8px;
@@ -2610,7 +2562,7 @@ kbd {
   background: var(--surface);
 }
 
-.editor.video .ruler {
+.editor.cc .ruler {
   height: 24px;
   background: var(--surface);
 }
@@ -2665,7 +2617,7 @@ kbd {
   color: #fca5a5;
 }
 
-.editor.video .track {
+.editor.cc .track {
   margin: 4px 0;
 }
 
@@ -2678,15 +2630,15 @@ kbd {
   opacity: 0.45;
 }
 
-.editor.video .item {
+.editor.cc .item {
   border-radius: 6px;
 }
 
-.editor.video .item.selected {
+.editor.cc .item.selected {
   border-color: #fff;
 }
 
-.editor.video .clip-item {
+.editor.cc .clip-item {
   background-color: #1d3b41;
   box-shadow: inset 0 0 0 1px rgba(0, 200, 210, 0.35);
 }
@@ -2720,7 +2672,7 @@ kbd {
   background: rgba(0, 0, 0, 0.5);
 }
 
-.editor.video .text-item {
+.editor.cc .text-item {
   background: linear-gradient(180deg, #b7791f, #975a16);
 }
 
@@ -2728,19 +2680,19 @@ kbd {
   background: linear-gradient(180deg, #7c3aed, #6d28d9);
 }
 
-.editor.video .audio-item {
+.editor.cc .audio-item {
   background: linear-gradient(180deg, #0f766e, #115e59);
 }
 
-.editor.video .playhead {
+.editor.cc .playhead {
   background: #fff;
 }
 
-.editor.video .playhead::before {
+.editor.cc .playhead::before {
   background: #fff;
 }
 
-.editor.video .transition-chip.on {
+.editor.cc .transition-chip.on {
   background: var(--accent);
   color: #001b1d;
 }
@@ -2755,7 +2707,7 @@ kbd {
 }
 
 @media (max-width: 760px) {
-  .editor.video .workspace {
+  .editor.cc .workspace {
     padding: 0;
   }
   .cc-library,
@@ -2768,7 +2720,7 @@ kbd {
   .cc-library-body {
     max-height: 38vh;
   }
-  .editor.video .cc-player {
+  .editor.cc .cc-player {
     height: 50vh;
   }
   .cc-toolbar {
@@ -2776,5 +2728,71 @@ kbd {
   }
   .zoom-range {
     width: 70px;
+  }
+}
+
+/* Design editor in the CapCut layout */
+
+.cc-library.collapsed {
+  display: flex;
+  width: auto;
+}
+
+.design .cc-library {
+  width: 320px;
+}
+
+.cc-head-info {
+  margin-left: auto;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.design .stage-column.cc-player {
+  display: flex;
+  flex-direction: column;
+}
+
+.design .stage {
+  background-color: #0a0a0b;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+}
+
+.design .cc-player-bar .zoom {
+  background: var(--surface-2);
+}
+
+.design .page-strip {
+  margin: 4px;
+  padding: 8px 10px 8px 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.page-head {
+  position: static;
+  height: 60px;
+  flex: none;
+}
+
+.design .page-thumb.active {
+  border-color: var(--accent);
+}
+
+.design .cc-library-body h3:first-child {
+  margin-top: 0;
+}
+
+@media (max-width: 760px) {
+  .design .stage-column.cc-player {
+    flex: none;
+    height: 55vh;
+  }
+  .design .cc-library {
+    width: 100%;
+  }
+  .page-head {
+    display: none;
   }
 }

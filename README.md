@@ -61,6 +61,7 @@ npm run test:e2e   # full browser test against the preview (needs `npx playwrigh
 - Open, search and delete projects; video media files are stored with the project
 
 ### 🎨 Design editor (Canva-style)
+- **Same CapCut-style workspace as the video editor**: library tabs on the left, the canvas in the middle with undo, Present and zoom underneath, details on the right, and the pages along the bottom like a timeline
 - Canvas sizes for Instagram post/story, YouTube thumbnail, presentation, Facebook cover, A4 poster
 - **Multiple pages** (great for presentations and carousels): add, duplicate, reorder and delete pages from the page strip
 - **Present mode**: full-screen slideshow with arrow-key navigation

@@ -299,7 +299,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
         ctx.save();
         ctx.translate(c.x, c.y);
         ctx.rotate((el.rotation * Math.PI) / 180);
-        ctx.strokeStyle = el.locked ? '#9ca3af' : '#7c3aed';
+        ctx.strokeStyle = el.locked ? '#9ca3af' : '#00c8d2';
         ctx.lineWidth = (selected ? 2 : 1.5) * px;
         ctx.strokeRect(-el.width / 2, -el.height / 2, el.width, el.height);
         ctx.restore();
@@ -308,7 +308,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
         const b = boundsOf(selectedEls)!;
         ctx.save();
         ctx.setLineDash([6 * px, 4 * px]);
-        ctx.strokeStyle = '#7c3aed';
+        ctx.strokeStyle = '#00c8d2';
         ctx.lineWidth = px;
         ctx.strokeRect(b.x, b.y, b.width, b.height);
         ctx.restore();
@@ -316,7 +316,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       if (selected && !selected.locked) {
         const size = 10 * px;
         ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#7c3aed';
+        ctx.strokeStyle = '#00c8d2';
         ctx.lineWidth = 1.5 * px;
         for (const h of visibleHandles(selected)) {
           const p = handlePosition(selected, h);
@@ -331,8 +331,8 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       }
     }
     if (marquee) {
-      ctx.fillStyle = 'rgba(124, 58, 237, 0.1)';
-      ctx.strokeStyle = '#7c3aed';
+      ctx.fillStyle = 'rgba(0, 200, 210, 0.1)';
+      ctx.strokeStyle = '#00c8d2';
       ctx.lineWidth = px;
       ctx.fillRect(marquee.x, marquee.y, marquee.width, marquee.height);
       ctx.strokeRect(marquee.x, marquee.y, marquee.width, marquee.height);
@@ -722,20 +722,13 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   };
 
   return (
-    <div className="editor">
+    <div className="editor design cc">
       <header className="topbar">
         <div className="topbar-group">
           <button className="brand-btn" onClick={onExit} title="Back to home" aria-label="Home">
             <Logo height={17} />
           </button>
           <span className="divider" />
-          <input
-            className="title-input"
-            value={doc.name}
-            onFocus={mark}
-            onChange={(e) => setTransient((d) => ({ ...d, name: e.target.value }))}
-            aria-label="Design name"
-          />
           <span className={`save-state ${saveState ?? ''}`} aria-live="polite">
             {saveState === 'saving' && 'Saving…'}
             {saveState === 'saved' && (
@@ -747,31 +740,17 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
           </span>
         </div>
         <div className="topbar-group center">
-          <button className="icon-btn" onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
-            <Icon name="undo" />
-          </button>
-          <button className="icon-btn" onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
-            <Icon name="redo" />
-          </button>
-          <span className="divider" />
-          <div className="zoom">
-            <button onClick={() => setZoomOverride(Math.max(0.05, zoom / 1.25))} title="Zoom out" aria-label="Zoom out">
-              <Icon name="minus" size={16} />
-            </button>
-            <button className="zoom-value" onClick={() => setZoomOverride(null)} title="Fit to screen">
-              {Math.round(zoom * 100)}%
-            </button>
-            <button onClick={() => setZoomOverride(Math.min(8, zoom * 1.25))} title="Zoom in" aria-label="Zoom in">
-              <Icon name="plus" size={16} />
-            </button>
-          </div>
+          <input
+            className="title-input center-title"
+            value={doc.name}
+            onFocus={mark}
+            onChange={(e) => setTransient((d) => ({ ...d, name: e.target.value }))}
+            aria-label="Design name"
+          />
         </div>
         <div className="topbar-group end">
           <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="help" />
-          </button>
-          <button className="secondary" onClick={() => setPresenting(page)} title="Show pages full screen">
-            <Icon name="present" /> <span className="label">Present</span>
           </button>
           <Menu
             buttonClassName="primary"
@@ -805,7 +784,8 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       </header>
 
       <div className="workspace">
-        <nav className="rail">
+        <aside className={`panel cc-library ${panelOpen ? '' : 'collapsed'}`}>
+          <nav className="cc-tabs" aria-label="Library">
           {(['templates', 'text', 'elements', 'uploads', 'background'] as Tab[]).map((t) => (
             <button
               key={t}
@@ -819,13 +799,13 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                 }
               }}
             >
-              <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', uploads: 'upload', background: 'droplet' } as const)[t]} size={20} />
+              <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', uploads: 'upload', background: 'droplet' } as const)[t]} size={18} />
               <span>{t[0].toUpperCase() + t.slice(1)}</span>
             </button>
           ))}
-        </nav>
-
-        <aside className={`panel ${panelOpen ? '' : 'collapsed'}`}>
+          </nav>
+          {panelOpen && (
+          <div className="cc-library-body">
           {tab === 'templates' && (
             <>
               <h3>Templates</h3>
@@ -974,9 +954,17 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
               )}
             </>
           )}
+          </div>
+          )}
         </aside>
 
-        <div className="stage-column">
+        <div className="stage-column cc-player">
+        <div className="cc-panel-head">
+          <span>Canvas</span>
+          <span className="cc-head-info">
+            Page {page + 1} of {file.pages.length} · {doc.width}×{doc.height}
+          </span>
+        </div>
         <main
           className="stage"
           ref={stageRef}
@@ -1036,20 +1024,41 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
             ]}
           />
         </main>
-        <PageStrip
-          file={file}
-          current={page}
-          images={images}
-          imageVersion={imageVersion}
-          onSelect={goToPage}
-          onAdd={addPage}
-          onDuplicate={copyPage}
-          onDelete={deletePage}
-          onMove={shiftPage}
-        />
+        <div className="cc-player-bar">
+          <div className="cc-tools">
+          <button className="icon-btn" onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
+            <Icon name="undo" />
+          </button>
+          <button className="icon-btn" onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+            <Icon name="redo" />
+          </button>
+          </div>
+          <div className="transport-center">
+            <button className="secondary small" onClick={() => setPresenting(page)} title="Show pages full screen">
+              <Icon name="present" size={16} /> Present
+            </button>
+          </div>
+          <div className="cc-player-right">
+          <div className="zoom">
+            <button onClick={() => setZoomOverride(Math.max(0.05, zoom / 1.25))} title="Zoom out" aria-label="Zoom out">
+              <Icon name="minus" size={16} />
+            </button>
+            <button className="zoom-value" onClick={() => setZoomOverride(null)} title="Fit to screen">
+              {Math.round(zoom * 100)}%
+            </button>
+            <button onClick={() => setZoomOverride(Math.min(8, zoom * 1.25))} title="Zoom in" aria-label="Zoom in">
+              <Icon name="plus" size={16} />
+            </button>
+          </div>
+          </div>
+        </div>
         </div>
 
-        <aside className="panel right">
+        <aside className="panel right cc-details">
+          <div className="cc-panel-head">
+            <span>Details</span>
+          </div>
+          <div className="cc-details-body">
           {selectedEls.length > 1 ? (
             <>
               <h3>{selectedEls.length} elements selected</h3>
@@ -1268,8 +1277,21 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
             ))}
             {doc.elements.length === 0 && <li className="hint">Nothing here yet. Add text, shapes or images from the left.</li>}
           </ul>
+          </div>
         </aside>
       </div>
+
+      <PageStrip
+          file={file}
+          current={page}
+          images={images}
+          imageVersion={imageVersion}
+          onSelect={goToPage}
+          onAdd={addPage}
+          onDuplicate={copyPage}
+          onDelete={deletePage}
+          onMove={shiftPage}
+        />
 
       {menu && (
         <div className="context-menu" style={{ left: menu.x, top: menu.y }} onClick={() => setMenu(null)}>
@@ -1429,6 +1451,10 @@ function PageStrip({
   };
   return (
     <div className="page-strip" aria-label="Pages">
+      <div className="track-head page-head">
+        <Icon name="layers" size={14} />
+        <span>Pages</span>
+      </div>
       <div className="page-list">
         {file.pages.map((p, i) => (
           <button

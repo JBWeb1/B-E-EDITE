@@ -828,7 +828,7 @@ export function VideoEditor({
 
   return (
     <div
-      className="editor video"
+      className="editor video cc"
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
