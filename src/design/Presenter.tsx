@@ -79,7 +79,7 @@ export function Presenter({ file, startPage, onClose }: { file: DesignFile; star
   }, [file, page, images]);
 
   return (
-    <div className="presenter" ref={rootRef} onClick={next} role="dialog" aria-label="Presentation">
+    <div className="presenter" data-modal ref={rootRef} onClick={next} role="dialog" aria-label="Presentation">
       <canvas ref={canvasRef} />
       <div className="presenter-bar" onClick={(e) => e.stopPropagation()}>
         <button onClick={prev} disabled={page === 0} aria-label="Previous page">‹</button>

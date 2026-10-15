@@ -7,6 +7,7 @@ import { SIZE_PRESETS, TEMPLATES } from '../design/templates';
 import { deleteProject, listProjects, loadDesignProject, loadVideoProject, newProjectId } from '../lib/projects';
 import type { ProjectSummary } from '../lib/projects';
 import { Icon } from '../ui/Icon';
+import { useInstall } from '../lib/install';
 import { APP_NAME, Logo } from '../ui/Logo';
 import { ASPECTS } from '../video/timeline';
 
@@ -58,9 +59,12 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
   return (
     <div className="home">
       <header className="home-hero">
-        <div className="brand">
-          <Logo height={30} />
-          <span>{APP_NAME}</span>
+        <div className="home-top">
+          <div className="brand">
+            <Logo height={30} />
+            <span>{APP_NAME}</span>
+          </div>
+          <InstallButton />
         </div>
         <h1>
           Create something <span className="gradient-text">amazing</span>
@@ -178,6 +182,25 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
             ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+/** "Install app" button: one click where the browser supports it, instructions on iPhone/iPad. */
+function InstallButton() {
+  const { installed, canPrompt, ios, install } = useInstall();
+  const [showIosHelp, setShowIosHelp] = useState(false);
+  if (installed || (!canPrompt && !ios)) return null;
+  return (
+    <div className="install">
+      <button className="secondary" onClick={() => (canPrompt ? void install() : setShowIosHelp((v) => !v))}>
+        <Icon name="download" /> Install app
+      </button>
+      {showIosHelp && (
+        <div className="install-help" role="note">
+          Tap <strong>Share</strong> <span aria-hidden>⎋</span> in Safari, then <strong>Add to Home Screen</strong>.
+        </div>
+      )}
     </div>
   );
 }

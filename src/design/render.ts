@@ -261,12 +261,7 @@ export async function exportDesign(doc: DesignDoc, type: 'image/png' | 'image/jp
   );
 }
 
-const thumbCache = new Map<DesignDoc, string>();
-
-/** Small JPEG preview of a design (cached per doc object). Pass an ImageCache with photos already loaded to include them. */
 export function designThumbnail(doc: DesignDoc, maxSize = 240, images?: ImageCache): string {
-  const cached = thumbCache.get(doc);
-  if (cached) return cached;
   const scale = maxSize / Math.max(doc.width, doc.height);
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(doc.width * scale);
@@ -274,9 +269,7 @@ export function designThumbnail(doc: DesignDoc, maxSize = 240, images?: ImageCac
   const ctx = canvas.getContext('2d')!;
   ctx.scale(scale, scale);
   renderDesign(ctx, doc, images ?? new ImageCache(() => {}));
-  const url = canvas.toDataURL('image/jpeg', 0.85);
-  thumbCache.set(doc, url);
-  return url;
+  return canvas.toDataURL('image/jpeg', 0.85);
 }
 
 /** Render every page of a design as a multi-page PDF (each page is a high-quality JPEG). */

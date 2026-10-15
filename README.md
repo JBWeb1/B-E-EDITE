@@ -4,13 +4,40 @@
 
 An easy, browser-based creative editor that combines a **Canva-style design editor** and a **CapCut-style video editor**. Everything runs locally in the browser, with no server, no sign-up, and nothing to install.
 
-## Getting started
+## Install it on your phone or computer
+
+B-E Motion is a **Progressive Web App**: open it in a browser once and install it like a normal app.
+It gets its own icon and window and works offline.
+
+| Device | How to install |
+| --- | --- |
+| **Android** (Chrome) | Tap **Install app** on the home screen, or ⋮ menu → **Install app** |
+| **iPhone / iPad** (Safari) | Tap **Share** → **Add to Home Screen** |
+| **Windows / Mac / Chromebook / Linux** (Chrome or Edge) | Click **Install app**, or the install icon at the right of the address bar |
+
+Long-press (or right-click) the installed icon for **New video** / **New design** shortcuts.
+
+### Put it online (GitHub Pages)
+
+1. In the repository: **Settings → Pages → Source: GitHub Actions**.
+2. Push to the default branch (or run the **Deploy to GitHub Pages** workflow by hand from the **Actions** tab).
+3. The app is published at `https://<your-user>.github.io/<repo-name>/`.
+
+### Android APK / Play Store and Windows store packages
+
+Once the site is online, go to [PWABuilder](https://www.pwabuilder.com), enter the site address, and download
+an Android package (APK for direct install, AAB for the Play Store) or a Windows package (MSIX).
+The app already meets PWABuilder's requirements (manifest, icons, offline service worker).
+
+## Development
 
 ```bash
 npm install
 npm run dev        # open http://localhost:5173
 npm test           # unit tests
 npm run build      # production build in dist/
+npm run preview    # serve the production build on http://localhost:4173
+npm run test:e2e   # full browser test against the preview (needs `npx playwright install chromium` once)
 ```
 
 ## Features

@@ -9,7 +9,7 @@ import { uid } from '../lib/id';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { removeBackgroundFromImage } from '../lib/bgremove';
 import { FilterSliders } from '../ui/FilterSliders';
-import { FirstRunTips, ShortcutsDialog } from '../ui/Help';
+import { FirstRunTips, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import { Icon } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
 import { Menu, MenuItem } from '../ui/Menu';
@@ -580,10 +580,13 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
 
   const align = (mode: AlignMode) => set((d) => alignElements(d, selectedIds, mode));
 
-  // Keyboard shortcuts.
-  useEffect(() => {
+  // Keyboard shortcuts. The window listeners are added once and call the latest
+  // handlers through refs, so they never need re-adding mid-keypress.
+  const keyHandlers = useRef<{ onKey: (e: KeyboardEvent) => void; onPaste: (e: ClipboardEvent) => void }>();
+  {
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e.target)) return;
+      // Off while typing, while a dialog/menu/slideshow is open, or during an animation preview.
+      if (isTyping(e.target) || shortcutsBlocked() || previewStart !== null) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (mod && key === 'z') {
@@ -621,7 +624,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       }
     };
     const onPaste = (e: ClipboardEvent) => {
-      if (isTyping(e.target)) return;
+      if (isTyping(e.target) || shortcutsBlocked()) return;
       const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
       if (files.length) {
         e.preventDefault();
@@ -631,13 +634,18 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
         paste();
       }
     };
+    keyHandlers.current = { onKey, onPaste };
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyHandlers.current?.onKey(e);
+    const onPaste = (e: ClipboardEvent) => keyHandlers.current?.onPaste(e);
     window.addEventListener('keydown', onKey);
     window.addEventListener('paste', onPaste);
     return () => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('paste', onPaste);
     };
-  }, [history, doc, selectedIds, set, deleteSelected, duplicateSelected, copySelected, paste, addImageFiles]);
+  }, []);
 
   const doExport = async (type: 'image/png' | 'image/jpeg') => {
     setBusy(true);
@@ -1294,7 +1302,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
       {presenting !== null && <Presenter file={file} startPage={presenting} onClose={() => setPresenting(null)} />}
       {videoProgress !== null && (
-        <div className="modal-backdrop">
+        <div className="modal-backdrop" data-modal>
           <div className="modal">
             <h3>Making your video…</h3>
             <p className="hint">Each page plays once with its animations while it is recorded. Keep this tab open.</p>

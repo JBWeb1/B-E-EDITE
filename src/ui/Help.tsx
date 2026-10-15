@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 
+/**
+ * Dialogs, menus and the slideshow carry `data-modal`. While one is on screen,
+ * the editors' keyboard shortcuts stay off so keys only affect what is in front.
+ */
+export function shortcutsBlocked(): boolean {
+  return document.querySelector('[data-modal]') !== null;
+}
+
 function readFlag(key: string): boolean {
   try {
     return localStorage.getItem(key) === '1';
@@ -57,7 +65,7 @@ export function ShortcutsDialog({ shortcuts, onClose }: { shortcuts: Shortcut[];
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   return (
-    <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" data-modal onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal" role="dialog" aria-label="Keyboard shortcuts">
         <h3>Keyboard shortcuts</h3>
         <table className="shortcut-table">

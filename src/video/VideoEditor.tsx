@@ -6,7 +6,7 @@ import { uid } from '../lib/id';
 import { sameFilters } from '../lib/filters';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { FilterSliders } from '../ui/FilterSliders';
-import { FirstRunTips, ShortcutsDialog } from '../ui/Help';
+import { FirstRunTips, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import { Icon } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
 import type { Shortcut } from '../ui/Help';
@@ -324,9 +324,17 @@ export function VideoEditor({
     setSelection({ kind: 'text', id: o.id });
   };
 
-  useEffect(() => {
+  // Keyboard shortcuts: one window listener that always calls the latest handler.
+  const keyHandler = useRef<(e: KeyboardEvent) => void>();
+  {
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e.target)) return;
+      if (e.key === 'Escape' && exportDialog) {
+        setExportDialog(false);
+        return;
+      }
+      // Off while typing, while a dialog/menu is open (Space during an export would pause
+      // the recording), and while a voice-over is being recorded.
+      if (isTyping(e.target) || shortcutsBlocked() || recorder) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (e.key === ' ') {
@@ -355,9 +363,13 @@ export function VideoEditor({
         seek(duration);
       }
     };
+    keyHandler.current = onKey;
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyHandler.current?.(e);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [history, togglePlay, split, removeSelected, seek, duration]);
+  }, []);
 
   // Drag text and picture-in-picture overlays directly on the preview.
   const previewPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -818,7 +830,7 @@ export function VideoEditor({
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
 
       {exportDialog && (
-        <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && setExportDialog(false)}>
+        <div className="modal-backdrop" data-modal onPointerDown={(e) => e.target === e.currentTarget && setExportDialog(false)}>
           <div className="modal" role="dialog" aria-label="Export video">
             <h3>Export video</h3>
             <p className="hint">
@@ -850,7 +862,7 @@ export function VideoEditor({
       )}
 
       {exportProgress !== null && (
-        <div className="modal-backdrop">
+        <div className="modal-backdrop" data-modal>
           <div className="modal">
             <h3>Exporting video…</h3>
             <p className="hint">The video plays through once while it is recorded. Keep this tab open.</p>

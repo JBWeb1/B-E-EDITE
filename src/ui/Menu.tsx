@@ -43,6 +43,7 @@ export function Menu({
       {open && (
         <div
           className={`menu-panel ${align}`}
+          data-modal
           role="menu"
           onClick={(e) => {
             // Close after choosing an item, but not when adjusting a control inside the menu.

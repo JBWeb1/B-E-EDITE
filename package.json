@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "node e2e/full.mjs"
   },
   "dependencies": {
     "react": "18.3.1",
@@ -18,9 +19,10 @@
   "devDependencies": {
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
-    "@vitejs/plugin-react": "4.3.4",
+    "@vitejs/plugin-react": "4.7.0",
     "typescript": "5.6.3",
-    "vite": "5.4.11",
-    "vitest": "2.1.8"
+    "vite": "6.4.4",
+    "vitest": "4.1.11",
+    "playwright": "1.64.1"
   }
 }

@@ -2058,3 +2058,49 @@ kbd {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- Install ---------- */
+
+.home-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 48px;
+}
+
+.home-top .brand {
+  margin-bottom: 0;
+}
+
+.install {
+  position: relative;
+}
+
+.install-help {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 240px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  line-height: 1.5;
+  z-index: 10;
+}
+
+@media (max-width: 760px) {
+  .home-top {
+    margin-bottom: 28px;
+  }
+}
+
+/* Installed app on phones with notches: keep the top bar clear of the status bar. */
+.topbar {
+  height: auto;
+  min-height: calc(56px + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+}
