@@ -1,6 +1,6 @@
 import { uid } from '../lib/id';
 import { NEUTRAL_FILTERS } from '../lib/filters';
-import type { AudioClip, Clip, MediaAsset, Motion, OverlayClip, TextOverlay, TransitionType, VideoProject } from './types';
+import type { AudioClip, Clip, EffectItem, EffectType, MediaAsset, Motion, OverlayClip, TextOverlay, TransitionType, VideoProject } from './types';
 
 export const DEFAULT_IMAGE_SECONDS = 3;
 export const MIN_CLIP_SECONDS = 0.1;
@@ -15,7 +15,7 @@ export const ASPECTS = [
 ];
 
 export function createProject(width = 1280, height = 720): VideoProject {
-  return { name: 'Untitled video', width, height, background: '#000000', fill: 'color', assets: [], clips: [], texts: [], audio: [], overlays: [] };
+  return { name: 'Untitled video', width, height, background: '#000000', fill: 'color', assets: [], clips: [], texts: [], audio: [], overlays: [], effects: [], tracks: {} };
 }
 
 export function clipDuration(c: Clip): number {
@@ -88,6 +88,7 @@ export function projectDuration(p: VideoProject): number {
     ...p.texts.map((t) => t.start + t.duration),
     ...p.audio.map((a) => a.start + (a.out - a.in)),
     ...(p.overlays ?? []).map((o) => o.start + (o.out - o.in)),
+    ...(p.effects ?? []).map((e) => e.start + e.duration),
     0,
   );
 }
@@ -245,7 +246,7 @@ export function assignLanes<T>(items: T[], start: (item: T) => number, end: (ite
 
 /** Fill in fields added after a project was saved, so older projects keep working. */
 export function normalizeProject(p: VideoProject): VideoProject {
-  return { ...p, fill: p.fill ?? 'color', overlays: p.overlays ?? [] };
+  return { ...p, fill: p.fill ?? 'color', overlays: p.overlays ?? [], effects: p.effects ?? [], tracks: p.tracks ?? {} };
 }
 
 export function createOverlay(asset: MediaAsset, start: number): OverlayClip {
@@ -309,6 +310,7 @@ export function snapCandidates(p: VideoProject, playhead: number, excludeId?: st
   for (const placed of layoutClips(p.clips)) out.push(placed.start, placed.end);
   for (const o of p.texts) if (o.id !== excludeId) out.push(o.start, o.start + o.duration);
   for (const a of [...p.audio, ...p.overlays]) if (a.id !== excludeId) out.push(a.start, a.start + a.out - a.in);
+  for (const e of p.effects ?? []) if (e.id !== excludeId) out.push(e.start, e.start + e.duration);
   return out;
 }
 
@@ -402,4 +404,105 @@ export const EXPORT_QUALITIES = [
 /** Rough size of an export, in megabytes, for showing before the user starts. */
 export function estimateSizeMB(seconds: number, opts: ExportOptions, audioBitrate = 128_000): number {
   return ((opts.bitrate + audioBitrate) * seconds) / 8 / 1_000_000;
+}
+
+// ---------- Effects ----------
+
+export const EFFECTS: { type: EffectType; label: string; hint: string }[] = [
+  { type: 'shake', label: 'Shake', hint: 'Camera shake' },
+  { type: 'zoom-pulse', label: 'Zoom pulse', hint: 'Beat-style punch-in' },
+  { type: 'flash', label: 'Flash', hint: 'White flash at the start' },
+  { type: 'glow', label: 'Dreamy glow', hint: 'Soft bloom' },
+  { type: 'vignette', label: 'Vignette', hint: 'Darker edges' },
+  { type: 'grain', label: 'Film grain', hint: 'Old film texture' },
+  { type: 'vhs', label: 'VHS', hint: 'Retro tape lines' },
+  { type: 'letterbox', label: 'Cinema bars', hint: 'Black bars, movie look' },
+];
+
+export function createEffect(type: EffectType, start: number, patch: Partial<EffectItem> = {}): EffectItem {
+  return { id: uid('fx'), type, start, duration: 3, intensity: 0.7, ...patch };
+}
+
+export interface EffectFrame {
+  /** Offset as a fraction of the frame size. */
+  dx: number;
+  dy: number;
+  scale: number;
+  /** 0..1 white overlay. */
+  flash: number;
+  vignette: number;
+  grain: number;
+  scanlines: number;
+  glow: number;
+  /** Height of each black bar as a fraction of the frame height. */
+  bars: number;
+}
+
+export const NO_EFFECT: EffectFrame = { dx: 0, dy: 0, scale: 1, flash: 0, vignette: 0, grain: 0, scanlines: 0, glow: 0, bars: 0 };
+
+/** How every effect active at time `t` changes the frame (effects add up). */
+export function effectFrame(effects: EffectItem[], t: number): EffectFrame {
+  const f = { ...NO_EFFECT };
+  for (const e of effects) {
+    const local = t - e.start;
+    if (local < 0 || local >= e.duration) continue;
+    const k = Math.max(0, Math.min(1, e.intensity));
+    switch (e.type) {
+      case 'shake': {
+        // Smooth pseudo-random wobble from summed sines (same result for the same time).
+        f.dx += k * 0.02 * (Math.sin(local * 47) + 0.6 * Math.sin(local * 83 + 1.3));
+        f.dy += k * 0.02 * (Math.sin(local * 53 + 0.7) + 0.6 * Math.sin(local * 71 + 2.1));
+        break;
+      }
+      case 'zoom-pulse': {
+        const beat = (local % 0.5) / 0.5; // a punch every half second
+        f.scale *= 1 + k * 0.12 * Math.exp(-beat * 6);
+        break;
+      }
+      case 'flash':
+        f.flash = Math.max(f.flash, k * Math.exp(-local * 6));
+        break;
+      case 'vignette':
+        f.vignette = Math.max(f.vignette, k);
+        break;
+      case 'grain':
+        f.grain = Math.max(f.grain, k);
+        break;
+      case 'vhs':
+        f.scanlines = Math.max(f.scanlines, k);
+        f.grain = Math.max(f.grain, k * 0.4);
+        f.dx += k * 0.004 * Math.sin(local * 30);
+        break;
+      case 'glow':
+        f.glow = Math.max(f.glow, k);
+        break;
+      case 'letterbox': {
+        // Bars slide in over the first 0.4s.
+        f.bars = Math.max(f.bars, k * 0.14 * Math.min(1, local / 0.4));
+        break;
+      }
+    }
+  }
+  return f;
+}
+
+// ---------- Editing helpers ----------
+
+/** Insert a clip into the main track at time `t`, splitting the clip there if needed. */
+export function insertClipAt(clips: Clip[], t: number, clip: Clip): Clip[] {
+  const split = splitClips(clips, t);
+  const at = layoutClips(split).findIndex((p) => p.start >= t - 1e-6);
+  const index = at < 0 ? split.length : at;
+  return [...split.slice(0, index), clip, ...split.slice(index)];
+}
+
+/**
+ * CapCut's Q / W: cut away the part of the main clip under the playhead that is
+ * before (Q) or after (W) it. Returns the clips unchanged if nothing is under it.
+ */
+export function trimAtPlayhead(clips: Clip[], t: number, side: 'before' | 'after'): Clip[] {
+  const hit = locate(clips, t);
+  if (!hit) return clips;
+  const next = side === 'before' ? trimStart(hit.clip, hit.sourceTime) : trimEnd(hit.clip, hit.sourceTime, Infinity);
+  return clips.map((c) => (c.id === hit.clip.id ? next : c));
 }

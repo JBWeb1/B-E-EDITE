@@ -1,10 +1,13 @@
 import { useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { formatTime } from '../lib/download';
+import { Icon } from '../ui/Icon';
+import type { IconName } from '../ui/Icon';
 import {
   assignLanes,
   clipDuration,
   dropIndex,
+  EFFECTS,
   layoutClips,
   moveItem,
   PEAKS_PER_SECOND,
@@ -14,18 +17,23 @@ import {
   trimEnd,
   trimStart,
 } from './timeline';
-import type { AudioClip, Clip, OverlayClip, TextOverlay, VideoProject } from './types';
+import type { AudioClip, Clip, EffectItem, OverlayClip, TextOverlay, TrackState, VideoProject } from './types';
 
-/** Height of one row in the text, overlay and audio tracks. */
-const LANE = 34;
+/** Height of one row in the text, effects, overlay and audio tracks. */
+const LANE = 30;
+/** Width of the track-header column on the left. */
+export const HEAD_W = 108;
 /** How close (in screen pixels) an edge must get to something before it snaps. */
 const SNAP_PX = 8;
 
-export type Selection = { kind: 'clip' | 'text' | 'audio' | 'overlay'; id: string } | null;
+export type Selection = { kind: 'clip' | 'text' | 'audio' | 'overlay' | 'effect'; id: string } | null;
 
 /** Tracks whose items float freely in time and have source in/out points. */
 type FreeKey = 'audio' | 'overlays';
 type FreeItem = AudioClip | OverlayClip;
+/** Tracks whose items are just a start and a length. */
+type RangeKey = 'texts' | 'effects';
+type RangeItem = TextOverlay | EffectItem;
 
 interface Props {
   project: VideoProject;
@@ -47,11 +55,13 @@ interface Props {
 type Drag =
   | { kind: 'reorder'; from: number; startX: number; moved: boolean }
   | { kind: 'trim-clip'; edge: 'start' | 'end'; clip: Clip; startX: number }
-  | { kind: 'move-text'; item: TextOverlay; startX: number; cands: number[] }
-  | { kind: 'resize-text'; item: TextOverlay; startX: number; cands: number[] }
+  | { kind: 'move-range'; key: RangeKey; item: RangeItem; startX: number; cands: number[] }
+  | { kind: 'resize-range'; key: RangeKey; item: RangeItem; startX: number; cands: number[] }
   | { kind: 'move-free'; key: FreeKey; item: FreeItem; startX: number; cands: number[] }
   | { kind: 'trim-free'; key: FreeKey; edge: 'start' | 'end'; item: FreeItem; startX: number; cands: number[] }
   | { kind: 'scrub' };
+
+const effectLabel = (type: EffectItem['type']) => EFFECTS.find((e) => e.type === type)?.label ?? type;
 
 export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBegin, onChange, onCommit, onTransitionClick }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
@@ -59,18 +69,22 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
   const [dropAt, setDropAt] = useState<number | null>(null);
   const [snapAt, setSnapAt] = useState<number | null>(null);
 
+  const tracks = project.tracks ?? {};
   const duration = projectDuration(project);
-  const width = Math.max(duration + 10, 30) * pps;
+  const width = HEAD_W + Math.max(duration + 10, 30) * pps;
   const placed = layoutClips(project.clips);
   const assetOf = (id: string) => project.assets.find((a) => a.id === id);
   const textLanes = assignLanes(project.texts, (o) => o.start, (o) => o.start + o.duration);
+  const effectLanes = assignLanes(project.effects, (o) => o.start, (o) => o.start + o.duration);
   const audioLanes = assignLanes(project.audio, (a) => a.start, (a) => a.start + a.out - a.in);
   const overlayLanes = assignLanes(project.overlays, (a) => a.start, (a) => a.start + a.out - a.in);
-  const laneHeight = (lanes: number[]) => (Math.max(0, ...lanes) + 1) * LANE;
+  const laneHeight = (lanes: number[]) => (Math.max(0, ...lanes) + 1) * LANE + 4;
+  /** Screen x (inside the timeline) of a time. */
+  const xOf = (t: number) => HEAD_W + t * pps;
 
   const timeAt = (clientX: number) => {
     const rect = innerRef.current!.getBoundingClientRect();
-    return Math.max(0, (clientX - rect.left) / pps);
+    return Math.max(0, (clientX - rect.left - HEAD_W) / pps);
   };
 
   const begin = (e: ReactPointerEvent, drag: Drag, select?: Selection) => {
@@ -102,6 +116,8 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
 
   const updateFree = (key: FreeKey, next: FreeItem) =>
     onChange((p) => ({ ...p, [key]: (p[key] as FreeItem[]).map((x) => (x.id === next.id ? next : x)) }));
+  const updateRange = (key: RangeKey, id: string, patch: Partial<RangeItem>) =>
+    onChange((p) => ({ ...p, [key]: (p[key] as RangeItem[]).map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
 
   const onMove = (e: ReactPointerEvent) => {
     const d = dragRef.current;
@@ -122,17 +138,16 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
         onChange((p) => ({ ...p, clips: p.clips.map((c) => (c.id === next.id ? next : c)) }));
         break;
       }
-      case 'move-text': {
+      case 'move-range': {
         const r = snapRange(Math.max(0, d.item.start + dt), d.item.duration, d.cands, e.altKey);
         setSnapAt(r.at);
-        onChange((p) => ({ ...p, texts: p.texts.map((o) => (o.id === d.item.id ? { ...o, start: Math.max(0, r.start) } : o)) }));
+        updateRange(d.key, d.item.id, { start: Math.max(0, r.start) });
         break;
       }
-      case 'resize-text': {
+      case 'resize-range': {
         const end = snapOne(d.item.start + d.item.duration + dt, d.cands, e.altKey);
         setSnapAt(end.snapped);
-        const dur = Math.max(0.2, end.value - d.item.start);
-        onChange((p) => ({ ...p, texts: p.texts.map((o) => (o.id === d.item.id ? { ...o, duration: dur } : o)) }));
+        updateRange(d.key, d.item.id, { duration: Math.max(0.2, end.value - d.item.start) });
         break;
       }
       case 'move-free': {
@@ -171,13 +186,59 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
     setSnapAt(null);
   };
 
-  // Ruler tick spacing that stays readable at any zoom.
-  const step = [0.5, 1, 2, 5, 10, 15, 30, 60].find((s) => s * pps >= 60) ?? 120;
-  const ticks = Array.from({ length: Math.ceil(width / pps / step) + 1 }, (_, i) => i * step);
+  const toggle = (key: keyof TrackState) => onCommit((p) => ({ ...p, tracks: { ...p.tracks, [key]: !p.tracks?.[key] } }));
 
-  const freeTrack = (key: FreeKey, items: FreeItem[], lanes: number[], kind: 'audio' | 'overlay', label: string) => (
-    <div className={`track ${kind}-track`} style={{ height: laneHeight(lanes) }}>
-      <span className="track-label">{label}</span>
+  /** Sticky header at the left of a track: icon, name and a hide/mute switch. */
+  const head = (icon: IconName, label: string, key?: keyof TrackState, kind: 'eye' | 'mute' = 'eye') => {
+    const off = key ? !!tracks[key] : false;
+    return (
+      <div className="track-head" onPointerDown={(e) => e.stopPropagation()}>
+        <Icon name={icon} size={14} />
+        <span>{label}</span>
+        {key && (
+          <button
+            className={`track-toggle ${off ? 'off' : ''}`}
+            title={kind === 'mute' ? (off ? 'Unmute track' : 'Mute track') : off ? 'Show track' : 'Hide track'}
+            aria-label={`${kind === 'mute' ? (off ? 'Unmute' : 'Mute') : off ? 'Show' : 'Hide'} ${label}`}
+            aria-pressed={off}
+            onClick={() => toggle(key)}
+          >
+            <Icon name={kind === 'mute' ? (off ? 'volumeOff' : 'volume') : off ? 'eyeOff' : 'eye'} size={14} />
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  // Ruler tick spacing that stays readable at any zoom.
+  const step = [0.5, 1, 2, 5, 10, 15, 30, 60].find((s) => s * pps >= 70) ?? 120;
+  const ticks = Array.from({ length: Math.ceil((width - HEAD_W) / pps / step) + 1 }, (_, i) => i * step);
+
+  const rangeTrack = (key: RangeKey, items: RangeItem[], lanes: number[], kind: 'text' | 'effect', icon: IconName, label: string, toggleKey: keyof TrackState) => (
+    <div className={`track ${kind}-track ${tracks[toggleKey] ? 'track-off' : ''}`} style={{ height: laneHeight(lanes) }}>
+      {head(icon, label, toggleKey)}
+      {items.map((o, i) => (
+        <div
+          key={o.id}
+          className={`item ${kind}-item ${selection?.id === o.id ? 'selected' : ''}`}
+          style={{ left: xOf(o.start), width: o.duration * pps, top: 2 + lanes[i] * LANE, height: LANE - 4, bottom: 'auto' }}
+          onPointerDown={(e) => begin(e, { kind: 'move-range', key, item: o, startX: e.clientX, cands: cands(o.id) }, { kind, id: o.id })}
+        >
+          <span className="item-label">
+            {kind === 'text' ? <>T {(o as TextOverlay).text}</> : <>✦ {effectLabel((o as EffectItem).type)}</>}
+          </span>
+          <span
+            className="edge end"
+            onPointerDown={(e) => begin(e, { kind: 'resize-range', key, item: o, startX: e.clientX, cands: cands(o.id) }, { kind, id: o.id })}
+          />
+        </div>
+      ))}
+    </div>
+  );
+
+  const freeTrack = (key: FreeKey, items: FreeItem[], lanes: number[], kind: 'audio' | 'overlay', icon: IconName, label: string, toggleKey: keyof TrackState) => (
+    <div className={`track ${kind}-track ${tracks[toggleKey] ? 'track-off' : ''}`} style={{ height: laneHeight(lanes) }}>
+      {head(icon, label, toggleKey, kind === 'audio' ? 'mute' : 'eye')}
       {items.map((a, i) => {
         const asset = assetOf(a.assetId);
         const select = { kind, id: a.id } as const;
@@ -186,9 +247,9 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
             key={a.id}
             className={`item ${kind}-item ${selection?.id === a.id ? 'selected' : ''}`}
             style={{
-              left: a.start * pps,
+              left: xOf(a.start),
               width: (a.out - a.in) * pps,
-              top: lanes[i] * LANE,
+              top: 2 + lanes[i] * LANE,
               height: LANE - 4,
               bottom: 'auto',
               backgroundImage: kind === 'overlay' && asset?.thumbnail ? `url(${asset.thumbnail})` : undefined,
@@ -233,39 +294,20 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
         }}
       >
         <div className="ruler">
+          <div className="ruler-corner" onPointerDown={(e) => e.stopPropagation()} />
           {ticks.map((t) => (
-            <span key={t} className="tick" style={{ left: t * pps }}>
+            <span key={t} className="tick" style={{ left: xOf(t) }}>
               {formatTime(t).replace(/\.0$/, '')}
             </span>
           ))}
         </div>
 
-        <div className="track text-track" style={{ height: laneHeight(textLanes) }}>
-          <span className="track-label">Text</span>
-          {project.texts.map((o, i) => (
-            <div
-              key={o.id}
-              className={`item text-item ${selection?.id === o.id ? 'selected' : ''}`}
-              style={{ left: o.start * pps, width: o.duration * pps, top: textLanes[i] * LANE, height: LANE - 4, bottom: 'auto' }}
-              onPointerDown={(e) =>
-                begin(e, { kind: 'move-text', item: o, startX: e.clientX, cands: cands(o.id) }, { kind: 'text', id: o.id })
-              }
-            >
-              <span className="item-label">T {o.text}</span>
-              <span
-                className="edge end"
-                onPointerDown={(e) =>
-                  begin(e, { kind: 'resize-text', item: o, startX: e.clientX, cands: cands(o.id) }, { kind: 'text', id: o.id })
-                }
-              />
-            </div>
-          ))}
-        </div>
+        {project.effects.length > 0 && rangeTrack('effects', project.effects, effectLanes, 'effect', 'sparkles', 'Effects', 'effectsHidden')}
+        {rangeTrack('texts', project.texts, textLanes, 'text', 'text', 'Text', 'textHidden')}
+        {project.overlays.length > 0 && freeTrack('overlays', project.overlays, overlayLanes, 'overlay', 'pip', 'Overlay', 'overlayHidden')}
 
-        {project.overlays.length > 0 && freeTrack('overlays', project.overlays, overlayLanes, 'overlay', 'Overlay')}
-
-        <div className="track main-track">
-          <span className="track-label">Video</span>
+        <div className={`track main-track ${tracks.mainMuted ? 'muted' : ''}`}>
+          {head('film', 'Main', 'mainMuted', 'mute')}
           {placed.map(({ clip, index, start }) => {
             const asset = assetOf(clip.assetId);
             return (
@@ -273,7 +315,7 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
                 key={clip.id}
                 className={`item clip-item ${selection?.id === clip.id ? 'selected' : ''}`}
                 style={{
-                  left: start * pps,
+                  left: xOf(start),
                   width: clipDuration(clip) * pps,
                   backgroundImage: asset?.thumbnail ? `url(${asset.thumbnail})` : undefined,
                 }}
@@ -287,10 +329,14 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
                     begin(e, { kind: 'trim-clip', edge: 'start', clip, startX: e.clientX }, { kind: 'clip', id: clip.id })
                   }
                 />
-                <span className="item-label">
-                  {clip.speed !== 1 && <b>{clip.speed}× </b>}
-                  {clip.motion && clip.motion !== 'none' && <b>⤢ </b>}
-                  {asset?.name} · {clipDuration(clip).toFixed(1)}s
+                <span className="clip-meta">
+                  <span className="clip-name">
+                    {clip.speed !== 1 && <b>{clip.speed}× </b>}
+                    {clip.motion && clip.motion !== 'none' && <b>⤢ </b>}
+                    {clip.mirror && <b>⇋ </b>}
+                    {asset?.name}
+                  </span>
+                  <span className="clip-len">{clipDuration(clip).toFixed(1)}s</span>
                 </span>
                 <span
                   className="edge end"
@@ -305,7 +351,7 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
             <button
               key={`tr-${clip.id}`}
               className={`transition-chip ${clip.transition ? 'on' : ''}`}
-              style={{ left: start * pps }}
+              style={{ left: xOf(start) }}
               title={clip.transition ? 'Edit transition' : 'Add a transition'}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={() => onTransitionClick(clip.id)}
@@ -313,16 +359,14 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
               ⇄
             </button>
           ))}
-          {dropAt !== null && (
-            <div className="drop-marker" style={{ left: (placed[dropAt]?.start ?? duration) * pps }} />
-          )}
-          {project.clips.length === 0 && <span className="track-empty">Import media and it will appear here</span>}
+          {dropAt !== null && <div className="drop-marker" style={{ left: xOf(placed[dropAt]?.start ?? duration) }} />}
+          {project.clips.length === 0 && <span className="track-empty">Drag media here or click ＋ on a file to start</span>}
         </div>
 
-        {freeTrack('audio', project.audio, audioLanes, 'audio', 'Audio')}
+        {freeTrack('audio', project.audio, audioLanes, 'audio', 'music', 'Audio', 'audioMuted')}
 
-        {snapAt !== null && <div className="snap-line" style={{ left: snapAt * pps }} />}
-        <div className="playhead" style={{ left: time * pps }} />
+        {snapAt !== null && <div className="snap-line" style={{ left: xOf(snapAt) }} />}
+        <div className="playhead" style={{ left: xOf(time) }} />
       </div>
     </div>
   );

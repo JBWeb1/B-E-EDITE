@@ -229,7 +229,8 @@ check('Space pauses after clicking Play', t1 === t2 && t1 !== '0:00.0', `${t1} �
 
 // Speed changes length
 await page.locator('.clip-item').first().click();
-await page.locator('.panel.right .field', { hasText: 'Speed' }).locator('select').selectOption('2');
+await page.locator('.cc-subtabs').getByRole('tab', { name: 'Speed' }).click();
+await page.getByRole('combobox', { name: 'Speed' }).selectOption('2');
 check('2× speed halves clip length', /1\.5s/.test(await page.locator('.clip-item').first().innerText()));
 await page.keyboard.press('Control+z');
 check('undo speed', /3\.0s/.test(await page.locator('.clip-item').first().innerText()));
@@ -258,7 +259,7 @@ await page.keyboard.press('Control+z');
 check('undo delete clip', (await page.locator('.clip-item').count()) === 2);
 
 // Bug fix: Space while recording a voice-over must not stop playback
-await page.getByRole('button', { name: 'Media', exact: true }).click();
+await page.getByRole('button', { name: 'Audio', exact: true }).click();
 await page.keyboard.press('Home');
 await page.getByRole('button', { name: /Record voice-over/ }).click();
 await page.waitForTimeout(600);
@@ -296,6 +297,56 @@ check(
   'video reopens with clips, audio and text',
   (await page.locator('.clip-item').count()) === 2 && (await page.locator('.audio-item').count()) === 2 && (await page.locator('.text-item').count()) === 3,
 );
+
+// ---------- CapCut-style tools
+const clipCount = () => page.locator('.clip-item').count();
+const firstLen = async () => (await page.locator('.clip-item').first().locator('.clip-len').innerText()).trim();
+// Sound effects
+await page.getByRole('button', { name: 'Audio', exact: true }).click();
+check('sound effects library listed', (await page.locator('.sfx-row').count()) >= 19);
+const audioBefore = await page.locator('.audio-item').count();
+await page.keyboard.press('Home');
+await page.getByRole('button', { name: 'Add Whoosh', exact: true }).click();
+await page.waitForTimeout(300);
+check('add sound effect to timeline', (await page.locator('.audio-item').count()) === audioBefore + 1);
+// Effects
+await page.getByRole('button', { name: 'Effects', exact: true }).click();
+await page.locator('.fx-card').first().click();
+check('add effect to effects track', (await page.locator('.effect-item').count()) === 1);
+await page.getByRole('button', { name: 'Hide Effects' }).click();
+check('hide effects track', (await page.locator('.track-off').count()) >= 1);
+await page.keyboard.press('Control+z');
+// Seek into the first clip (1/3 in) via the ruler
+const cb = await page.locator('.clip-item').first().boundingBox();
+const rb = await page.locator('.ruler').boundingBox();
+await page.mouse.click(cb.x + cb.width / 3, rb.y + rb.height / 2);
+await page.waitForTimeout(150);
+await page.evaluate(() => document.activeElement?.blur?.());
+const len0 = await firstLen();
+await page.keyboard.press('w');
+const lenW = await firstLen();
+check('W deletes right of playhead', parseFloat(lenW) < parseFloat(len0), `${len0} → ${lenW}`);
+await page.keyboard.press('Control+z');
+await page.keyboard.press('q');
+const lenQ = await firstLen();
+check('Q deletes left of playhead', parseFloat(lenQ) < parseFloat(len0), `${len0} → ${lenQ}`);
+await page.keyboard.press('Control+z');
+const n0 = await clipCount();
+await page.keyboard.press('Control+b');
+check('Ctrl+B splits', (await clipCount()) === n0 + 1);
+await page.keyboard.press('Control+z');
+await page.locator('.cc-toolbar').getByRole('button', { name: 'Freeze frame' }).click();
+await page.waitForFunction((n) => document.querySelectorAll('.clip-item').length === n + 2, n0, { timeout: 5000 }).catch(() => {});
+check('freeze frame inserts a still', (await clipCount()) === n0 + 2, `${await clipCount()} clips`);
+await page.keyboard.press('Control+z');
+await page.locator('.clip-item').first().click();
+await page.locator('.cc-toolbar').getByRole('button', { name: 'Mirror' }).click();
+check('mirror clip', (await page.locator('.cc-toolbar .icon-btn.on').count()) === 1);
+await page.keyboard.press('Control+z');
+await page.getByRole('button', { name: 'Mute Main' }).click();
+check('mute main track', (await page.locator('.main-track.muted').count()) === 1);
+await page.keyboard.press('Control+z');
+await page.screenshot({ path: process.env.SHOT ?? path.join(OUT, 'video.png') });
 
 // Home: delete a project
 await page.getByRole('button', { name: 'Home', exact: true }).click();

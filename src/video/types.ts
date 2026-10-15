@@ -15,6 +15,8 @@ export interface MediaAsset {
   thumbnail?: string;
   /** Loudness samples (0..1), PEAKS_PER_SECOND per second, for drawing waveforms. */
   peaks?: number[];
+  /** Set when the file is one of the built-in sound effects (so it is added only once). */
+  sfxId?: string;
 }
 
 export type TransitionType = 'fade' | 'black' | 'slide' | 'zoom' | 'wipe';
@@ -43,6 +45,8 @@ export interface Clip {
   transition?: Transition;
   /** Slow zoom/pan over the clip ("Ken Burns"), great for photos. */
   motion?: Motion;
+  /** Flip the picture left-to-right. */
+  mirror?: boolean;
 }
 
 export type Motion = 'none' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right';
@@ -79,6 +83,31 @@ export interface TextOverlay {
   background: string | null;
   bold: boolean;
   animation: 'none' | 'fade' | 'pop' | 'slide';
+  /** Outline around the letters. */
+  stroke?: string | null;
+  /** Coloured glow behind the letters ("neon"). */
+  glow?: string | null;
+}
+
+export type EffectType = 'shake' | 'zoom-pulse' | 'flash' | 'vignette' | 'grain' | 'vhs' | 'glow' | 'letterbox';
+
+/** A video effect applied to the whole frame for a stretch of time (its own track). */
+export interface EffectItem {
+  id: string;
+  type: EffectType;
+  start: number;
+  duration: number;
+  /** 0..1 strength. */
+  intensity: number;
+}
+
+/** Per-track switches from the timeline's track headers. */
+export interface TrackState {
+  mainMuted?: boolean;
+  audioMuted?: boolean;
+  textHidden?: boolean;
+  overlayHidden?: boolean;
+  effectsHidden?: boolean;
 }
 
 export interface AudioClip {
@@ -105,4 +134,6 @@ export interface VideoProject {
   texts: TextOverlay[];
   audio: AudioClip[];
   overlays: OverlayClip[];
+  effects: EffectItem[];
+  tracks?: TrackState;
 }

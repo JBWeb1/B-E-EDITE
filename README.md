@@ -86,6 +86,11 @@ npm run test:e2e   # full browser test against the preview (needs `npx playwrigh
 - First-time tips and a keyboard shortcuts panel (press **?**)
 
 ### 🎬 Video editor (CapCut-style)
+- **CapCut-style workspace**: library tabs on the left (Media, Audio, Text, Stickers, Effects, Transitions, Filters), player in the middle, details on the right, and a full-width multi-track timeline with track headers to hide or mute each track
+- **Sound effects library**: 19 built-in sounds (whoosh, riser, glitch, boom, pop, ding, shutter, coin, applause…) — preview with ▶ and add with ＋ at the playhead
+- **Video effects track**: shake, zoom pulse, flash, dreamy glow, vignette, film grain, VHS and cinema bars, with a strength slider
+- **Quick tools**: delete left/right of the playhead (**Q** / **W**), split (**S** or **Ctrl+B**), freeze frame, mirror, zoom-to-fit timeline, full-screen player
+- **Text styles**: title, subtitle, caption box, highlight, outline, neon and more
 - 16:9, 9:16, 1:1 and 4:5 projects
 - Import videos, photos and music (button or drag-and-drop)
 - Magnetic main track: drag clips to reorder and drag their edges to trim. Photos can be stretched to any length

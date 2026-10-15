@@ -2,6 +2,8 @@ import {
   activeAt,
   audioFade,
   clipDuration,
+  effectFrame,
+  NO_EFFECT,
   computePeaks,
   cssFilter,
   fadeOpacity,
@@ -12,7 +14,7 @@ import {
   textsAt,
   transitionAt,
 } from './timeline';
-import type { ExportOptions } from './timeline';
+import type { EffectFrame, ExportOptions } from './timeline';
 import type { Clip, MediaAsset, OverlayClip, TextOverlay, VideoProject } from './types';
 
 /** Seconds of drift allowed between the clock and a playing media element before re-seeking. */
@@ -213,7 +215,8 @@ export class VideoEngine {
     for (const [assetId, v] of this.videos) {
       if (hit && hit.clip.assetId === assetId) {
         v.playbackRate = hit.clip.speed;
-        this.setVolume(v, hit.clip.volume * fadeOpacity(hit.clip, this.time - hit.start));
+        const muted = p.tracks?.mainMuted ? 0 : 1;
+        this.setVolume(v, muted * hit.clip.volume * fadeOpacity(hit.clip, this.time - hit.start));
         this.align(v, hit.sourceTime);
       } else if (!v.paused) {
         v.pause();
@@ -224,7 +227,7 @@ export class VideoEngine {
       if (!el) continue;
       const local = this.time - clip.start;
       if (local >= 0 && local < clip.out - clip.in) {
-        this.setVolume(el, clip.volume * audioFade(clip, local));
+        this.setVolume(el, (p.tracks?.audioMuted ? 0 : 1) * clip.volume * audioFade(clip, local));
         this.align(el, clip.in + local);
       } else if (!el.paused) {
         el.pause();
@@ -235,7 +238,7 @@ export class VideoEngine {
       const v = this.overlayVideos.get(o.id);
       if (!v) continue;
       if (active.has(o.id)) {
-        this.setVolume(v, o.volume);
+        this.setVolume(v, p.tracks?.overlayHidden ? 0 : o.volume);
         this.align(v, o.in + (this.time - o.start));
       } else if (!v.paused) {
         v.pause();
@@ -274,6 +277,18 @@ export class VideoEngine {
     ctx.filter = 'none';
     ctx.fillStyle = p.background;
     ctx.fillRect(0, 0, W, H);
+
+    // Effects that move the picture (shake, zoom pulse) wrap the clip and overlays;
+    // the rest are painted over the finished frame below.
+    const fx = p.tracks?.effectsHidden ? NO_EFFECT : effectFrame(p.effects ?? [], this.time);
+    ctx.save();
+    if (fx.dx || fx.dy || fx.scale !== 1) {
+      // Zoom in a little extra while shaking, so the frame edges never show.
+      const cover = fx.scale * (1 + 2 * Math.max(Math.abs(fx.dx), Math.abs(fx.dy)));
+      ctx.translate(W / 2 + fx.dx * W, H / 2 + fx.dy * H);
+      ctx.scale(cover, cover);
+      ctx.translate(-W / 2, -H / 2);
+    }
 
     const hit = locate(p.clips, this.time);
     if (hit) {
@@ -339,11 +354,117 @@ export class VideoEngine {
       }
     }
 
-    for (const o of activeAt(p.overlays, this.time)) this.drawOverlay(o, p);
+    if (!p.tracks?.overlayHidden) for (const o of activeAt(p.overlays, this.time)) this.drawOverlay(o, p);
+    ctx.restore();
+    this.drawEffects(fx, W, H);
 
     // Animations only run during playback so paused frames always show text clearly.
-    for (const o of textsAt(p.texts, this.time)) drawText(ctx, o, this.time, W, H, this.playing);
+    if (!p.tracks?.textHidden) for (const o of textsAt(p.texts, this.time)) drawText(ctx, o, this.time, W, H, this.playing);
     ctx.restore();
+  }
+
+  private fxCanvas = document.createElement('canvas');
+  private grainCanvas: HTMLCanvasElement | null = null;
+  private scanCanvas: HTMLCanvasElement | null = null;
+
+  /** Paint the frame-wide effects (glow, vignette, grain, scanlines, flash, bars). */
+  private drawEffects(fx: EffectFrame, W: number, H: number) {
+    const ctx = this.ctx;
+    if (fx.glow > 0) {
+      const c = this.fxCanvas;
+      if (c.width !== W || c.height !== H) {
+        c.width = W;
+        c.height = H;
+      }
+      const g = c.getContext('2d')!;
+      g.clearRect(0, 0, W, H);
+      g.drawImage(this.canvas, 0, 0);
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = 0.55 * fx.glow;
+      ctx.filter = `blur(${Math.round(W / 90)}px) brightness(1.15)`;
+      ctx.drawImage(c, 0, 0);
+      ctx.restore();
+    }
+    if (fx.vignette > 0) {
+      const r = Math.hypot(W, H) / 2;
+      const grad = ctx.createRadialGradient(W / 2, H / 2, r * 0.35, W / 2, H / 2, r);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, `rgba(0,0,0,${0.85 * fx.vignette})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+    }
+    if (fx.grain > 0) {
+      if (!this.grainCanvas) {
+        const n = document.createElement('canvas');
+        n.width = n.height = 256;
+        const nctx = n.getContext('2d')!;
+        const img = nctx.createImageData(256, 256);
+        for (let i = 0; i < img.data.length; i += 4) {
+          const v = Math.random() * 255;
+          img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+          img.data[i + 3] = 255;
+        }
+        nctx.putImageData(img, 0, 0);
+        this.grainCanvas = n;
+      }
+      const pattern = ctx.createPattern(this.grainCanvas, 'repeat');
+      if (pattern) {
+        // A new random offset each frame makes the grain dance like real film.
+        pattern.setTransform(new DOMMatrix().translate(Math.random() * 256, Math.random() * 256));
+        ctx.save();
+        ctx.globalCompositeOperation = 'overlay';
+        ctx.globalAlpha = 0.45 * fx.grain;
+        ctx.fillStyle = pattern;
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+      }
+    }
+    if (fx.scanlines > 0) {
+      if (!this.scanCanvas) {
+        const sc = document.createElement('canvas');
+        sc.width = 1;
+        sc.height = 4;
+        const sctx = sc.getContext('2d')!;
+        sctx.fillStyle = 'rgba(0,0,0,0.55)';
+        sctx.fillRect(0, 0, 1, 2);
+        this.scanCanvas = sc;
+      }
+      const pattern = ctx.createPattern(this.scanCanvas, 'repeat');
+      if (pattern) {
+        ctx.save();
+        ctx.globalAlpha = fx.scanlines;
+        ctx.fillStyle = pattern;
+        ctx.fillRect(0, 0, W, H);
+        // A warm/cool colour cast, like worn tape.
+        ctx.globalCompositeOperation = 'soft-light';
+        ctx.globalAlpha = 0.35 * fx.scanlines;
+        ctx.fillStyle = '#ff2fa0';
+        ctx.fillRect(0, 0, W, H);
+        ctx.restore();
+      }
+    }
+    if (fx.flash > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = fx.flash;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+    if (fx.bars > 0) {
+      ctx.fillStyle = '#000';
+      const h = fx.bars * H;
+      ctx.fillRect(0, 0, W, h);
+      ctx.fillRect(0, H - h, W, h);
+    }
+  }
+
+  /** PNG of the clip frame at the playhead (without text), for "freeze frame". */
+  captureClipFrame(): Promise<Blob | null> {
+    this.draw();
+    const hit = this.project ? locate(this.project.clips, this.time) : null;
+    const source = hit && this.snapshotClipId === hit.clip.id ? this.snapshot : this.canvas;
+    return new Promise((resolve) => source.toBlob((b) => resolve(b), 'image/png'));
   }
 
   private snapshot = document.createElement('canvas');
@@ -389,6 +510,10 @@ export class VideoEngine {
       ctx.translate(W / 2 + m.dx * W, H / 2);
       ctx.scale(m.scale, m.scale);
       ctx.translate(-W / 2, -H / 2);
+    }
+    if (clip.mirror) {
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
     }
     ctx.filter = cssFilter(clip.filters);
     ctx.drawImage(source, (W - dw) / 2, (H - dh) / 2, dw, dh);
@@ -522,12 +647,28 @@ export function drawText(ctx: CanvasRenderingContext2D, o: TextOverlay, t: numbe
     ctx.beginPath();
     ctx.roundRect(-w / 2 - pad, -totalH / 2 - pad / 2, w + pad * 2, totalH + pad, pad);
     ctx.fill();
-  } else {
+  } else if (!o.glow) {
     ctx.shadowColor = 'rgba(0,0,0,0.6)';
     ctx.shadowBlur = size * 0.15;
   }
+  const yOf = (i: number) => -totalH / 2 + lh * (i + 0.5);
+  if (o.glow) {
+    // Neon: a coloured halo drawn twice so it is bright, then crisp letters on top.
+    ctx.shadowColor = o.glow;
+    ctx.shadowBlur = size * 0.45;
+    ctx.fillStyle = o.glow;
+    for (let pass = 0; pass < 2; pass++) lines.forEach((line, i) => ctx.fillText(line, 0, yOf(i)));
+    ctx.shadowBlur = size * 0.12;
+  }
+  if (o.stroke) {
+    ctx.strokeStyle = o.stroke;
+    ctx.lineWidth = size * 0.14;
+    ctx.lineJoin = 'round';
+    lines.forEach((line, i) => ctx.strokeText(line, 0, yOf(i)));
+    ctx.shadowColor = 'transparent';
+  }
   ctx.fillStyle = o.color;
-  lines.forEach((line, i) => ctx.fillText(line, 0, -totalH / 2 + lh * (i + 0.5)));
+  lines.forEach((line, i) => ctx.fillText(line, 0, yOf(i)));
   ctx.restore();
 }
 
