@@ -1,5 +1,5 @@
 import { uid } from '../lib/id';
-import type { DesignDoc, DesignElement, ImageElement, ShapeElement, ShapeKind, TextElement } from './types';
+import type { Crop, DesignDoc, DesignElement, ImageElement, ShapeElement, ShapeKind, TextElement } from './types';
 
 export interface Point {
   x: number;
@@ -90,6 +90,8 @@ export function createImage(doc: DesignDoc, src: string, w: number, h: number): 
     name: 'Image',
     src,
     radius: 0,
+    naturalWidth: w,
+    naturalHeight: h,
     x: Math.round((doc.width - width) / 2),
     y: Math.round((doc.height - height) / 2),
     width,
@@ -455,4 +457,74 @@ export function gradientLine(w: number, h: number, angle: number): [Point, Point
     { x: c.x - dx * half, y: c.y - dy * half },
     { x: c.x + dx * half, y: c.y + dy * half },
   ];
+}
+
+/** The part of a `nw`×`nh` picture shown for a crop, in picture pixels. */
+export function cropRect(nw: number, nh: number, crop?: Crop): Rect {
+  if (!crop) return { x: 0, y: 0, width: nw, height: nh };
+  const aspect = crop.aspect ?? nw / nh;
+  let w = nw;
+  let h = nw / aspect;
+  if (h > nh) {
+    h = nh;
+    w = nh * aspect;
+  }
+  const zoom = Math.max(1, crop.zoom);
+  w /= zoom;
+  h /= zoom;
+  const x = Math.max(0, Math.min(nw - w, crop.cx * nw - w / 2));
+  const y = Math.max(0, Math.min(nh - h, crop.cy * nh - h / 2));
+  return { x, y, width: w, height: h };
+}
+
+/**
+ * Apply a new crop to an image element. The element keeps its width and
+ * center; its height changes so the picture is never stretched.
+ */
+export function applyCrop(el: ImageElement, crop: Crop | undefined, nw: number, nh: number): ImageElement {
+  const r = cropRect(nw, nh, crop);
+  const height = el.width * (r.height / r.width);
+  return { ...el, crop, height, y: el.y + (el.height - height) / 2 };
+}
+
+const HEX = /^#[0-9a-f]{6}$/i;
+
+/** Distinct colors already used in the design (most used first), for quick reuse. */
+export function docColors(doc: DesignDoc, max = 12): string[] {
+  const counts = new Map<string, number>();
+  const add = (c?: string | null) => {
+    if (!c || !HEX.test(c)) return;
+    const k = c.toLowerCase();
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  };
+  if (doc.gradient) {
+    add(doc.gradient.from);
+    add(doc.gradient.to);
+  } else {
+    add(doc.background);
+  }
+  for (const e of doc.elements) {
+    if (e.type === 'text') {
+      add(e.color);
+      if ((e.outlineWidth ?? 0) > 0) add(e.outlineColor);
+    } else if (e.type === 'shape') {
+      if (e.shape !== 'line') add(e.fill);
+      if (e.strokeWidth > 0) add(e.stroke);
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, max).map(([c]) => c);
+}
+
+/** A sticker is an emoji drawn as text. */
+export function createSticker(doc: DesignDoc, emoji: string): TextElement {
+  const fontSize = Math.round(Math.min(doc.width, doc.height) / 5);
+  const size = Math.round(fontSize * 1.3);
+  return {
+    ...createText(doc, { text: emoji, fontSize, lineHeight: 1.2 }),
+    name: 'Sticker',
+    width: size,
+    height: Math.round(fontSize * 1.2),
+    x: Math.round((doc.width - size) / 2),
+    y: Math.round((doc.height - fontSize) / 2),
+  };
 }

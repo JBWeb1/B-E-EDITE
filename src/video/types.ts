@@ -41,6 +41,28 @@ export interface Clip {
   filters: ClipFilters;
   /** Transition from the previous clip into this one. */
   transition?: Transition;
+  /** Slow zoom/pan over the clip ("Ken Burns"), great for photos. */
+  motion?: Motion;
+}
+
+export type Motion = 'none' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right';
+
+/** A photo or video layered on top of the main track (picture-in-picture). */
+export interface OverlayClip {
+  id: string;
+  assetId: string;
+  start: number;
+  in: number;
+  out: number;
+  /** Center position, 0..1 of the frame. */
+  x: number;
+  y: number;
+  /** Width as a fraction of the frame width. */
+  scale: number;
+  opacity: number;
+  volume: number;
+  /** Rounded corners as a fraction of the overlay's shorter side. */
+  rounded: number;
 }
 
 export interface TextOverlay {
@@ -73,8 +95,11 @@ export interface VideoProject {
   width: number;
   height: number;
   background: string;
+  /** How empty space around clips that don't match the frame shape is filled. */
+  fill?: 'color' | 'blur';
   assets: MediaAsset[];
   clips: Clip[];
   texts: TextOverlay[];
   audio: AudioClip[];
+  overlays: OverlayClip[];
 }

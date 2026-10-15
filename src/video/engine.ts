@@ -1,5 +1,17 @@
-import { computePeaks, cssFilter, fadeOpacity, locate, projectDuration, textAnimation, textsAt, transitionAt } from './timeline';
-import type { Clip, MediaAsset, TextOverlay, VideoProject } from './types';
+import {
+  activeAt,
+  clipDuration,
+  computePeaks,
+  cssFilter,
+  fadeOpacity,
+  locate,
+  motionTransform,
+  projectDuration,
+  textAnimation,
+  textsAt,
+  transitionAt,
+} from './timeline';
+import type { Clip, MediaAsset, OverlayClip, TextOverlay, VideoProject } from './types';
 
 /** Seconds of drift allowed between the clock and a playing media element before re-seeking. */
 const DRIFT_TOLERANCE = 0.3;
@@ -14,6 +26,9 @@ export class VideoEngine {
   private videos = new Map<string, HTMLVideoElement>();
   private images = new Map<string, HTMLImageElement>();
   private audios = new Map<string, HTMLAudioElement>();
+  /** One <video> per overlay clip, so an overlay can show a file that is also on the main track. */
+  private overlayVideos = new Map<string, HTMLVideoElement>();
+  private blurCanvas = document.createElement('canvas');
   private gains = new Map<HTMLMediaElement, GainNode>();
   private audioCtx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -54,14 +69,7 @@ export class VideoEngine {
     const assetIds = new Set(p.assets.map((a) => a.id));
     for (const asset of p.assets) {
       if (asset.kind === 'video' && !this.videos.has(asset.id)) {
-        const v = document.createElement('video');
-        v.src = asset.url;
-        v.preload = 'auto';
-        v.playsInline = true;
-        v.addEventListener('seeked', () => !this.playing && this.draw());
-        v.addEventListener('loadeddata', () => !this.playing && this.draw());
-        this.videos.set(asset.id, v);
-        this.connect(v);
+        this.videos.set(asset.id, this.createVideo(asset.url));
       } else if (asset.kind === 'image' && !this.images.has(asset.id)) {
         const img = new Image();
         img.onload = () => !this.playing && this.draw();
@@ -93,6 +101,30 @@ export class VideoEngine {
         this.audios.delete(id);
       }
     }
+
+    const overlayIds = new Set(p.overlays.map((o) => o.id));
+    for (const o of p.overlays) {
+      const asset = p.assets.find((a) => a.id === o.assetId);
+      if (asset?.kind !== 'video' || this.overlayVideos.has(o.id)) continue;
+      this.overlayVideos.set(o.id, this.createVideo(asset.url));
+    }
+    for (const [id, v] of this.overlayVideos) {
+      if (!overlayIds.has(id)) {
+        v.pause();
+        this.overlayVideos.delete(id);
+      }
+    }
+  }
+
+  private createVideo(url: string): HTMLVideoElement {
+    const v = document.createElement('video');
+    v.src = url;
+    v.preload = 'auto';
+    v.playsInline = true;
+    v.addEventListener('seeked', () => !this.playing && this.draw());
+    v.addEventListener('loadeddata', () => !this.playing && this.draw());
+    this.connect(v);
+    return v;
   }
 
   /** Route an element through the Web Audio graph (for per-clip volume and export mixing). */
@@ -112,6 +144,7 @@ export class VideoEngine {
       this.master.connect(this.audioCtx.destination);
       this.videos.forEach((v) => this.connect(v));
       this.audios.forEach((a) => this.connect(a));
+      this.overlayVideos.forEach((v) => this.connect(v));
     }
     void this.audioCtx.resume();
   }
@@ -148,6 +181,7 @@ export class VideoEngine {
     cancelAnimationFrame(this.raf);
     this.videos.forEach((v) => v.pause());
     this.audios.forEach((a) => a.pause());
+    this.overlayVideos.forEach((v) => v.pause());
     this.onTime?.(this.time);
     this.onPlayingChange?.(false);
     this.draw();
@@ -194,6 +228,17 @@ export class VideoEngine {
         el.pause();
       }
     }
+    const active = new Set(activeAt(p.overlays, this.time).map((o) => o.id));
+    for (const o of p.overlays) {
+      const v = this.overlayVideos.get(o.id);
+      if (!v) continue;
+      if (active.has(o.id)) {
+        this.setVolume(v, o.volume);
+        this.align(v, o.in + (this.time - o.start));
+      } else if (!v.paused) {
+        v.pause();
+      }
+    }
   }
 
   private align(el: HTMLMediaElement, target: number) {
@@ -233,6 +278,7 @@ export class VideoEngine {
       const asset = p.assets.find((a) => a.id === hit.clip.assetId);
       const source = asset ? this.sourceFor(asset) : null;
       const alpha = fadeOpacity(hit.clip, this.time - hit.start);
+      const progress = (this.time - hit.start) / clipDuration(hit.clip);
       const tr = transitionAt(hit, this.time);
       // The outgoing clip is shown as its last drawn frame, so transitions work even
       // between two halves of the same video (which share one <video> element).
@@ -244,7 +290,7 @@ export class VideoEngine {
           if (!source || !asset) return;
           ctx.save();
           transform?.();
-          this.drawClip(source, asset, hit.clip, alpha * a);
+          this.drawClip(source, asset, hit.clip, alpha * a, progress);
           ctx.restore();
         };
         switch (tr.type) {
@@ -286,10 +332,12 @@ export class VideoEngine {
             break;
         }
       } else if (source && asset) {
-        this.drawClip(source, asset, hit.clip, alpha);
+        this.drawClip(source, asset, hit.clip, alpha, progress);
         if (!tr) this.takeSnapshot(hit.clip.id, W, H);
       }
     }
+
+    for (const o of activeAt(p.overlays, this.time)) this.drawOverlay(o, p);
 
     // Animations only run during playback so paused frames always show text clearly.
     for (const o of textsAt(p.texts, this.time)) drawText(ctx, o, this.time, W, H, this.playing);
@@ -321,8 +369,8 @@ export class VideoEngine {
     return null;
   }
 
-  /** Draw a clip's frame letterboxed into the canvas, with its filters. */
-  private drawClip(source: CanvasImageSource, asset: MediaAsset, clip: Clip, alpha: number) {
+  /** Draw a clip's frame letterboxed into the canvas, with its filters, motion and background fill. */
+  private drawClip(source: CanvasImageSource, asset: MediaAsset, clip: Clip, alpha: number, progress: number) {
     const ctx = this.ctx;
     const W = this.canvas.width;
     const H = this.canvas.height;
@@ -331,11 +379,61 @@ export class VideoEngine {
     const scale = Math.min(W / sw, H / sh);
     const dw = sw * scale;
     const dh = sh * scale;
+    ctx.save();
     ctx.globalAlpha = alpha;
+    if (this.project?.fill === 'blur' && (dw < W - 1 || dh < H - 1)) this.drawBlurredFill(source, sw, sh, W, H);
+    const m = motionTransform(clip.motion, progress);
+    if (m.scale !== 1 || m.dx !== 0) {
+      ctx.translate(W / 2 + m.dx * W, H / 2);
+      ctx.scale(m.scale, m.scale);
+      ctx.translate(-W / 2, -H / 2);
+    }
     ctx.filter = cssFilter(clip.filters);
     ctx.drawImage(source, (W - dw) / 2, (H - dh) / 2, dw, dh);
-    ctx.filter = 'none';
-    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  /** Fill the frame with a soft, darkened, zoomed copy of the clip (cheap blur via downscaling). */
+  private drawBlurredFill(source: CanvasImageSource, sw: number, sh: number, W: number, H: number) {
+    const small = this.blurCanvas;
+    small.width = 48;
+    small.height = Math.max(1, Math.round((48 * H) / W));
+    const sctx = small.getContext('2d')!;
+    const cover = Math.max(small.width / sw, small.height / sh);
+    sctx.drawImage(source, (small.width - sw * cover) / 2, (small.height - sh * cover) / 2, sw * cover, sh * cover);
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.imageSmoothingQuality = 'high';
+    ctx.filter = 'blur(12px) brightness(0.7)';
+    ctx.drawImage(small, -W * 0.05, -H * 0.05, W * 1.1, H * 1.1);
+    ctx.restore();
+  }
+
+  private drawOverlay(o: OverlayClip, p: VideoProject) {
+    const asset = p.assets.find((a) => a.id === o.assetId);
+    if (!asset) return;
+    let source: CanvasImageSource | null = null;
+    if (asset.kind === 'video') {
+      const v = this.overlayVideos.get(o.id);
+      source = v && v.readyState >= 2 ? v : null;
+    } else {
+      source = this.sourceFor(asset);
+    }
+    if (!source) return;
+    const box = overlayBox(o, asset, p.width, p.height);
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = o.opacity;
+    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.roundRect(box.x, box.y, box.w, box.h, o.rounded * Math.min(box.w, box.h));
+    ctx.fillStyle = '#000';
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.clip();
+    ctx.drawImage(source, box.x, box.y, box.w, box.h);
+    ctx.restore();
   }
 
   onEnded(fn: () => void) {
@@ -396,6 +494,7 @@ export class VideoEngine {
       v.removeAttribute('src');
     });
     this.audios.forEach((a) => a.pause());
+    this.overlayVideos.forEach((v) => v.pause());
     void this.audioCtx?.close();
   }
 }
@@ -482,4 +581,12 @@ async function decodeAudio(file: File): Promise<AudioBuffer | null> {
   } catch {
     return null; // Waveform is optional.
   }
+}
+
+/** Where an overlay is drawn, in project pixels. */
+export function overlayBox(o: OverlayClip, asset: MediaAsset, W: number, H: number) {
+  const aspect = (asset.height ?? 9) / (asset.width ?? 16);
+  const w = o.scale * W;
+  const h = w * aspect;
+  return { x: o.x * W - w / 2, y: o.y * H - h / 2, w, h };
 }

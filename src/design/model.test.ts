@@ -3,6 +3,10 @@ import {
   aabb,
   addElement,
   alignElements,
+  applyCrop,
+  createImage,
+  cropRect,
+  docColors,
   boundsOf,
   distributeElements,
   duplicateElements,
@@ -185,5 +189,37 @@ describe('gradientLine', () => {
     const [a, b] = gradientLine(200, 100, 90);
     expect(a.y).toBeCloseTo(0);
     expect(b.y).toBeCloseTo(100);
+  });
+});
+
+describe('cropping', () => {
+  it('shows the whole picture with no crop', () => {
+    expect(cropRect(400, 200)).toEqual({ x: 0, y: 0, width: 400, height: 200 });
+  });
+
+  it('takes the largest centered area of the chosen shape, then zooms', () => {
+    expect(cropRect(400, 200, { aspect: 1, zoom: 1, cx: 0.5, cy: 0.5 })).toEqual({ x: 100, y: 0, width: 200, height: 200 });
+    expect(cropRect(400, 200, { aspect: null, zoom: 2, cx: 0.5, cy: 0.5 })).toEqual({ x: 100, y: 50, width: 200, height: 100 });
+  });
+
+  it('keeps the visible area inside the picture when panning', () => {
+    expect(cropRect(400, 200, { aspect: 1, zoom: 1, cx: 0, cy: 0.5 }).x).toBe(0);
+    expect(cropRect(400, 200, { aspect: 1, zoom: 1, cx: 1, cy: 0.5 }).x).toBe(200);
+  });
+
+  it('changes height (not width) so the picture is never stretched', () => {
+    const img = { ...createImage(doc, 'x', 400, 200), x: 0, y: 100, width: 400, height: 200 };
+    const out = applyCrop(img, { aspect: 1, zoom: 1, cx: 0.5, cy: 0.5 }, 400, 200);
+    expect(out).toMatchObject({ width: 400, height: 400, y: 0 });
+  });
+});
+
+describe('docColors', () => {
+  it('lists colors in use, most used first, without duplicates', () => {
+    const d = [rect({ fill: '#FF0000' }), rect({ fill: '#ff0000' }), rect({ fill: '#00ff00', strokeWidth: 2, stroke: '#0000ff' })].reduce(
+      addElement,
+      { ...doc, background: '#ffffff' },
+    );
+    expect(docColors(d)).toEqual(['#ff0000', '#ffffff', '#00ff00', '#0000ff']);
   });
 });

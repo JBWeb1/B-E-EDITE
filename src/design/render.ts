@@ -1,5 +1,6 @@
 import { cssFilter } from '../lib/filters';
-import { center, gradientLine, wrapText } from './model';
+import { makePdf } from '../lib/pdf';
+import { center, cropRect, gradientLine, wrapText } from './model';
 import type { DesignDoc, DesignElement, ShapeElement, TextElement } from './types';
 
 /** Cache of decoded images keyed by src. Calls `onLoad` when a new image finishes loading. */
@@ -95,6 +96,53 @@ function shapePath(ctx: CanvasRenderingContext2D, el: ShapeElement) {
       ctx.moveTo(x, y + h / 2);
       ctx.lineTo(x + w, y + h / 2);
       break;
+    case 'diamond':
+      ctx.moveTo(x + w / 2, y);
+      ctx.lineTo(x + w, y + h / 2);
+      ctx.lineTo(x + w / 2, y + h);
+      ctx.lineTo(x, y + h / 2);
+      ctx.closePath();
+      break;
+    case 'hexagon':
+      for (let i = 0; i < 6; i++) {
+        const a = (Math.PI / 3) * i;
+        const px = x + w / 2 + (Math.cos(a) * w) / 2;
+        const py = y + h / 2 + (Math.sin(a) * h) / 2;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      break;
+    case 'heart':
+      ctx.moveTo(x + w / 2, y + h);
+      ctx.bezierCurveTo(x - w * 0.1, y + h * 0.55, x + w * 0.05, y - h * 0.1, x + w / 2, y + h * 0.25);
+      ctx.bezierCurveTo(x + w * 0.95, y - h * 0.1, x + w * 1.1, y + h * 0.55, x + w / 2, y + h);
+      ctx.closePath();
+      break;
+    case 'arrow':
+      ctx.moveTo(x, y + h * 0.3);
+      ctx.lineTo(x + w * 0.6, y + h * 0.3);
+      ctx.lineTo(x + w * 0.6, y);
+      ctx.lineTo(x + w, y + h / 2);
+      ctx.lineTo(x + w * 0.6, y + h);
+      ctx.lineTo(x + w * 0.6, y + h * 0.7);
+      ctx.lineTo(x, y + h * 0.7);
+      ctx.closePath();
+      break;
+    case 'bubble': {
+      const r = Math.min(w, h) * 0.18;
+      const bh = h * 0.8;
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + bh, r);
+      ctx.arcTo(x + w, y + bh, x, y + bh, r);
+      ctx.lineTo(x + w * 0.38, y + bh);
+      ctx.lineTo(x + w * 0.2, y + h);
+      ctx.lineTo(x + w * 0.24, y + bh);
+      ctx.arcTo(x, y + bh, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+      break;
+    }
   }
 }
 
@@ -129,7 +177,8 @@ function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: I
         ctx.translate(-c.x, -c.y);
       }
       ctx.filter = cssFilter(el.filters);
-      ctx.drawImage(img, el.x, el.y, el.width, el.height);
+      const r = cropRect(img.naturalWidth, img.naturalHeight, el.crop);
+      ctx.drawImage(img, r.x, r.y, r.width, r.height, el.x, el.y, el.width, el.height);
     }
   } else {
     const lines = textLines(ctx, el);
@@ -195,8 +244,8 @@ export async function exportDesign(doc: DesignDoc, type: 'image/png' | 'image/jp
 
 const thumbCache = new Map<DesignDoc, string>();
 
-/** Small JPEG preview of a design (cached per doc object). */
-export function designThumbnail(doc: DesignDoc, maxSize = 240): string {
+/** Small JPEG preview of a design (cached per doc object). Pass an ImageCache with photos already loaded to include them. */
+export function designThumbnail(doc: DesignDoc, maxSize = 240, images?: ImageCache): string {
   const cached = thumbCache.get(doc);
   if (cached) return cached;
   const scale = maxSize / Math.max(doc.width, doc.height);
@@ -205,8 +254,15 @@ export function designThumbnail(doc: DesignDoc, maxSize = 240): string {
   canvas.height = Math.round(doc.height * scale);
   const ctx = canvas.getContext('2d')!;
   ctx.scale(scale, scale);
-  renderDesign(ctx, doc, new ImageCache(() => {}));
+  renderDesign(ctx, doc, images ?? new ImageCache(() => {}));
   const url = canvas.toDataURL('image/jpeg', 0.85);
   thumbCache.set(doc, url);
   return url;
+}
+
+/** Render the design as a one-page PDF (the page is a high-quality JPEG of the design). */
+export async function exportPdf(doc: DesignDoc, scale = 2): Promise<Blob> {
+  const jpeg = await exportDesign(doc, 'image/jpeg', scale);
+  const bytes = new Uint8Array(await jpeg.arrayBuffer());
+  return makePdf([{ jpeg: bytes, width: Math.round(doc.width * scale), height: Math.round(doc.height * scale), pageWidth: doc.width * 0.75, pageHeight: doc.height * 0.75 }]);
 }

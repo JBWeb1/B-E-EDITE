@@ -4,6 +4,7 @@ import { downloadBlob, readFileAsDataURL } from '../lib/download';
 import { FILTER_PRESETS, NEUTRAL_FILTERS, sameFilters } from '../lib/filters';
 import type { Filters } from '../lib/filters';
 import { useHistory } from '../lib/history';
+import { saveDesignProject } from '../lib/projects';
 import { uid } from '../lib/id';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { FilterSliders } from '../ui/FilterSliders';
@@ -12,10 +13,14 @@ import type { Shortcut } from '../ui/Help';
 import {
   addElement,
   alignElements,
+  applyCrop,
   boundsOf,
   createImage,
   createShape,
+  createSticker,
   createText,
+  cropRect,
+  docColors,
   distributeElements,
   duplicateElements,
   elementAt,
@@ -37,14 +42,21 @@ import {
   updateElement,
 } from './model';
 import type { AlignMode, Guide, Handle, LayerMove, Point, Rect } from './model';
-import { designThumbnail, exportDesign, ImageCache, measureTextHeight, renderDesign } from './render';
+import { designThumbnail, exportDesign, exportPdf, ImageCache, measureTextHeight, renderDesign } from './render';
 import { SIZE_PRESETS, TEMPLATES } from './templates';
-import type { DesignDoc, DesignElement, Gradient, ShapeKind, TextElement } from './types';
-
-export const AUTOSAVE_KEY = 'bee.design.autosave';
+import type { Crop, DesignDoc, DesignElement, Gradient, ImageElement, ShapeKind, TextElement } from './types';
 
 const SWATCHES = ['#ffffff', '#111827', '#f87171', '#fbbf24', '#34d399', '#60a5fa', '#a78bfa', '#f472b6', '#fde68a', '#d1fae5'];
-const SHAPES: ShapeKind[] = ['rect', 'ellipse', 'triangle', 'star', 'line'];
+const SHAPES: ShapeKind[] = ['rect', 'ellipse', 'triangle', 'star', 'line', 'heart', 'arrow', 'bubble', 'hexagon', 'diamond'];
+const STICKERS = ['😀', '😂', '😍', '🥳', '😎', '🔥', '⭐', '❤️', '👍', '🎉', '✨', '💯', '🚀', '🌈', '☀️', '🌸', '🍕', '☕', '📣', '✅'];
+const CROP_ASPECTS: { label: string; aspect: number | null }[] = [
+  { label: 'Original', aspect: null },
+  { label: '1:1', aspect: 1 },
+  { label: '4:5', aspect: 4 / 5 },
+  { label: '3:2', aspect: 3 / 2 },
+  { label: '16:9', aspect: 16 / 9 },
+  { label: '9:16', aspect: 9 / 16 },
+];
 const HANDLES = Object.keys(HANDLE_SIGNS) as Handle[];
 const HANDLE_CURSORS: Record<Handle, string> = {
   nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize',
@@ -75,7 +87,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['?'], action: 'Show this help' },
 ];
 
-type Tab = 'templates' | 'text' | 'shapes' | 'uploads' | 'background';
+type Tab = 'templates' | 'text' | 'elements' | 'uploads' | 'background';
 
 type Drag =
   | { mode: 'move'; start: Point; origins: Map<string, Point>; bounds: Rect; clickedId: string; moved: boolean }
@@ -105,7 +117,7 @@ function isTyping(target: EventTarget | null) {
 
 const gradientCss = (g: Gradient) => `linear-gradient(${g.angle + 90}deg, ${g.from}, ${g.to})`;
 
-export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; onExit: () => void }) {
+export function DesignEditor({ initialDoc, projectId, onExit }: { initialDoc: DesignDoc; projectId: string; onExit: () => void }) {
   const history = useHistory<DesignDoc>(initialDoc);
   const { state: doc, set, setTransient, mark } = history;
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -140,17 +152,19 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
     setSelectedIds((sel) => (sel.every((id) => ids.has(id)) ? sel : sel.filter((id) => ids.has(id))));
   }, [doc.elements]);
 
-  // Autosave so work survives a refresh.
+  // Autosave so work survives a refresh. Untouched blank designs are not saved.
+  const [saveState, setSaveState] = useState<'saving' | 'saved' | 'error' | null>(null);
   useEffect(() => {
+    if (doc === initialDoc && doc.elements.length === 0) return;
+    setSaveState('saving');
     const t = setTimeout(() => {
-      try {
-        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(doc));
-      } catch {
-        // Storage full or unavailable: autosave is best effort.
-      }
-    }, 500);
+      saveDesignProject(projectId, doc, designThumbnail(doc, 240, images)).then(
+        () => setSaveState('saved'),
+        () => setSaveState('error'),
+      );
+    }, 600);
     return () => clearTimeout(t);
-  }, [doc]);
+  }, [doc, initialDoc, projectId, images]);
 
   // Fit the artboard to the available space.
   useLayoutEffect(() => {
@@ -534,6 +548,15 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
     }
   };
 
+  const doExportPdf = async () => {
+    setBusy(true);
+    try {
+      downloadBlob(await exportPdf(doc), `${doc.name || 'design'}.pdf`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const saveProject = () =>
     downloadBlob(new Blob([JSON.stringify(doc)], { type: 'application/json' }), `${doc.name || 'design'}.bee.json`);
 
@@ -560,6 +583,20 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
   ];
 
   const allLocked = selectedEls.length > 0 && selectedEls.every((e) => e.locked);
+  const usedColors = docColors(doc);
+
+  /** Change the crop of the selected image without stretching it. */
+  const setCrop = (crop: Crop | undefined, live = false) => {
+    if (selected?.type !== 'image') return;
+    const img = images.get(selected.src);
+    const nw = selected.naturalWidth ?? img?.naturalWidth;
+    const nh = selected.naturalHeight ?? img?.naturalHeight;
+    if (!nw || !nh) return;
+    const next = applyCrop({ ...selected, naturalWidth: nw, naturalHeight: nh }, crop, nw, nh);
+    const fn = (d: DesignDoc) => updateElement(d, selected.id, roundBox(next));
+    if (live) setTransient(fn);
+    else set(fn);
+  };
 
   return (
     <div className="editor">
@@ -572,6 +609,11 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
           onChange={(e) => setTransient((d) => ({ ...d, name: e.target.value }))}
           aria-label="Design name"
         />
+        <span className="save-state" aria-live="polite">
+          {saveState === 'saving' && 'Saving…'}
+          {saveState === 'saved' && '✓ Saved'}
+          {saveState === 'error' && '⚠ Not saved'}
+        </span>
         <div className="spacer" />
         <button onClick={history.undo} disabled={!history.canUndo} title="Undo (Ctrl+Z)">↶ Undo</button>
         <button onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
@@ -592,14 +634,15 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
         </select>
         <button className="primary" disabled={busy} onClick={() => doExport('image/png')}>Download PNG</button>
         <button disabled={busy} onClick={() => doExport('image/jpeg')}>JPG</button>
+        <button disabled={busy} onClick={doExportPdf} title="Print-ready PDF">PDF</button>
         <button className="ghost" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)">?</button>
       </header>
 
       <div className="workspace">
         <nav className="rail">
-          {(['templates', 'text', 'shapes', 'uploads', 'background'] as Tab[]).map((t) => (
+          {(['templates', 'text', 'elements', 'uploads', 'background'] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
-              <span className="rail-icon">{{ templates: '▦', text: 'T', shapes: '◆', uploads: '⇪', background: '■' }[t]}</span>
+              <span className="rail-icon">{{ templates: '▦', text: 'T', elements: '◆', uploads: '⇪', background: '■' }[t]}</span>
               {t[0].toUpperCase() + t.slice(1)}
             </button>
           ))}
@@ -661,13 +704,21 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
             </>
           )}
 
-          {tab === 'shapes' && (
+          {tab === 'elements' && (
             <>
               <h3>Shapes</h3>
               <div className="grid3">
                 {SHAPES.map((s) => (
                   <button key={s} className="card shape-card" onClick={() => insert(createShape(doc, s))} title={s}>
                     <ShapeIcon shape={s} />
+                  </button>
+                ))}
+              </div>
+              <h3>Stickers</h3>
+              <div className="sticker-grid">
+                {STICKERS.map((em) => (
+                  <button key={em} onClick={() => insert(createSticker(doc, em))} title="Add sticker">
+                    {em}
                   </button>
                 ))}
               </div>
@@ -724,13 +775,13 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
                       <button key={i} className="swatch" style={{ background: gradientCss(g) }} onClick={() => set((d) => ({ ...d, gradient: g }))} />
                     ))}
                   </div>
-                  <ColorField label="From" value={doc.gradient.from} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, gradient: { ...d.gradient!, from: v } }))} />
-                  <ColorField label="To" value={doc.gradient.to} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, gradient: { ...d.gradient!, to: v } }))} />
+                  <ColorField label="From" value={doc.gradient.from} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, gradient: { ...d.gradient!, from: v } }))} swatches={usedColors} />
+                  <ColorField label="To" value={doc.gradient.to} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, gradient: { ...d.gradient!, to: v } }))} swatches={usedColors} />
                   <RangeField label="Angle" value={doc.gradient.angle} min={0} max={360} step={5} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, gradient: { ...d.gradient!, angle: v } }))} format={(v) => `${v}°`} />
                 </>
               ) : (
                 <>
-                  <ColorField label="Color" value={doc.background} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, background: v }))} />
+                  <ColorField label="Color" value={doc.background} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, background: v }))} swatches={usedColors} />
                   <div className="swatches">
                     {SWATCHES.map((c) => (
                       <button key={c} className="swatch" style={{ background: c }} onClick={() => set((d) => ({ ...d, background: c, gradient: null }))} title={c} />
@@ -867,7 +918,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
                       </button>
                     ))}
                   </div>
-                  <ColorField label="Color" value={selected.color} onStart={mark} onChange={(v) => patchSelected({ color: v }, true)} />
+                  <ColorField label="Color" value={selected.color} onStart={mark} onChange={(v) => patchSelected({ color: v }, true)} swatches={usedColors} />
                   <RangeField label="Line height" value={selected.lineHeight} min={0.8} max={3} step={0.05} onStart={mark} onChange={(v) => patchSelected({ lineHeight: v }, true)} />
                   <RangeField label="Letter spacing" value={selected.letterSpacing ?? 0} min={-5} max={50} step={1} onStart={mark} onChange={(v) => patchSelected({ letterSpacing: v }, true)} format={(v) => `${v}px`} />
                   <h4>Effects</h4>
@@ -883,7 +934,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
                   {(selected.outlineWidth ?? 0) > 0 && (
                     <>
                       <RangeField label="Outline width" value={selected.outlineWidth ?? 0} min={1} max={30} step={1} onStart={mark} onChange={(v) => patchSelected({ outlineWidth: v }, true)} format={(v) => `${v}px`} />
-                      <ColorField label="Outline color" value={selected.outlineColor ?? '#000000'} onStart={mark} onChange={(v) => patchSelected({ outlineColor: v }, true)} />
+                      <ColorField label="Outline color" value={selected.outlineColor ?? '#000000'} onStart={mark} onChange={(v) => patchSelected({ outlineColor: v }, true)} swatches={usedColors} />
                     </>
                   )}
                 </>
@@ -892,9 +943,9 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
               {selected.type === 'shape' && (
                 <>
                   {selected.shape !== 'line' && (
-                    <ColorField label="Fill" value={selected.fill} onStart={mark} onChange={(v) => patchSelected({ fill: v }, true)} />
+                    <ColorField label="Fill" value={selected.fill} onStart={mark} onChange={(v) => patchSelected({ fill: v }, true)} swatches={usedColors} />
                   )}
-                  <ColorField label="Border" value={selected.stroke} onStart={mark} onChange={(v) => patchSelected({ stroke: v }, true)} />
+                  <ColorField label="Border" value={selected.stroke} onStart={mark} onChange={(v) => patchSelected({ stroke: v }, true)} swatches={usedColors} />
                   <RangeField label="Border width" value={selected.strokeWidth} min={0} max={60} step={1} onStart={mark} onChange={(v) => patchSelected({ strokeWidth: v }, true)} />
                   {selected.shape === 'rect' && (
                     <RangeField label="Corner radius" value={selected.radius} min={0} max={Math.min(selected.width, selected.height) / 2} step={1} onStart={mark} onChange={(v) => patchSelected({ radius: v }, true)} />
@@ -909,6 +960,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
                     <button className={selected.flipY ? 'active' : ''} onClick={() => patchSelected({ flipY: !selected.flipY })}>⇵ Flip V</button>
                   </div>
                   <RangeField label="Corner radius" value={selected.radius} min={0} max={Math.min(selected.width, selected.height) / 2} step={1} onStart={mark} onChange={(v) => patchSelected({ radius: v }, true)} />
+                  <CropControls el={selected} mark={mark} setCrop={setCrop} />
                   <h4>Filters</h4>
                   <div className="grid3">
                     {FILTER_PRESETS.map((p) => (
@@ -1035,6 +1087,57 @@ function ShapeIcon({ shape }: { shape: ShapeKind }) {
       {shape === 'triangle' && <polygon points="20,4 36,36 4,36" {...common} />}
       {shape === 'star' && <polygon points="20,3 24.5,15 37,15 27,23 31,36 20,28 9,36 13,23 3,15 15.5,15" {...common} />}
       {shape === 'line' && <line x1="4" y1="20" x2="36" y2="20" stroke="#1f2937" strokeWidth="4" strokeLinecap="round" />}
+      {shape === 'heart' && <path d="M20 35 C2 24 4 6 20 12 C36 6 38 24 20 35Z" {...common} />}
+      {shape === 'arrow' && <polygon points="4,14 24,14 24,6 37,20 24,34 24,26 4,26" {...common} />}
+      {shape === 'bubble' && <path d="M8 5 H32 Q36 5 36 9 V25 Q36 29 32 29 H16 L9 36 L11 29 H8 Q4 29 4 25 V9 Q4 5 8 5Z" {...common} />}
+      {shape === 'hexagon' && <polygon points="36,20 28,34 12,34 4,20 12,6 28,6" {...common} />}
+      {shape === 'diamond' && <polygon points="20,3 37,20 20,37 3,20" {...common} />}
     </svg>
+  );
+}
+
+function CropControls({
+  el,
+  mark,
+  setCrop,
+}: {
+  el: ImageElement;
+  mark: () => void;
+  setCrop: (crop: Crop | undefined, live?: boolean) => void;
+}) {
+  const crop: Crop = el.crop ?? { aspect: null, zoom: 1, cx: 0.5, cy: 0.5 };
+  const nw = el.naturalWidth ?? 1;
+  const nh = el.naturalHeight ?? 1;
+  const r = cropRect(nw, nh, crop);
+  // Panning only matters when part of the picture is hidden in that direction.
+  const canPanX = r.width < nw - 0.5;
+  const canPanY = r.height < nh - 0.5;
+  return (
+    <>
+      <h4>Crop</h4>
+      <div className="grid3">
+        {CROP_ASPECTS.map((a) => (
+          <button
+            key={a.label}
+            className={crop.aspect === a.aspect || (a.aspect !== null && crop.aspect !== null && Math.abs(crop.aspect - a.aspect) < 1e-6) ? 'active' : ''}
+            onClick={() => setCrop({ ...crop, aspect: a.aspect })}
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
+      <RangeField label="Zoom" value={crop.zoom} min={1} max={4} step={0.05} onStart={mark} onChange={(v) => setCrop({ ...crop, zoom: v }, true)} format={(v) => `${v.toFixed(2)}×`} />
+      {canPanX && (
+        <RangeField label="Move left / right" value={crop.cx} min={0} max={1} step={0.01} onStart={mark} onChange={(v) => setCrop({ ...crop, cx: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+      )}
+      {canPanY && (
+        <RangeField label="Move up / down" value={crop.cy} min={0} max={1} step={0.01} onStart={mark} onChange={(v) => setCrop({ ...crop, cy: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+      )}
+      {el.crop && (
+        <button className="block" onClick={() => setCrop(undefined)}>
+          Reset crop
+        </button>
+      )}
+    </>
   );
 }

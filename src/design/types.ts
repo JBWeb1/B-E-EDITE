@@ -30,7 +30,7 @@ export interface TextElement extends ElementBase {
   outlineColor?: string;
 }
 
-export type ShapeKind = 'rect' | 'ellipse' | 'triangle' | 'star' | 'line';
+export type ShapeKind = 'rect' | 'ellipse' | 'triangle' | 'star' | 'line' | 'heart' | 'arrow' | 'bubble' | 'hexagon' | 'diamond';
 
 export interface ShapeElement extends ElementBase {
   type: 'shape';
@@ -49,6 +49,21 @@ export interface ImageElement extends ElementBase {
   flipX?: boolean;
   flipY?: boolean;
   filters?: Filters;
+  /** Size of the original picture, used for cropping. */
+  naturalWidth?: number;
+  naturalHeight?: number;
+  crop?: Crop;
+}
+
+/** Which part of a picture is shown. */
+export interface Crop {
+  /** Width / height of the visible area, or null to keep the picture's own shape. */
+  aspect: number | null;
+  /** 1 = as large as possible; 2 = half the width and height; … */
+  zoom: number;
+  /** Center of the visible area, 0..1 across the picture. */
+  cx: number;
+  cy: number;
 }
 
 export type DesignElement = TextElement | ShapeElement | ImageElement;

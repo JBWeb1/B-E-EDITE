@@ -82,21 +82,43 @@ export function RangeField({
   );
 }
 
+/** Color picker. `swatches` shows one-click colors (e.g. ones already used in the design). */
 export function ColorField({
   label,
   value,
   onChange,
   onStart,
+  swatches,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   onStart?: () => void;
+  swatches?: string[];
 }) {
+  const others = swatches?.filter((c) => c.toLowerCase() !== value.toLowerCase()) ?? [];
   return (
-    <label className="field color-field">
-      <span>{label}</span>
-      <input type="color" value={value} onFocus={onStart} onClick={onStart} onChange={(e) => onChange(e.target.value)} />
-    </label>
+    <div className="color-group">
+      <label className="field color-field">
+        <span>{label}</span>
+        <input type="color" value={value} onFocus={onStart} onClick={onStart} onChange={(e) => onChange(e.target.value)} />
+      </label>
+      {others.length > 0 && (
+        <div className="mini-swatches" aria-label={`${label}: colors in this design`}>
+          {others.map((c) => (
+            <button
+              key={c}
+              className="mini-swatch"
+              style={{ background: c }}
+              title={c}
+              onClick={() => {
+                onStart?.();
+                onChange(c);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

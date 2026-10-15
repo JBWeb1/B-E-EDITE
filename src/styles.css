@@ -966,3 +966,106 @@ kbd {
 .home-card.continue {
   border-color: var(--accent);
 }
+
+/* ---------- Added in v0.3 ---------- */
+
+.overlay-item {
+  background-color: #b45309;
+  background-size: auto 100%;
+  background-repeat: repeat-x;
+}
+
+.snap-line {
+  position: absolute;
+  top: 24px;
+  bottom: 0;
+  width: 1px;
+  background: #fbbf24;
+  box-shadow: 0 0 4px #fbbf24;
+  pointer-events: none;
+  z-index: 9;
+}
+
+.project-card {
+  position: relative;
+}
+
+.project-card .home-card {
+  width: 100%;
+  height: 100%;
+}
+
+.project-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(15, 17, 23, 0.85);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.project-card:hover .project-delete,
+.project-delete:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .project-delete {
+    opacity: 1;
+  }
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.search {
+  max-width: 240px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+}
+
+.asset-overlay {
+  right: 40px;
+  background: #b45309;
+}
+
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.sticker-grid button {
+  font-size: 22px;
+  padding: 6px 0;
+}
+
+.save-state {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mini-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: -4px 0 8px;
+}
+
+.mini-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}

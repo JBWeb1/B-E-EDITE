@@ -1,6 +1,6 @@
 import { uid } from '../lib/id';
 import { NEUTRAL_FILTERS } from '../lib/filters';
-import type { AudioClip, Clip, MediaAsset, TextOverlay, TransitionType, VideoProject } from './types';
+import type { AudioClip, Clip, MediaAsset, Motion, OverlayClip, TextOverlay, TransitionType, VideoProject } from './types';
 
 export const DEFAULT_IMAGE_SECONDS = 3;
 export const MIN_CLIP_SECONDS = 0.1;
@@ -15,7 +15,7 @@ export const ASPECTS = [
 ];
 
 export function createProject(width = 1280, height = 720): VideoProject {
-  return { name: 'Untitled video', width, height, background: '#000000', assets: [], clips: [], texts: [], audio: [] };
+  return { name: 'Untitled video', width, height, background: '#000000', fill: 'color', assets: [], clips: [], texts: [], audio: [], overlays: [] };
 }
 
 export function clipDuration(c: Clip): number {
@@ -87,6 +87,7 @@ export function projectDuration(p: VideoProject): number {
     mainTrackDuration(p.clips),
     ...p.texts.map((t) => t.start + t.duration),
     ...p.audio.map((a) => a.start + (a.out - a.in)),
+    ...(p.overlays ?? []).map((o) => o.start + (o.out - o.in)),
     0,
   );
 }
@@ -240,4 +241,139 @@ export function assignLanes<T>(items: T[], start: (item: T) => number, end: (ite
     lanes[i] = lane;
   }
   return lanes;
+}
+
+/** Fill in fields added after a project was saved, so older projects keep working. */
+export function normalizeProject(p: VideoProject): VideoProject {
+  return { ...p, fill: p.fill ?? 'color', overlays: p.overlays ?? [] };
+}
+
+export function createOverlay(asset: MediaAsset, start: number): OverlayClip {
+  return {
+    id: uid('overlay'),
+    assetId: asset.id,
+    start,
+    in: 0,
+    out: sourceLength(asset),
+    x: 0.75,
+    y: 0.28,
+    scale: 0.35,
+    opacity: 1,
+    volume: 1,
+    rounded: 0.08,
+  };
+}
+
+/** Items on a free-floating track (audio, overlays) that are playing at time `t`. */
+export function activeAt<T extends { start: number; in: number; out: number }>(items: T[], t: number): T[] {
+  return items.filter((i) => t >= i.start && t < i.start + (i.out - i.in));
+}
+
+export const MOTIONS: { value: Motion; label: string }[] = [
+  { value: 'none', label: 'None' },
+  { value: 'zoom-in', label: 'Zoom in' },
+  { value: 'zoom-out', label: 'Zoom out' },
+  { value: 'pan-left', label: 'Pan left' },
+  { value: 'pan-right', label: 'Pan right' },
+];
+
+/** Scale and horizontal shift (fraction of frame width) for a clip's motion at progress 0..1. */
+export function motionTransform(motion: Motion | undefined, progress: number): { scale: number; dx: number } {
+  const p = Math.max(0, Math.min(1, progress));
+  switch (motion) {
+    case 'zoom-in':
+      return { scale: 1 + 0.2 * p, dx: 0 };
+    case 'zoom-out':
+      return { scale: 1.2 - 0.2 * p, dx: 0 };
+    case 'pan-left':
+      return { scale: 1.2, dx: 0.08 - 0.16 * p };
+    case 'pan-right':
+      return { scale: 1.2, dx: -0.08 + 0.16 * p };
+    default:
+      return { scale: 1, dx: 0 };
+  }
+}
+
+/** Snap `value` to the nearest candidate within `threshold`, else return it unchanged. */
+export function snapTime(value: number, candidates: number[], threshold: number): { value: number; snapped: number | null } {
+  let best: number | null = null;
+  for (const c of candidates) {
+    if (Math.abs(c - value) <= threshold && (best === null || Math.abs(c - value) < Math.abs(best - value))) best = c;
+  }
+  return { value: best ?? value, snapped: best };
+}
+
+/** Times worth snapping to: start, playhead, clip edges and every item edge except the excluded one. */
+export function snapCandidates(p: VideoProject, playhead: number, excludeId?: string): number[] {
+  const out = [0, playhead];
+  for (const placed of layoutClips(p.clips)) out.push(placed.start, placed.end);
+  for (const o of p.texts) if (o.id !== excludeId) out.push(o.start, o.start + o.duration);
+  for (const a of [...p.audio, ...p.overlays]) if (a.id !== excludeId) out.push(a.start, a.start + a.out - a.in);
+  return out;
+}
+
+export interface Caption {
+  start: number;
+  end: number;
+  text: string;
+}
+
+function parseSrtTime(s: string): number {
+  const m = s.trim().match(/(\d+):(\d+):(\d+)[,.](\d+)/);
+  if (!m) return NaN;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4].padEnd(3, '0').slice(0, 3)) / 1000;
+}
+
+/** Parse SubRip (.srt) or WebVTT (.vtt) subtitles. Malformed blocks are skipped. */
+export function parseSubtitles(text: string): Caption[] {
+  const blocks = text.replace(/\r/g, '').replace(/^WEBVTT.*\n/, '').split(/\n\s*\n/);
+  const out: Caption[] = [];
+  for (const block of blocks) {
+    const lines = block.split('\n').filter((l) => l.trim() !== '');
+    const timeIdx = lines.findIndex((l) => l.includes('-->'));
+    if (timeIdx < 0) continue;
+    const [a, b] = lines[timeIdx].split('-->');
+    const start = parseSrtTime(a);
+    const end = parseSrtTime(b);
+    const body = lines.slice(timeIdx + 1).join('\n').replace(/<[^>]+>/g, '').trim();
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start && body) out.push({ start, end, text: body });
+  }
+  return out;
+}
+
+function srtTime(t: number): string {
+  const ms = Math.round(t * 1000);
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms % 1000, 3)}`;
+}
+
+/** Write text overlays as a SubRip (.srt) file, in time order. */
+export function toSrt(texts: TextOverlay[]): string {
+  return [...texts]
+    .sort((a, b) => a.start - b.start)
+    .map((o, i) => `${i + 1}\n${srtTime(o.start)} --> ${srtTime(o.start + o.duration)}\n${o.text}\n`)
+    .join('\n');
+}
+
+/**
+ * Turn a typed script into captions spread over `duration` seconds. Each line (or
+ * sentence, when there are no line breaks) becomes one caption, timed by its length.
+ */
+export function scriptToCaptions(script: string, duration: number, start = 0): Caption[] {
+  let parts = script.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (parts.length === 1) parts = parts[0].split(/(?<=[.!?])\s+/).map((l) => l.trim()).filter(Boolean);
+  if (parts.length === 0 || duration <= 0) return [];
+  const weight = (s: string) => Math.max(8, s.length);
+  const total = parts.reduce((sum, p) => sum + weight(p), 0);
+  const out: Caption[] = [];
+  let t = start;
+  for (const text of parts) {
+    const d = (weight(text) / total) * duration;
+    out.push({ start: t, end: t + d, text });
+    t += d;
+  }
+  return out;
 }

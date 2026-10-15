@@ -1,13 +1,31 @@
 import { useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { formatTime } from '../lib/download';
-import { assignLanes, clipDuration, dropIndex, layoutClips, moveItem, PEAKS_PER_SECOND, projectDuration, trimEnd, trimStart } from './timeline';
-import type { AudioClip, Clip, TextOverlay, VideoProject } from './types';
+import {
+  assignLanes,
+  clipDuration,
+  dropIndex,
+  layoutClips,
+  moveItem,
+  PEAKS_PER_SECOND,
+  projectDuration,
+  snapCandidates,
+  snapTime,
+  trimEnd,
+  trimStart,
+} from './timeline';
+import type { AudioClip, Clip, OverlayClip, TextOverlay, VideoProject } from './types';
 
-/** Height of one row in the text and audio tracks. */
+/** Height of one row in the text, overlay and audio tracks. */
 const LANE = 34;
+/** How close (in screen pixels) an edge must get to something before it snaps. */
+const SNAP_PX = 8;
 
-export type Selection = { kind: 'clip' | 'text' | 'audio'; id: string } | null;
+export type Selection = { kind: 'clip' | 'text' | 'audio' | 'overlay'; id: string } | null;
+
+/** Tracks whose items float freely in time and have source in/out points. */
+type FreeKey = 'audio' | 'overlays';
+type FreeItem = AudioClip | OverlayClip;
 
 interface Props {
   project: VideoProject;
@@ -29,16 +47,17 @@ interface Props {
 type Drag =
   | { kind: 'reorder'; from: number; startX: number; moved: boolean }
   | { kind: 'trim-clip'; edge: 'start' | 'end'; clip: Clip; startX: number }
-  | { kind: 'move-text'; item: TextOverlay; startX: number }
-  | { kind: 'resize-text'; item: TextOverlay; startX: number }
-  | { kind: 'move-audio'; item: AudioClip; startX: number }
-  | { kind: 'trim-audio'; edge: 'start' | 'end'; item: AudioClip; startX: number }
+  | { kind: 'move-text'; item: TextOverlay; startX: number; cands: number[] }
+  | { kind: 'resize-text'; item: TextOverlay; startX: number; cands: number[] }
+  | { kind: 'move-free'; key: FreeKey; item: FreeItem; startX: number; cands: number[] }
+  | { kind: 'trim-free'; key: FreeKey; edge: 'start' | 'end'; item: FreeItem; startX: number; cands: number[] }
   | { kind: 'scrub' };
 
 export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBegin, onChange, onCommit, onTransitionClick }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
+  const [snapAt, setSnapAt] = useState<number | null>(null);
 
   const duration = projectDuration(project);
   const width = Math.max(duration + 10, 30) * pps;
@@ -46,7 +65,8 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
   const assetOf = (id: string) => project.assets.find((a) => a.id === id);
   const textLanes = assignLanes(project.texts, (o) => o.start, (o) => o.start + o.duration);
   const audioLanes = assignLanes(project.audio, (a) => a.start, (a) => a.start + a.out - a.in);
-  const laneHeight = (count: number) => Math.max(1, count) * LANE;
+  const overlayLanes = assignLanes(project.overlays, (a) => a.start, (a) => a.start + a.out - a.in);
+  const laneHeight = (lanes: number[]) => (Math.max(0, ...lanes) + 1) * LANE;
 
   const timeAt = (clientX: number) => {
     const rect = innerRef.current!.getBoundingClientRect();
@@ -60,6 +80,28 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
     if (drag.kind !== 'scrub' && drag.kind !== 'reorder') onBegin();
     innerRef.current!.setPointerCapture(e.pointerId);
   };
+
+  const cands = (excludeId: string) => snapCandidates(project, time, excludeId);
+
+  /** Snap a single time; Alt turns snapping off. */
+  const snapOne = (t: number, list: number[], alt: boolean) => {
+    if (alt) return { value: t, snapped: null };
+    return snapTime(t, list, SNAP_PX / pps);
+  };
+
+  /** Snap an item of length `len` by whichever of its edges is closest to something. */
+  const snapRange = (start: number, len: number, list: number[], alt: boolean) => {
+    const a = snapOne(start, list, alt);
+    const b = snapOne(start + len, list, alt);
+    if (a.snapped !== null && (b.snapped === null || Math.abs(a.value - start) <= Math.abs(b.value - start - len))) {
+      return { start: a.value, at: a.snapped };
+    }
+    if (b.snapped !== null) return { start: b.value - len, at: b.snapped };
+    return { start, at: null };
+  };
+
+  const updateFree = (key: FreeKey, next: FreeItem) =>
+    onChange((p) => ({ ...p, [key]: (p[key] as FreeItem[]).map((x) => (x.id === next.id ? next : x)) }));
 
   const onMove = (e: ReactPointerEvent) => {
     const d = dragRef.current;
@@ -80,35 +122,39 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
         onChange((p) => ({ ...p, clips: p.clips.map((c) => (c.id === next.id ? next : c)) }));
         break;
       }
-      case 'move-text':
-        onChange((p) => ({
-          ...p,
-          texts: p.texts.map((o) => (o.id === d.item.id ? { ...o, start: Math.max(0, d.item.start + dt) } : o)),
-        }));
+      case 'move-text': {
+        const r = snapRange(Math.max(0, d.item.start + dt), d.item.duration, d.cands, e.altKey);
+        setSnapAt(r.at);
+        onChange((p) => ({ ...p, texts: p.texts.map((o) => (o.id === d.item.id ? { ...o, start: Math.max(0, r.start) } : o)) }));
         break;
-      case 'resize-text':
-        onChange((p) => ({
-          ...p,
-          texts: p.texts.map((o) => (o.id === d.item.id ? { ...o, duration: Math.max(0.2, d.item.duration + dt) } : o)),
-        }));
+      }
+      case 'resize-text': {
+        const end = snapOne(d.item.start + d.item.duration + dt, d.cands, e.altKey);
+        setSnapAt(end.snapped);
+        const dur = Math.max(0.2, end.value - d.item.start);
+        onChange((p) => ({ ...p, texts: p.texts.map((o) => (o.id === d.item.id ? { ...o, duration: dur } : o)) }));
         break;
-      case 'move-audio':
-        onChange((p) => ({
-          ...p,
-          audio: p.audio.map((a) => (a.id === d.item.id ? { ...a, start: Math.max(0, d.item.start + dt) } : a)),
-        }));
+      }
+      case 'move-free': {
+        const r = snapRange(Math.max(0, d.item.start + dt), d.item.out - d.item.in, d.cands, e.altKey);
+        setSnapAt(r.at);
+        updateFree(d.key, { ...d.item, start: Math.max(0, r.start) });
         break;
-      case 'trim-audio': {
+      }
+      case 'trim-free': {
         const a = d.item;
         const len = assetOf(a.assetId)?.duration ?? Infinity;
-        let next: AudioClip;
         if (d.edge === 'start') {
-          const shift = Math.max(-a.in, -a.start, Math.min(dt, a.out - a.in - 0.1));
-          next = { ...a, in: a.in + shift, start: a.start + shift };
+          const target = snapOne(a.start + dt, d.cands, e.altKey);
+          setSnapAt(target.snapped);
+          const shift = Math.max(-a.in, -a.start, Math.min(target.value - a.start, a.out - a.in - 0.1));
+          updateFree(d.key, { ...a, in: a.in + shift, start: a.start + shift });
         } else {
-          next = { ...a, out: Math.min(len, Math.max(a.in + 0.1, a.out + dt)) };
+          const target = snapOne(a.start + (a.out - a.in) + dt, d.cands, e.altKey);
+          setSnapAt(target.snapped);
+          const out = Math.min(len, Math.max(a.in + 0.1, a.in + (target.value - a.start)));
+          updateFree(d.key, { ...a, out });
         }
-        onChange((p) => ({ ...p, audio: p.audio.map((x) => (x.id === a.id ? next : x)) }));
         break;
       }
     }
@@ -122,11 +168,54 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
       if (to !== d.from) onCommit((p) => ({ ...p, clips: moveItem(p.clips, d.from, to) }));
     }
     setDropAt(null);
+    setSnapAt(null);
   };
 
   // Ruler tick spacing that stays readable at any zoom.
   const step = [0.5, 1, 2, 5, 10, 15, 30, 60].find((s) => s * pps >= 60) ?? 120;
   const ticks = Array.from({ length: Math.ceil(width / pps / step) + 1 }, (_, i) => i * step);
+
+  const freeTrack = (key: FreeKey, items: FreeItem[], lanes: number[], kind: 'audio' | 'overlay', label: string) => (
+    <div className={`track ${kind}-track`} style={{ height: laneHeight(lanes) }}>
+      <span className="track-label">{label}</span>
+      {items.map((a, i) => {
+        const asset = assetOf(a.assetId);
+        const select = { kind, id: a.id } as const;
+        return (
+          <div
+            key={a.id}
+            className={`item ${kind}-item ${selection?.id === a.id ? 'selected' : ''}`}
+            style={{
+              left: a.start * pps,
+              width: (a.out - a.in) * pps,
+              top: lanes[i] * LANE,
+              height: LANE - 4,
+              bottom: 'auto',
+              backgroundImage: kind === 'overlay' && asset?.thumbnail ? `url(${asset.thumbnail})` : undefined,
+            }}
+            onPointerDown={(e) => begin(e, { kind: 'move-free', key, item: a, startX: e.clientX, cands: cands(a.id) }, select)}
+          >
+            <span
+              className="edge start"
+              onPointerDown={(e) =>
+                begin(e, { kind: 'trim-free', key, edge: 'start', item: a, startX: e.clientX, cands: cands(a.id) }, select)
+              }
+            />
+            {kind === 'audio' && <Waveform peaks={asset?.peaks} from={a.in} to={a.out} />}
+            <span className="item-label">
+              {kind === 'audio' ? '♪' : '⧉'} {asset?.name}
+            </span>
+            <span
+              className="edge end"
+              onPointerDown={(e) =>
+                begin(e, { kind: 'trim-free', key, edge: 'end', item: a, startX: e.clientX, cands: cands(a.id) }, select)
+              }
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="timeline">
@@ -151,23 +240,29 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
           ))}
         </div>
 
-        <div className="track text-track" style={{ height: laneHeight(Math.max(0, ...textLanes) + 1) }}>
+        <div className="track text-track" style={{ height: laneHeight(textLanes) }}>
           <span className="track-label">Text</span>
-          {project.texts.map((o) => (
+          {project.texts.map((o, i) => (
             <div
               key={o.id}
               className={`item text-item ${selection?.id === o.id ? 'selected' : ''}`}
-              style={{ left: o.start * pps, width: o.duration * pps, top: textLanes[project.texts.indexOf(o)] * LANE, height: LANE - 4, bottom: 'auto' }}
-              onPointerDown={(e) => begin(e, { kind: 'move-text', item: o, startX: e.clientX }, { kind: 'text', id: o.id })}
+              style={{ left: o.start * pps, width: o.duration * pps, top: textLanes[i] * LANE, height: LANE - 4, bottom: 'auto' }}
+              onPointerDown={(e) =>
+                begin(e, { kind: 'move-text', item: o, startX: e.clientX, cands: cands(o.id) }, { kind: 'text', id: o.id })
+              }
             >
               <span className="item-label">T {o.text}</span>
               <span
                 className="edge end"
-                onPointerDown={(e) => begin(e, { kind: 'resize-text', item: o, startX: e.clientX }, { kind: 'text', id: o.id })}
+                onPointerDown={(e) =>
+                  begin(e, { kind: 'resize-text', item: o, startX: e.clientX, cands: cands(o.id) }, { kind: 'text', id: o.id })
+                }
               />
             </div>
           ))}
         </div>
+
+        {project.overlays.length > 0 && freeTrack('overlays', project.overlays, overlayLanes, 'overlay', 'Overlay')}
 
         <div className="track main-track">
           <span className="track-label">Video</span>
@@ -194,6 +289,7 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
                 />
                 <span className="item-label">
                   {clip.speed !== 1 && <b>{clip.speed}× </b>}
+                  {clip.motion && clip.motion !== 'none' && <b>⤢ </b>}
                   {asset?.name} · {clipDuration(clip).toFixed(1)}s
                 </span>
                 <span
@@ -223,33 +319,9 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
           {project.clips.length === 0 && <span className="track-empty">Import media and it will appear here</span>}
         </div>
 
-        <div className="track audio-track" style={{ height: laneHeight(Math.max(0, ...audioLanes) + 1) }}>
-          <span className="track-label">Audio</span>
-          {project.audio.map((a) => (
-            <div
-              key={a.id}
-              className={`item audio-item ${selection?.id === a.id ? 'selected' : ''}`}
-              style={{ left: a.start * pps, width: (a.out - a.in) * pps, top: audioLanes[project.audio.indexOf(a)] * LANE, height: LANE - 4, bottom: 'auto' }}
-              onPointerDown={(e) => begin(e, { kind: 'move-audio', item: a, startX: e.clientX }, { kind: 'audio', id: a.id })}
-            >
-              <span
-                className="edge start"
-                onPointerDown={(e) =>
-                  begin(e, { kind: 'trim-audio', edge: 'start', item: a, startX: e.clientX }, { kind: 'audio', id: a.id })
-                }
-              />
-              <Waveform peaks={assetOf(a.assetId)?.peaks} from={a.in} to={a.out} />
-              <span className="item-label">♪ {assetOf(a.assetId)?.name}</span>
-              <span
-                className="edge end"
-                onPointerDown={(e) =>
-                  begin(e, { kind: 'trim-audio', edge: 'end', item: a, startX: e.clientX }, { kind: 'audio', id: a.id })
-                }
-              />
-            </div>
-          ))}
-        </div>
+        {freeTrack('audio', project.audio, audioLanes, 'audio', 'Audio')}
 
+        {snapAt !== null && <div className="snap-line" style={{ left: snapAt * pps }} />}
         <div className="playhead" style={{ left: time * pps }} />
       </div>
     </div>

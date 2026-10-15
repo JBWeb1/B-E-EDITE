@@ -9,7 +9,8 @@ import { FilterSliders } from '../ui/FilterSliders';
 import { FirstRunTips, ShortcutsDialog } from '../ui/Help';
 import type { Shortcut } from '../ui/Help';
 import { probeMedia, VideoEngine } from './engine';
-import { putMedia, saveVideoProject } from './storage';
+import { putMedia, saveVideoProject } from '../lib/projects';
+import { overlayBox } from './engine';
 import { Timeline } from './Timeline';
 import type { Selection } from './Timeline';
 import {
@@ -18,8 +19,14 @@ import {
   createAudioClip,
   createClip,
   createProject,
+  createOverlay,
   createTextOverlay,
   FILTER_PRESETS,
+  MOTIONS,
+  normalizeProject,
+  parseSubtitles,
+  scriptToCaptions,
+  toSrt,
   locate,
   maxTransition,
   NEUTRAL_FILTERS,
@@ -29,7 +36,7 @@ import {
   textsAt,
   TRANSITIONS,
 } from './timeline';
-import type { AudioClip, Clip, ClipFilters, TextOverlay, Transition, VideoProject } from './types';
+import type { AudioClip, Clip, ClipFilters, Motion, OverlayClip, TextOverlay, Transition, VideoProject } from './types';
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 
@@ -52,6 +59,8 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['?'], action: 'Show this help' },
 ];
 
+const STICKERS = ['😀', '😂', '😍', '🔥', '👍', '🎉', '❤️', '⭐', '💯', '👀', '🚀', '✨', '😎', '🙌', '💥', '➡️'];
+
 const DEFAULT_TRANSITION: Transition = { type: 'fade', duration: 0.5 };
 
 function isTyping(target: EventTarget | null) {
@@ -63,12 +72,16 @@ export function VideoEditor({
   onExit,
   aspect,
   initialProject,
+  projectId,
 }: {
   onExit: () => void;
   aspect?: { width: number; height: number };
   initialProject?: VideoProject;
+  projectId: string;
 }) {
-  const history = useHistory<VideoProject>(() => initialProject ?? createProject(aspect?.width, aspect?.height));
+  const history = useHistory<VideoProject>(() =>
+    initialProject ? normalizeProject(initialProject) : createProject(aspect?.width, aspect?.height),
+  );
   const { state: project, set, setTransient, mark } = history;
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -83,12 +96,14 @@ export function VideoEditor({
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<VideoEngine | null>(null);
-  const textDragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
+  const textDragRef = useRef<{ id: string; kind: 'text' | 'overlay'; offX: number; offY: number } | null>(null);
 
   const duration = projectDuration(project);
   const selectedClip = selection?.kind === 'clip' ? project.clips.find((c) => c.id === selection.id) : undefined;
   const selectedText = selection?.kind === 'text' ? project.texts.find((t) => t.id === selection.id) : undefined;
   const selectedAudio = selection?.kind === 'audio' ? project.audio.find((a) => a.id === selection.id) : undefined;
+  const selectedOverlay = selection?.kind === 'overlay' ? project.overlays.find((o) => o.id === selection.id) : undefined;
+  const [script, setScript] = useState('');
 
   useEffect(() => {
     const engine = new VideoEngine(canvasRef.current!);
@@ -107,13 +122,13 @@ export function VideoEditor({
     if (project.assets.length === 0 && project.texts.length === 0) return;
     setSaveState('saving');
     const t = setTimeout(() => {
-      saveVideoProject(project).then(
+      saveVideoProject(projectId, project).then(
         () => setSaveState('saved'),
         () => setSaveState('error'),
       );
     }, 800);
     return () => clearTimeout(t);
-  }, [project]);
+  }, [project, projectId]);
 
   const seek = useCallback((t: number) => engineRef.current?.seek(t), []);
   const togglePlay = useCallback(() => engineRef.current?.toggle(), []);
@@ -164,6 +179,13 @@ export function VideoEditor({
     else set(fn);
   };
 
+  const updateOverlay = (patch: Partial<OverlayClip>, live = false) => {
+    if (!selectedOverlay) return;
+    const fn = (p: VideoProject) => ({ ...p, overlays: p.overlays.map((o) => (o.id === selectedOverlay.id ? { ...o, ...patch } : o)) });
+    if (live) setTransient(fn);
+    else set(fn);
+  };
+
   const split = useCallback(() => {
     const t = engineRef.current?.time ?? 0;
     if (selection?.kind === 'text') {
@@ -171,18 +193,17 @@ export function VideoEditor({
         ...p,
         texts: p.texts.flatMap((o) => (o.id === selection.id ? splitTexts([o], t) : [o])),
       }));
-    } else if (selection?.kind === 'audio') {
-      set((p) => ({
-        ...p,
-        audio: p.audio.flatMap((a) => {
-          const local = t - a.start;
-          if (a.id !== selection.id || local < 0.1 || a.out - a.in - local < 0.1) return [a];
-          return [
-            { ...a, out: a.in + local },
-            { ...a, id: uid('audio'), start: t, in: a.in + local },
-          ];
-        }),
-      }));
+    } else if (selection?.kind === 'audio' || selection?.kind === 'overlay') {
+      const key = selection.kind === 'audio' ? 'audio' : 'overlays';
+      const splitItem = <T extends AudioClip | OverlayClip>(a: T): T[] => {
+        const local = t - a.start;
+        if (a.id !== selection.id || local < 0.1 || a.out - a.in - local < 0.1) return [a];
+        return [
+          { ...a, out: a.in + local },
+          { ...a, id: uid(key), start: t, in: a.in + local },
+        ];
+      };
+      set((p) => ({ ...p, [key]: (p[key] as (AudioClip | OverlayClip)[]).flatMap(splitItem) }));
     } else {
       set((p) => ({ ...p, clips: splitClips(p.clips, t) }));
     }
@@ -190,7 +211,7 @@ export function VideoEditor({
 
   const removeSelected = useCallback(() => {
     if (!selection) return;
-    const key = selection.kind === 'clip' ? 'clips' : selection.kind === 'text' ? 'texts' : 'audio';
+    const key = ({ clip: 'clips', text: 'texts', audio: 'audio', overlay: 'overlays' } as const)[selection.kind];
     set((p) => ({ ...p, [key]: (p[key] as { id: string }[]).filter((x) => x.id !== selection.id) }));
     setSelection(null);
   }, [selection, set]);
@@ -205,8 +226,37 @@ export function VideoEditor({
       const copy = { ...selectedText, id: uid('text'), start: selectedText.start + selectedText.duration };
       set((p) => ({ ...p, texts: [...p.texts, copy] }));
       setSelection({ kind: 'text', id: copy.id });
+    } else if (selectedOverlay) {
+      const copy = { ...selectedOverlay, id: uid('overlay'), start: selectedOverlay.start + selectedOverlay.out - selectedOverlay.in };
+      set((p) => ({ ...p, overlays: [...p.overlays, copy] }));
+      setSelection({ kind: 'overlay', id: copy.id });
     }
   };
+
+  const addCaptions = (captions: { start: number; end: number; text: string }[]) => {
+    if (captions.length === 0) return;
+    const items = captions.map((c) =>
+      createTextOverlay(c.start, {
+        text: c.text,
+        duration: c.end - c.start,
+        y: 0.86,
+        size: 0.055,
+        bold: true,
+        background: '#111827',
+        animation: 'none',
+      }),
+    );
+    set((p) => ({ ...p, texts: [...p.texts, ...items] }));
+  };
+
+  const importCaptions = async (file: File) => {
+    const captions = parseSubtitles(await file.text());
+    if (captions.length === 0) alert('No captions found in that file. Use a .srt or .vtt subtitle file.');
+    addCaptions(captions);
+  };
+
+  const exportCaptions = () =>
+    downloadBlob(new Blob([toSrt(project.texts)], { type: 'text/plain' }), `${project.name || 'captions'}.srt`);
 
   const setTransition = (clipId: string, transition: Transition | undefined) =>
     set((p) => ({ ...p, clips: p.clips.map((c) => (c.id === clipId ? { ...c, transition } : c)) }));
@@ -301,7 +351,7 @@ export function VideoEditor({
     return () => window.removeEventListener('keydown', onKey);
   }, [history, togglePlay, split, removeSelected, seek, duration]);
 
-  // Drag text overlays directly on the preview.
+  // Drag text and picture-in-picture overlays directly on the preview.
   const previewPoint = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     return { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height };
@@ -317,9 +367,22 @@ export function VideoEditor({
       const h = (lines.length * size * 1.2) / project.height;
       return Math.abs(p.x - o.x) <= w / 2 + 0.02 && Math.abs(p.y - o.y) <= h / 2 + 0.02;
     });
-    if (!hit) return;
-    setSelection({ kind: 'text', id: hit.id });
-    textDragRef.current = { id: hit.id, offX: p.x - hit.x, offY: p.y - hit.y };
+    const overlayHit = hit
+      ? undefined
+      : [...project.overlays].reverse().find((o) => {
+          if (time < o.start || time >= o.start + o.out - o.in) return false;
+          const asset = project.assets.find((a) => a.id === o.assetId);
+          if (!asset) return false;
+          const b = overlayBox(o, asset, project.width, project.height);
+          const px = p.x * project.width;
+          const py = p.y * project.height;
+          return px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
+        });
+    const target = hit ?? overlayHit;
+    if (!target) return;
+    const kind = hit ? 'text' : 'overlay';
+    setSelection({ kind, id: target.id });
+    textDragRef.current = { id: target.id, kind, offX: p.x - target.x, offY: p.y - target.y };
     mark();
     e.currentTarget.setPointerCapture(e.pointerId);
   };
@@ -328,10 +391,11 @@ export function VideoEditor({
     if (!d) return;
     const p = previewPoint(e);
     const clamp = (v: number) => Math.max(0, Math.min(1, v));
-    setTransient((proj) => ({
-      ...proj,
-      texts: proj.texts.map((o) => (o.id === d.id ? { ...o, x: clamp(p.x - d.offX), y: clamp(p.y - d.offY) } : o)),
-    }));
+    const move = <T extends { id: string; x: number; y: number }>(o: T): T =>
+      o.id === d.id ? { ...o, x: clamp(p.x - d.offX), y: clamp(p.y - d.offY) } : o;
+    setTransient((proj) =>
+      d.kind === 'text' ? { ...proj, texts: proj.texts.map(move) } : { ...proj, overlays: proj.overlays.map(move) },
+    );
   };
 
   const doExport = async () => {
@@ -444,6 +508,19 @@ export function VideoEditor({
                     >
                       +
                     </button>
+                    {a.kind !== 'audio' && (
+                      <button
+                        className="asset-add asset-overlay"
+                        title="Add on top as picture-in-picture, at the playhead"
+                        onClick={() => {
+                          const o = createOverlay(a, time);
+                          set((p) => ({ ...p, overlays: [...p.overlays, o] }));
+                          setSelection({ kind: 'overlay', id: o.id });
+                        }}
+                      >
+                        ⧉
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -458,6 +535,54 @@ export function VideoEditor({
                     {t.label}
                   </button>
                 ))}
+              </div>
+              <h4>Stickers</h4>
+              <div className="sticker-grid">
+                {STICKERS.map((em) => (
+                  <button
+                    key={em}
+                    onClick={() => addText({ text: em, y: 0.3, x: 0.5, size: 0.16, bold: false, animation: 'pop' })}
+                    title="Add sticker"
+                  >
+                    {em}
+                  </button>
+                ))}
+              </div>
+              <h4>Captions</h4>
+              <label className="field">
+                <span>Captions from a script</span>
+                <textarea
+                  rows={4}
+                  placeholder="Type or paste what is said. Each line (or sentence) becomes one caption, spread over the video."
+                  value={script}
+                  onChange={(e) => setScript(e.target.value)}
+                />
+              </label>
+              <button
+                className="block"
+                disabled={!script.trim() || duration <= 0}
+                onClick={() => {
+                  addCaptions(scriptToCaptions(script, duration));
+                  setScript('');
+                }}
+              >
+                Create captions
+              </button>
+              <div className="row">
+                <label className="button">
+                  Import .srt
+                  <input
+                    type="file"
+                    accept=".srt,.vtt,text/vtt"
+                    hidden
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = '';
+                      if (f) void importCaptions(f);
+                    }}
+                  />
+                </label>
+                <button onClick={exportCaptions} disabled={project.texts.length === 0}>Download .srt</button>
               </div>
             </>
           )}
@@ -496,7 +621,7 @@ export function VideoEditor({
             </span>
             <div className="spacer" />
             <button onClick={split} title="Split at playhead (S)">✂ Split</button>
-            <button onClick={duplicateSelected} disabled={!selectedClip && !selectedText}>Duplicate</button>
+            <button onClick={duplicateSelected} disabled={!selectedClip && !selectedText && !selectedOverlay}>Duplicate</button>
             <button className="danger" onClick={removeSelected} disabled={!selection} title="Delete (Del)">Delete</button>
             <label className="zoom-slider" title="Timeline zoom">
               🔍
@@ -558,6 +683,27 @@ export function VideoEditor({
                 <NumberField label="Length (s)" value={selectedText.duration} min={0.2} step={0.1} onChange={(v) => updateText({ duration: v })} />
               </div>
             </>
+          ) : selectedOverlay ? (
+            <>
+              <h3>Overlay</h3>
+              <p className="hint">{project.assets.find((a) => a.id === selectedOverlay.assetId)?.name} · drag it on the preview to move it.</p>
+              <RangeField label="Size" value={selectedOverlay.scale} min={0.1} max={1} step={0.01} onStart={mark} onChange={(v) => updateOverlay({ scale: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+              <RangeField label="Opacity" value={selectedOverlay.opacity} min={0.1} max={1} step={0.01} onStart={mark} onChange={(v) => updateOverlay({ opacity: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+              <RangeField label="Rounded corners" value={selectedOverlay.rounded} min={0} max={0.5} step={0.01} onStart={mark} onChange={(v) => updateOverlay({ rounded: v }, true)} format={(v) => `${Math.round(v * 200)}%`} />
+              {project.assets.find((a) => a.id === selectedOverlay.assetId)?.kind === 'video' && (
+                <RangeField label="Volume" value={selectedOverlay.volume} min={0} max={2} step={0.05} onStart={mark} onChange={(v) => updateOverlay({ volume: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
+              )}
+              <h4>Position</h4>
+              <div className="grid3">
+                <button onClick={() => updateOverlay({ x: 0.25, y: 0.28 })}>↖ Top left</button>
+                <button onClick={() => updateOverlay({ x: 0.5, y: 0.5 })}>Center</button>
+                <button onClick={() => updateOverlay({ x: 0.75, y: 0.28 })}>↗ Top right</button>
+                <button onClick={() => updateOverlay({ x: 0.25, y: 0.72 })}>↙ Bottom left</button>
+                <button onClick={() => updateOverlay({ x: 0.5, y: 0.5, scale: 1 })}>Full frame</button>
+                <button onClick={() => updateOverlay({ x: 0.75, y: 0.72 })}>↘ Bottom right</button>
+              </div>
+              <NumberField label="Start (s)" value={selectedOverlay.start} min={0} step={0.1} onChange={(v) => updateOverlay({ start: v })} />
+            </>
           ) : selectedAudio ? (
             <>
               <h3>Audio</h3>
@@ -569,6 +715,13 @@ export function VideoEditor({
             <>
               <h3>Project</h3>
               <p className="hint">{project.width} × {project.height} · {formatTime(duration)}</p>
+              <h4>Empty space around clips</h4>
+              <div className="row">
+                <button className={project.fill !== 'blur' ? 'active' : ''} onClick={() => set((p) => ({ ...p, fill: 'color' }))}>Color</button>
+                <button className={project.fill === 'blur' ? 'active' : ''} onClick={() => set((p) => ({ ...p, fill: 'blur' }))} title="Fill with a blurred copy of the clip">
+                  Blur
+                </button>
+              </div>
               <ColorField label="Background" value={project.background} onStart={mark} onChange={(v) => setTransient((p) => ({ ...p, background: v }))} />
               {currentClip && (
                 <button className="block" onClick={() => setSelection({ kind: 'clip', id: currentClip.clip.id })}>
@@ -651,6 +804,14 @@ function ClipInspector({
       {isVideo && (
         <RangeField label="Volume" value={clip.volume} min={0} max={2} step={0.05} onStart={mark} onChange={(v) => update({ volume: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
       )}
+      <label className="field">
+        <span>Motion</span>
+        <select value={clip.motion ?? 'none'} onChange={(e) => update({ motion: e.target.value as Motion })}>
+          {MOTIONS.map((m) => (
+            <option key={m.value} value={m.value}>{m.label}</option>
+          ))}
+        </select>
+      </label>
       <RangeField label="Fade in" value={clip.fadeIn} min={0} max={maxFade} step={0.1} onStart={mark} onChange={(v) => update({ fadeIn: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
       <RangeField label="Fade out" value={clip.fadeOut} min={0} max={maxFade} step={0.1} onStart={mark} onChange={(v) => update({ fadeOut: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
       {!isFirst && (

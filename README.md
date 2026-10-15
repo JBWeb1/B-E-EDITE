@@ -13,11 +13,15 @@ npm run build      # production build in dist/
 
 ## Features
 
+### 📁 My projects
+- Every design and video is saved automatically in your browser (IndexedDB) and listed on the home screen with a preview
+- Open, search and delete projects; video media files are stored with the project
+
 ### 🎨 Design editor (Canva-style)
 - Canvas sizes for Instagram post/story, YouTube thumbnail, presentation, Facebook cover, A4 poster
 - 7 templates with previews (social, video, print, business), filterable by category
 - **Magic resize**: switch canvas size and the layout scales to fit
-- Text (heading / subheading / body / outlined / shadow), shapes (rectangle, circle, triangle, star, line), and image uploads
+- Text (heading / subheading / body / outlined / shadow), 10 shapes (rectangle, circle, triangle, star, line, heart, arrow, speech bubble, hexagon, diamond), emoji stickers, and image uploads
 - Drag to move, handles to resize, a handle to rotate
 - **Multi-select**: drag a box across the canvas, Shift-click, or Ctrl+A, then move, duplicate, delete, lock or copy everything together
 - **Align & distribute**: left / center / right / top / middle / bottom (to the page or to each other) and even spacing
@@ -26,12 +30,12 @@ npm run build      # production build in dist/
 - Double-click text to edit it in place
 - Fonts, size, bold/italic, alignment, colors, line height, letter spacing, borders, corner radius, transparency
 - Text effects: shadow and outline
-- Photo editing: flip, filter presets, brightness/contrast/saturation/blur/B&W
+- Photo editing: **crop** (Original, 1:1, 4:5, 3:2, 16:9, 9:16 with zoom and position), flip, filter presets, brightness/contrast/saturation/blur/B&W
+- One-click swatches of colors already used in the design
 - Solid or **gradient** backgrounds
 - Layers panel, bring forward/back, lock, duplicate
 - Undo/redo, copy/paste, paste or drag-and-drop images
-- Export PNG/JPG at 0.5×, 1× or 2×; save/open editable `.bee.json` project files
-- Autosave: the home screen offers "Continue" for your last design
+- Export PNG/JPG at 0.5×, 1× or 2×, or a print-ready **PDF**; save/open editable `.bee.json` project files
 - First-time tips and a keyboard shortcuts panel (press **?**)
 
 ### 🎬 Video editor (CapCut-style)
@@ -41,13 +45,18 @@ npm run build      # production build in dist/
 - Split at the playhead (**S**), duplicate, delete
 - **Transitions** between clips: crossfade, dip to black, slide, zoom, wipe (click ⇄ between two clips; "apply to all")
 - Speed (0.25×–4×), volume, fade in/out
+- **Motion** (Ken Burns): zoom in/out or pan across a clip, great for photo slideshows
+- **Picture-in-picture**: put a photo or video on top (⧉ on a media card), drag it on the preview, resize, round the corners
+- **Blur background**: fill the empty space around clips that don't match the frame shape (e.g. landscape clips in a vertical video)
 - Filter presets (Vivid, Warm, Mono, Fade, Dream) and adjustments: brightness, contrast, saturation, blur, B&W
 - Text overlays with styles, background box, and Fade/Pop/Slide-up animations. Drag text on the preview to position it
+- Emoji stickers
+- **Captions**: type a script and it becomes timed captions, or import/export `.srt` subtitle files (`.vtt` import too)
+- **Magnetic snapping**: dragged items snap to the playhead, clip edges and other items (hold **Alt** to turn off)
 - Music track with its own trim and volume controls and **waveforms**; overlapping audio and text stack into rows
 - **Voice-over recording** from the microphone while the video plays
 - Undo/redo, keyboard shortcuts (Space, S, Del, ←/→)
 - Export to WebM (MP4 on Safari) with mixed audio
-- **Autosave**: your project and media are kept in the browser (IndexedDB), so you can continue from the home screen after closing the tab
 
 ## Project layout
 
@@ -77,22 +86,28 @@ Design
 - [x] Text effects (shadow, outline, letter spacing)
 - [ ] Google Fonts picker, curved text
 - [x] Image filters and flip
-- [ ] Image crop and background remover
-- [ ] Multiple pages, plus PDF export
+- [x] Image crop
+- [ ] Background remover
+- [x] PDF export
+- [ ] Multiple pages
+- [x] Quick reuse of colors already in the design
 - [ ] Brand kit (saved colors, fonts, logos)
 - [x] Gradient backgrounds
-- [ ] Frames and an icon/sticker library
+- [x] More shapes and emoji stickers
+- [ ] Frames and an icon library
 
 Video
 - [x] Transitions between clips (crossfade, dip to black, slide, zoom, wipe)
-- [ ] Picture-in-picture overlay track, plus stickers on video
-- [ ] Auto captions (speech-to-text) and text-to-speech
-- [ ] Keyframe animation (position/scale/opacity)
+- [x] Picture-in-picture overlay track, plus stickers on video
+- [x] Captions from a script and .srt import/export
+- [ ] Automatic speech-to-text captions and text-to-speech
+- [x] Motion presets (zoom/pan)
+- [ ] Full keyframe animation (position/scale/opacity)
 - [x] Audio waveforms and voice-over recording
 - [ ] Beat markers
 - [ ] Faster-than-realtime MP4 export (WebCodecs / ffmpeg.wasm)
 - [x] Save video projects (media stored in IndexedDB)
-- [ ] Several saved projects with a project list
+- [x] Several saved projects with a project list
 
 Platform
 - [ ] Cloud accounts and sharing; real-time collaboration

@@ -17,8 +17,17 @@ import {
   trimStart,
   cssFilter,
   NEUTRAL_FILTERS,
+  activeAt,
   assignLanes,
   computePeaks,
+  createOverlay,
+  motionTransform,
+  normalizeProject,
+  parseSubtitles,
+  scriptToCaptions,
+  snapCandidates,
+  snapTime,
+  toSrt,
   maxTransition,
   transitionAt,
 } from './timeline';
@@ -162,5 +171,84 @@ describe('assignLanes', () => {
       { s: 4, e: 6 },
     ];
     expect(assignLanes(items, (i) => i.s, (i) => i.e)).toEqual([0, 1, 1, 0]);
+  });
+});
+
+describe('snapping', () => {
+  it('snaps to the closest candidate within the threshold', () => {
+    expect(snapTime(4.93, [0, 5, 10], 0.1)).toEqual({ value: 5, snapped: 5 });
+    expect(snapTime(4.5, [0, 5, 10], 0.1)).toEqual({ value: 4.5, snapped: null });
+  });
+
+  it('offers clip edges, the playhead and other items but not the dragged one', () => {
+    const p = {
+      ...createProject(),
+      clips: [createClip(video('a', 4))],
+      texts: [createTextOverlay(1, { id: 'me', duration: 1 }), createTextOverlay(6, { id: 'other', duration: 2 })],
+    };
+    const c = snapCandidates(p, 2.5, 'me');
+    expect(c).toEqual(expect.arrayContaining([0, 2.5, 4, 6, 8]));
+    expect(c).not.toContain(1);
+  });
+});
+
+describe('overlays and motion', () => {
+  it('counts overlays in the duration and finds the active ones', () => {
+    const o = { ...createOverlay(video('pip', 10), 2), out: 3 };
+    const p = { ...createProject(), overlays: [o] };
+    expect(projectDuration(p)).toBe(5);
+    expect(activeAt([o], 1)).toEqual([]);
+    expect(activeAt([o], 4.9)).toEqual([o]);
+  });
+
+  it('fills in fields missing from older saved projects', () => {
+    const old = { ...createProject() } as Partial<ReturnType<typeof createProject>>;
+    delete old.overlays;
+    delete old.fill;
+    expect(normalizeProject(old as ReturnType<typeof createProject>)).toMatchObject({ overlays: [], fill: 'color' });
+  });
+
+  it('zooms and pans over the clip', () => {
+    expect(motionTransform('zoom-in', 0).scale).toBe(1);
+    expect(motionTransform('zoom-in', 1).scale).toBeCloseTo(1.2);
+    expect(motionTransform('pan-left', 0).dx).toBeCloseTo(0.08);
+    expect(motionTransform('pan-left', 1).dx).toBeCloseTo(-0.08);
+    expect(motionTransform(undefined, 0.5)).toEqual({ scale: 1, dx: 0 });
+  });
+});
+
+describe('captions', () => {
+  const srt = `1
+00:00:01,000 --> 00:00:02,500
+Hello there
+
+2
+00:00:03,000 --> 00:00:04,000
+<i>Second</i> line
+over two rows
+`;
+
+  it('parses SubRip and WebVTT', () => {
+    expect(parseSubtitles(srt)).toEqual([
+      { start: 1, end: 2.5, text: 'Hello there' },
+      { start: 3, end: 4, text: 'Second line\nover two rows' },
+    ]);
+    const vtt = 'WEBVTT\n\n00:00:00.500 --> 00:00:01.000\nHi\n';
+    expect(parseSubtitles(vtt)).toEqual([{ start: 0.5, end: 1, text: 'Hi' }]);
+  });
+
+  it('round-trips through toSrt', () => {
+    const texts = parseSubtitles(srt).map((c) => createTextOverlay(c.start, { text: c.text, duration: c.end - c.start }));
+    expect(parseSubtitles(toSrt(texts))).toEqual(parseSubtitles(srt));
+    expect(toSrt(texts)).toContain('00:00:01,000 --> 00:00:02,500');
+  });
+
+  it('spreads a script over the video, one caption per line or sentence', () => {
+    const lines = scriptToCaptions('First line\nSecond, longer line here', 10);
+    expect(lines.map((c) => c.text)).toEqual(['First line', 'Second, longer line here']);
+    expect(lines[0].start).toBe(0);
+    expect(lines[1].end).toBeCloseTo(10);
+    expect(lines[0].end).toBeLessThan(lines[1].end - lines[1].start);
+    expect(scriptToCaptions('One. Two! Three?', 6).map((c) => c.text)).toEqual(['One.', 'Two!', 'Three?']);
   });
 });
