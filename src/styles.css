@@ -3792,3 +3792,286 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* =========================================================
+   Polish: theme-aware home, crisper editor surfaces
+   ========================================================= */
+
+.home.cc {
+  color: var(--text);
+  background:
+    radial-gradient(1000px 480px at 10% -14%, var(--accent-soft), transparent 62%),
+    radial-gradient(760px 420px at 100% -8%, var(--accent-soft), transparent 58%),
+    var(--bg);
+}
+
+.home-top {
+  margin-bottom: 40px;
+}
+
+.home-top .brand {
+  margin-bottom: 0;
+}
+
+.home-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 5px 12px 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.eyebrow-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  animation: eyebrow-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes eyebrow-pulse {
+  50% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+.home.cc .home-hero p {
+  margin-bottom: 18px;
+}
+
+.feature-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 30px;
+  padding: 0;
+  list-style: none;
+}
+
+.feature-pills li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.feature-pills li::before {
+  content: '✓';
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+.home.cc .hero-card.video .hero-icon {
+  background: var(--grad);
+  box-shadow: 0 8px 24px var(--accent-ring);
+  color: var(--on-accent, #fff);
+}
+
+.home.cc .hero-card.video::after {
+  background: radial-gradient(400px 160px at 0% 0%, var(--accent-soft), transparent 70%);
+}
+
+.home.cc .hero-card:hover:not(:disabled),
+.home.cc .home-card:hover:not(:disabled) {
+  border-color: var(--accent-ring);
+}
+
+.home.cc .home section h2,
+.home.cc section h2 {
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+.ratio-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 92px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.home.cc .ratio-box {
+  margin: 0;
+  max-width: none;
+  background: var(--grad);
+  border-radius: 5px;
+}
+
+.home.cc .ratio-box.design {
+  background: linear-gradient(135deg, #ec4899, #f59e0b);
+}
+
+.home-footer {
+  padding-top: 8px;
+  padding-bottom: 40px;
+  color: var(--faint);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.home-footer span {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.home .home > section:last-of-type,
+.home section:last-of-type {
+  padding-bottom: 32px;
+}
+
+/* Editor surfaces: crisp hairline edges and a soft accent line under the top bar. */
+
+.editor.cc .panel,
+.editor.cc .cc-player,
+.editor.cc .cc-toolbar,
+.editor.cc .timeline,
+.editor.cc .page-strip {
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.editor.cc .topbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-ring), transparent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.editor.cc .cc-panel-head {
+  letter-spacing: 0.02em;
+}
+
+/* Timeline items: a little gloss, and a clear glow when selected. */
+
+.editor.cc .item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 45%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.editor.cc .item.selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  z-index: 2;
+}
+
+.editor.cc .playhead {
+  width: 2px;
+  background: var(--playhead, #fff);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
+}
+
+.editor.cc .playhead::before {
+  left: -6px;
+  width: 14px;
+  height: 12px;
+  border-radius: 3px 3px 7px 7px;
+  background: var(--playhead, #fff);
+}
+
+.editor.cc .ruler .tick {
+  color: var(--faint);
+}
+
+.editor.cc .track-head {
+  font-weight: 600;
+}
+
+.editor.cc .track-head svg {
+  color: var(--accent-text);
+  opacity: 0.85;
+}
+
+/* Player: a friendlier empty state. */
+
+.editor.cc .preview-empty {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 18px 22px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--muted);
+  font-size: 13px;
+  backdrop-filter: blur(4px);
+}
+
+/* Buttons: tactile press. */
+
+.editor.cc button:active:not(:disabled),
+.home.cc button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.editor.cc .cc-tabs button.active svg {
+  filter: drop-shadow(0 0 6px var(--accent-ring));
+}
+
+.editor.cc .cc-subtabs button.active {
+  font-weight: 600;
+}
+
+/* Inspector headings: quieter, consistent. */
+
+.editor.cc .cc-details-body h3 {
+  margin: 2px 0 8px;
+  font-size: 15px;
+}
+
+.editor.cc .cc-details-body h4,
+.editor.cc .cc-library-body h4 {
+  margin: 16px 0 8px;
+}
+
+@media (max-width: 760px) {
+  .feature-pills {
+    margin-bottom: 22px;
+  }
+  .feature-pills li {
+    font-size: 12px;
+    padding: 5px 10px;
+  }
+  .ratio-wrap {
+    height: 80px;
+  }
+}
+
+.home > .modal-backdrop {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The logo is white: darken it on light looks (home and editors). */
+.home[data-light] .logo {
+  filter: invert(1);
+}

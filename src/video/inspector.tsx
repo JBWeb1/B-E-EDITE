@@ -507,7 +507,21 @@ export function AudioTools({
   return (
     <>
       <RangeField label="Volume" value={volume} min={0} max={2} step={0.05} onStart={mark} onChange={(v) => onVolume(v, true)} format={pct} />
-      <AnimField label="Volume over time" prop="volume" base={1} keys={keys} local={local} min={0} max={2} step={0.05} format={pct} mark={mark} onBase={() => {}} onKeys={onKeys} />
+      <AnimField
+        label="Volume over time"
+        prop="volume"
+        base={1}
+        keys={keys}
+        local={local}
+        min={0}
+        max={2}
+        step={0.05}
+        format={pct}
+        mark={mark}
+        // Moving it before there are keyframes starts the automation at the playhead.
+        onBase={(v, live) => onKeys({ ...keys, volume: setKey(undefined, local, v) }, live)}
+        onKeys={onKeys}
+      />
       <p className="hint">Press ◆, move the playhead, change the level and press ◆ again to make the sound rise or fall.</p>
       <label className="field">
         <span>Noise reduction</span>

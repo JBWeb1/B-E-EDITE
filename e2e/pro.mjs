@@ -116,6 +116,10 @@ await page.keyboard.press('Shift+ArrowRight');
 await settle();
 const later = await pixel(0.5, 0.5);
 check('keyframed fade: dark at the start, visible later', start[0] < 40 && later[0] > 150, `${start.join(',')} → ${later.join(',')}`);
+// A hidden layer can't be grabbed on the player (the clip under it is used instead).
+await page.locator('.clip-item').first().click();
+await page.locator('canvas.preview').click();
+check('hidden layer is not clickable on the player', (await page.locator('.overlay-item.selected').count()) === 0);
 await page.locator('.clip-item').first().click();
 await subTab('Animate');
 await details.getByRole('button', { name: 'Add Rotate keyframe' }).click();
@@ -184,27 +188,42 @@ check('particle effect added with a speed control', (await page.locator('.effect
 // ---------- Audio: volume keyframes
 await page.locator('.clip-item').first().click();
 await subTab('Audio');
-await details.getByRole('button', { name: 'Add Volume over time keyframe' }).click();
+// Moving the "Volume over time" slider starts the automation by itself (no ◆ needed first).
+const volSlider = details.locator('.anim-field', { hasText: 'Volume over time' }).locator('input[type=range]');
+await volSlider.focus();
+await page.keyboard.press('ArrowLeft');
+await page.keyboard.press('ArrowLeft');
+check('volume slider adds a keyframe', (await details.getByRole('button', { name: 'Remove Volume over time keyframe' }).count()) === 1);
+// Shortcuts still work while the slider has focus (it only keeps the arrow keys).
+await page.keyboard.press('Control+z');
+await page.keyboard.press('Control+z');
+const undone = (await details.getByRole('button', { name: 'Remove Volume over time keyframe' }).count()) === 0;
+await page.keyboard.press('Control+Shift+z');
+await page.keyboard.press('Control+Shift+z');
+check('undo/redo work while a slider is focused', undone && (await details.getByRole('button', { name: 'Remove Volume over time keyframe' }).count()) === 1);
 check('volume keyframe added', (await page.locator('.clip-item .kf-diamond').count()) >= 1);
 await details.getByRole('combobox', { name: 'Noise reduction' }).selectOption('2');
 
 // ---------- Export: presets, resolution, watermark, frame, audio, video
+await page.evaluate(() => document.activeElement?.blur?.());
 await page.keyboard.press('Home');
 await page.getByRole('button', { name: 'Export', exact: true }).click();
 const modal = page.locator('.export-modal');
 check('export presets listed', (await modal.locator('.preset-card').count()) >= 8);
 await modal.getByRole('group', { name: 'Resolution' }).getByRole('button', { name: '4K' }).click();
 check('4K output size', (await modal.locator('.hint').first().innerText()).includes('3840 × 2160'));
+const corner = () =>
+  page.locator('canvas.preview').evaluate((c) =>
+    Array.from(c.getContext('2d').getImageData(Math.round(c.width * 0.6), Math.round(c.height * 0.85), Math.round(c.width * 0.38), Math.round(c.height * 0.13)).data),
+  );
+const before = await corner();
 await modal.getByRole('button', { name: 'Add watermark' }).click();
 await settle();
-const wm = await page.locator('canvas.preview').evaluate((c) => {
-  const d = c.getContext('2d').getImageData(Math.round(c.width * 0.7), Math.round(c.height * 0.85), Math.round(c.width * 0.28), Math.round(c.height * 0.13)).data;
-  let white = 0;
-  // White text at 70% opacity over a dark frame: light grey.
-  for (let i = 0; i < d.length; i += 4) if (d[i] > 150 && Math.abs(d[i] - d[i + 1]) < 20 && Math.abs(d[i] - d[i + 2]) < 20) white++;
-  return white;
-});
-check('watermark drawn on the video', wm > 50, `${wm} white px`);
+const after = await corner();
+// The watermark lightens part of the bottom-right corner, whatever the picture is.
+let changed = 0;
+for (let i = 0; i < after.length; i += 4) if (after[i + 1] - before[i + 1] > 40) changed++;
+check('watermark drawn on the video', changed > 50, `${changed} px changed`);
 const pngDl = page.waitForEvent('download');
 await modal.getByRole('button', { name: /Frame PNG/ }).click();
 const png = fs.readFileSync(await (await pngDl).path());

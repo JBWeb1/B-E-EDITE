@@ -8,8 +8,16 @@ import { deleteProject, listProjects, loadDesignProject, loadVideoProject, newPr
 import type { ProjectSummary } from '../lib/projects';
 import { Icon } from '../ui/Icon';
 import { useInstall } from '../lib/install';
+import { lookAttributes, lookStyle, useLook } from '../lib/look';
+import { LookSettings } from '../ui/LookSettings';
 import { APP_NAME, Logo } from '../ui/Logo';
 import { ASPECTS } from '../video/timeline';
+
+/** Size of a little preview of a w×h frame that fits in a 120×64 box. */
+function fitBox(w: number, h: number, maxW = 120, maxH = 64) {
+  const k = Math.min(maxW / w, maxH / h);
+  return { width: Math.round(w * k), height: Math.round(h * k) };
+}
 
 function timeAgo(ms: number): string {
   const s = Math.round((Date.now() - ms) / 1000);
@@ -27,6 +35,8 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [filter, setFilter] = useState<string>('All');
   const [search, setSearch] = useState('');
+  const [showLook, setShowLook] = useState(false);
+  const look = useLook();
 
   const refresh = () => listProjects().then(setProjects, () => setProjects([]));
   useEffect(() => {
@@ -57,19 +67,32 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
   const shown = (projects ?? []).filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()));
 
   return (
-    <div className="home">
+    <div className="home cc" style={lookStyle(look)} {...lookAttributes(look)}>
       <header className="home-hero">
         <div className="home-top">
           <div className="brand">
             <Logo height={30} />
             <span>{APP_NAME}</span>
           </div>
-          <InstallButton />
+          <div className="home-top-actions">
+            <button className="icon-btn" onClick={() => setShowLook(true)} title="Editor look: themes and layout" aria-label="Editor look">
+              <Icon name="palette" />
+            </button>
+            <InstallButton />
+          </div>
         </div>
+        <span className="eyebrow">
+          <span className="eyebrow-dot" /> Free · No sign-up · Works offline
+        </span>
         <h1>
           Create something <span className="gradient-text">amazing</span>
         </h1>
-        <p>Design graphics and edit videos right in your browser. No sign-up, nothing to install.</p>
+        <p>Edit videos and design graphics right in your browser — with the power tools of a pro editor and the ease of an app.</p>
+        <ul className="feature-pills" aria-label="Highlights">
+          {['Keyframes', 'Green screen', 'Animated titles', 'Colour grading', 'Sound effects', '4K export'].map((f) => (
+            <li key={f}>{f}</li>
+          ))}
+        </ul>
         <div className="hero-actions">
           <button className="hero-card video" onClick={() => onOpen({ kind: 'video', width: 1280, height: 720, projectId: newProjectId() })}>
             <span className="hero-icon">
@@ -77,7 +100,7 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
             </span>
             <span>
               <strong>Edit a video</strong>
-              <small>Trim clips, add music, captions, transitions & effects</small>
+              <small>Multi-track timeline, keyframes, titles, effects & 4K export</small>
             </span>
           </button>
           <button
@@ -89,7 +112,7 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
             </span>
             <span>
               <strong>Create a design</strong>
-              <small>Posts, posters, thumbnails, presentations & more</small>
+              <small>Posts, thumbnails, presentations — animate & export as video</small>
             </span>
           </button>
         </div>
@@ -136,7 +159,9 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
               className="home-card"
               onClick={() => onOpen({ kind: 'video', width: a.width, height: a.height, projectId: newProjectId() })}
             >
-              <span className="ratio-box" style={{ aspectRatio: `${a.width} / ${a.height}` }} />
+              <span className="ratio-wrap">
+                <span className="ratio-box" style={fitBox(a.width, a.height)} />
+              </span>
               <strong>{a.label}</strong>
               <small>{a.width}×{a.height}</small>
             </button>
@@ -153,7 +178,9 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
               className="home-card"
               onClick={() => onOpen({ kind: 'design', file: toFile(createDoc(s.width, s.height, s.label)), projectId: newProjectId() })}
             >
-              <span className="ratio-box design" style={{ aspectRatio: `${s.width} / ${s.height}` }} />
+              <span className="ratio-wrap">
+                <span className="ratio-box design" style={fitBox(s.width, s.height)} />
+              </span>
               <strong>{s.label}</strong>
               <small>{s.width}×{s.height}</small>
             </button>
@@ -182,6 +209,10 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
             ))}
         </div>
       </section>
+      <footer className="home-footer">
+        <span>{APP_NAME}</span> · Your projects stay private, on this device.
+      </footer>
+      {showLook && <LookSettings onClose={() => setShowLook(false)} />}
     </div>
   );
 }

@@ -9,7 +9,7 @@ import { uid } from '../lib/id';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { removeBackgroundFromImage } from '../lib/bgremove';
 import { FilterSliders } from '../ui/FilterSliders';
-import { FirstRunTips, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
+import { FirstRunTips, keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import { LookSettings } from '../ui/LookSettings';
 import { alpha, lookAttributes, lookStyle, templateById, useLook } from '../lib/look';
 import { Icon } from '../ui/Icon';
@@ -121,10 +121,6 @@ function loadImageSize(src: string): Promise<{ w: number; h: number }> {
   });
 }
 
-function isTyping(target: EventTarget | null) {
-  const el = target as HTMLElement | null;
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
-}
 
 const gradientCss = (g: Gradient) => `linear-gradient(${g.angle + 90}deg, ${g.from}, ${g.to})`;
 
@@ -592,7 +588,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   {
     const onKey = (e: KeyboardEvent) => {
       // Off while typing, while a dialog/menu/slideshow is open, or during an animation preview.
-      if (isTyping(e.target) || shortcutsBlocked() || previewStart !== null) return;
+      if (keyBelongsToField(e) || shortcutsBlocked() || previewStart !== null) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (mod && key === 'z') {
@@ -630,7 +626,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       }
     };
     const onPaste = (e: ClipboardEvent) => {
-      if (isTyping(e.target) || shortcutsBlocked()) return;
+      if (keyBelongsToField(e) || shortcutsBlocked()) return;
       const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
       if (files.length) {
         e.preventDefault();

@@ -501,11 +501,21 @@ export class VideoEngine {
     return c;
   }
 
+  private gradeIds = new Set<string>();
+
   /** Make sure an SVG filter for a colour grade exists in the page; returns its CSS reference. */
   private gradeFilter(layer: LayerProps): string {
     const g = layer.grade;
     if (!g || isNeutral(g)) return '';
     const id = gradeId(g);
+    // Most recently used last; dragging a colour wheel makes many short-lived grades.
+    this.gradeIds.delete(id);
+    this.gradeIds.add(id);
+    if (this.gradeIds.size > 24) {
+      const oldest = this.gradeIds.values().next().value as string;
+      this.gradeIds.delete(oldest);
+      document.getElementById(oldest)?.remove();
+    }
     if (!document.getElementById(id)) {
       let host: Element | null = document.getElementById('bem-grade-defs');
       if (!host) {

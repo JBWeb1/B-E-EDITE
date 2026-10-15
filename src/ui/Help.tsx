@@ -8,6 +8,25 @@ export function shortcutsBlocked(): boolean {
   return document.querySelector('[data-modal]') !== null;
 }
 
+/** Keys a focused slider uses itself (to change its value). */
+const SLIDER_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'];
+
+/**
+ * Should this key press go to the focused form field instead of the editor's shortcuts?
+ * Text boxes keep every key; sliders, checkboxes and colour pickers keep only the keys
+ * they use, so Space (play), Ctrl+Z (undo) and friends still work after using a slider.
+ */
+export function keyBelongsToField(e: Event & { key?: string }): boolean {
+  const el = e.target as HTMLElement | null;
+  if (!el) return false;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable) return true;
+  if (el.tagName !== 'INPUT') return false;
+  const type = (el as HTMLInputElement).type;
+  if (type === 'range') return SLIDER_KEYS.includes(e.key ?? '');
+  if (type === 'checkbox' || type === 'radio' || type === 'color' || type === 'button' || type === 'file') return e.key === ' ' || e.key === 'Enter';
+  return true;
+}
+
 function readFlag(key: string): boolean {
   try {
     return localStorage.getItem(key) === '1';

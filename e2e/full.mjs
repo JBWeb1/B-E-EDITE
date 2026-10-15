@@ -53,6 +53,9 @@ const menuDownload = async (item) => {
 // ---------- Home & branding
 await page.goto(BASE);
 check('page title is B-E Motion', (await page.title()) === 'B-E Motion');
+await page.getByRole('button', { name: 'Editor look' }).click();
+check('home has the Editor look setting', (await page.locator('.look-modal').count()) === 1);
+await page.keyboard.press('Escape');
 check('logo image loads', await page.locator('.brand img.logo').evaluate((img) => img.complete && img.naturalWidth > 0));
 
 // ---------- Installable app (PWA)

@@ -7,7 +7,7 @@ import { uid } from '../lib/id';
 import { putMedia, saveVideoProject } from '../lib/projects';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { FilterSliders } from '../ui/FilterSliders';
-import { FirstRunTips, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
+import { FirstRunTips, keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import type { Shortcut } from '../ui/Help';
 import { LookSettings } from '../ui/LookSettings';
 import { lookAttributes, lookStyle, useLook } from '../lib/look';
@@ -181,10 +181,6 @@ const LIBRARY_TABS: { id: LibraryTab; label: string; icon: IconName }[] = [
 /** Files the media library shows (fonts, watermark logos and built-in sounds live elsewhere). */
 const isLibraryAsset = (a: MediaAsset) => !a.sfxId && !a.logo && a.kind !== 'font';
 
-function isTyping(target: EventTarget | null) {
-  const el = target as HTMLElement | null;
-  return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
-}
 
 const clampLocal = (t: number, len: number) => Math.max(0, Math.min(len, t));
 
@@ -630,7 +626,7 @@ export function VideoEditor({
       }
       // Off while typing, while a dialog/menu is open (Space during an export would pause
       // the recording), and while a voice-over is being recorded.
-      if (isTyping(e.target) || shortcutsBlocked() || recorder) return;
+      if (keyBelongsToField(e) || shortcutsBlocked() || recorder) return;
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
       if (e.key === ' ') {
@@ -701,7 +697,7 @@ export function VideoEditor({
     const ctx = e.currentTarget.getContext('2d')!;
     const px = p.x * W;
     const py = p.y * H;
-    const textHit = [...textsAt(project.texts, time)].reverse().find((o) => {
+    const textHit = [...(project.tracks?.textHidden ? [] : textsAt(project.texts, time))].reverse().find((o) => {
       const local = time - o.start;
       const tr = transformAt(o, local, 1, { x: o.x, y: o.y });
       const b = textBounds(ctx, o, W, H);
@@ -715,7 +711,9 @@ export function VideoEditor({
       const tr = transformAt(textHit, local, 1, { x: textHit.x, y: textHit.y });
       hit = { kind: 'text', id: textHit.id, x: tr.x, y: tr.y, local };
     } else {
-      const layers = [...project.overlays].filter((o) => time >= o.start && time < o.start + o.out - o.in).sort((a, b) => trackOf(b) - trackOf(a));
+      // Hidden tracks can't be clicked on the player.
+      const visible = project.tracks?.overlayHidden ? [] : project.overlays;
+      const layers = visible.filter((o) => time >= o.start && time < o.start + o.out - o.in).sort((a, b) => trackOf(b) - trackOf(a));
       const layer = layers.find((o) => {
         const asset = assetOf(o.assetId);
         return asset && hitFrame(overlayFrame(o, asset, W, H, time - o.start), px, py);
