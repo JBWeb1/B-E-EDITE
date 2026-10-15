@@ -39,5 +39,16 @@
       }, 4000);
     </script>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // GitHub Pages in "Deploy from a branch" mode serves these source files, which a
+      // browser can't run. A ready-built copy of the app lives in ./app/, so go there.
+      // (The built page has no /src/main.tsx script, so this never runs in the real app.)
+      if (
+        document.querySelector('script[src$="/src/main.tsx"]') &&
+        (location.hostname.endsWith('github.io') || location.search.includes('pages-fallback'))
+      ) {
+        location.replace('./app/' + location.search.replace(/[?&]pages-fallback/, '') + location.hash);
+      }
+    </script>
   </body>
 </html>

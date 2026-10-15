@@ -32,6 +32,8 @@ Long-press (or right-click) the installed icon for **New video** / **New design*
 2. Push to the default branch (or run the **Deploy to GitHub Pages** workflow by hand from the **Actions** tab).
 3. The app is published at `https://<your-user>.github.io/<repo-name>/`.
 
+**It works with either GitHub Pages setting.** A ready-built copy of the app is kept in the `app/` folder: if Pages is set to "Deploy from a branch", the link opens the source page, which forwards to `app/` automatically. After changing the code, refresh that copy with `npm run build:pages` and commit the `app/` folder. (Setting *Source → GitHub Actions* is still the cleanest option: then every push is built and published automatically.)
+
 ### Android APK / Play Store and Windows store packages
 
 Once the site is online, go to [PWABuilder](https://www.pwabuilder.com), enter the site address, and download

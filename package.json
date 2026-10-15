@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:pages": "tsc -b && vite build && rm -rf app && cp -r dist app",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "test": "vitest run",
