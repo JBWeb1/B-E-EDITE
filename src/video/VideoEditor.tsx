@@ -3,8 +3,13 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import { downloadBlob, formatTime } from '../lib/download';
 import { useHistory } from '../lib/history';
 import { uid } from '../lib/id';
+import { sameFilters } from '../lib/filters';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
+import { FilterSliders } from '../ui/FilterSliders';
+import { FirstRunTips, ShortcutsDialog } from '../ui/Help';
+import type { Shortcut } from '../ui/Help';
 import { probeMedia, VideoEngine } from './engine';
+import { putMedia, saveVideoProject } from './storage';
 import { Timeline } from './Timeline';
 import type { Selection } from './Timeline';
 import {
@@ -16,13 +21,15 @@ import {
   createTextOverlay,
   FILTER_PRESETS,
   locate,
+  maxTransition,
   NEUTRAL_FILTERS,
   projectDuration,
   splitClips,
   splitTexts,
   textsAt,
+  TRANSITIONS,
 } from './timeline';
-import type { AudioClip, Clip, ClipFilters, TextOverlay, VideoProject } from './types';
+import type { AudioClip, Clip, ClipFilters, TextOverlay, Transition, VideoProject } from './types';
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 
@@ -33,13 +40,35 @@ const TEXT_PRESETS: { label: string; patch: Partial<TextOverlay> }[] = [
   { label: 'Highlight', patch: { text: 'WOW!', y: 0.2, size: 0.1, color: '#111827', background: '#fde047', animation: 'pop' } },
 ];
 
+const SHORTCUTS: Shortcut[] = [
+  { keys: ['Space'], action: 'Play / pause' },
+  { keys: ['S'], action: 'Split at the playhead' },
+  { keys: ['Del'], action: 'Delete selected' },
+  { keys: ['←', '→'], action: 'Step one frame (Shift: 1 second)' },
+  { keys: ['Home'], action: 'Go to start' },
+  { keys: ['End'], action: 'Go to end' },
+  { keys: ['Ctrl', 'Z'], action: 'Undo' },
+  { keys: ['Ctrl', 'Shift', 'Z'], action: 'Redo' },
+  { keys: ['?'], action: 'Show this help' },
+];
+
+const DEFAULT_TRANSITION: Transition = { type: 'fade', duration: 0.5 };
+
 function isTyping(target: EventTarget | null) {
   const el = target as HTMLElement | null;
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
 }
 
-export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: { width: number; height: number } }) {
-  const history = useHistory<VideoProject>(() => createProject(aspect?.width, aspect?.height));
+export function VideoEditor({
+  onExit,
+  aspect,
+  initialProject,
+}: {
+  onExit: () => void;
+  aspect?: { width: number; height: number };
+  initialProject?: VideoProject;
+}) {
+  const history = useHistory<VideoProject>(() => initialProject ?? createProject(aspect?.width, aspect?.height));
   const { state: project, set, setTransient, mark } = history;
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -48,6 +77,9 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
   const [tab, setTab] = useState<'media' | 'text'>('media');
   const [importing, setImporting] = useState(0);
   const [exportProgress, setExportProgress] = useState<number | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
+  const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error' | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<VideoEngine | null>(null);
@@ -70,6 +102,19 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
     engineRef.current?.setProject(project);
   }, [project]);
 
+  // Autosave the project (media files are stored once, at import time).
+  useEffect(() => {
+    if (project.assets.length === 0 && project.texts.length === 0) return;
+    setSaveState('saving');
+    const t = setTimeout(() => {
+      saveVideoProject(project).then(
+        () => setSaveState('saved'),
+        () => setSaveState('error'),
+      );
+    }, 800);
+    return () => clearTimeout(t);
+  }, [project]);
+
   const seek = useCallback((t: number) => engineRef.current?.seek(t), []);
   const togglePlay = useCallback(() => engineRef.current?.toggle(), []);
 
@@ -80,6 +125,7 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
       for (const file of list) {
         try {
           const asset = await probeMedia(file, uid('asset'));
+          await putMedia(asset.id, file).catch(() => setSaveState('error'));
           set((p) => {
             const next = { ...p, assets: [...p.assets, asset] };
             if (asset.kind === 'audio') {
@@ -162,6 +208,58 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
     }
   };
 
+  const setTransition = (clipId: string, transition: Transition | undefined) =>
+    set((p) => ({ ...p, clips: p.clips.map((c) => (c.id === clipId ? { ...c, transition } : c)) }));
+
+  const onTransitionClick = (clipId: string) => {
+    setSelection({ kind: 'clip', id: clipId });
+    const clip = project.clips.find((c) => c.id === clipId);
+    if (clip && !clip.transition) {
+      setTransition(clipId, { ...DEFAULT_TRANSITION, duration: Math.min(DEFAULT_TRANSITION.duration, maxTransition(clip)) });
+    }
+  };
+
+  const applyTransitionToAll = (transition: Transition | undefined) =>
+    set((p) => ({
+      ...p,
+      clips: p.clips.map((c, i) =>
+        i === 0 ? c : { ...c, transition: transition && { ...transition, duration: Math.min(transition.duration, maxTransition(c)) } },
+      ),
+    }));
+
+  // Voice-over: record the microphone while the timeline plays, then drop it on the audio track.
+  const startVoiceOver = async () => {
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      alert('Microphone access is needed to record a voice-over.');
+      return;
+    }
+    const startAt = engineRef.current?.time ?? 0;
+    const rec = new MediaRecorder(stream);
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    rec.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      setRecorder(null);
+      engineRef.current?.pause();
+      const type = (rec.mimeType || 'audio/webm').split(';')[0];
+      const count = project.assets.filter((a) => a.name.startsWith('Voice-over')).length + 1;
+      const file = new File(chunks, `Voice-over ${count}.${type.includes('mp4') ? 'm4a' : 'webm'}`, { type });
+      try {
+        const asset = await probeMedia(file, uid('asset'));
+        await putMedia(asset.id, file).catch(() => setSaveState('error'));
+        set((p) => ({ ...p, assets: [...p.assets, asset], audio: [...p.audio, createAudioClip(asset, startAt)] }));
+      } catch {
+        alert('Could not save the recording.');
+      }
+    };
+    rec.start();
+    setRecorder(rec);
+    if ((engineRef.current?.duration ?? 0) > startAt) engineRef.current?.play();
+  };
+
   const addText = (patch: Partial<TextOverlay>) => {
     const o = createTextOverlay(engineRef.current?.time ?? 0, patch);
     set((p) => ({ ...p, texts: [...p.texts, o] }));
@@ -191,6 +289,8 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
         e.preventDefault();
         const step = e.shiftKey ? 1 : 1 / 30;
         seek((engineRef.current?.time ?? 0) + (e.key === 'ArrowLeft' ? -step : step));
+      } else if (e.key === '?') {
+        setShowHelp(true);
       } else if (e.key === 'Home') {
         seek(0);
       } else if (e.key === 'End') {
@@ -317,6 +417,13 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
                 />
               </label>
               {importing > 0 && <p className="hint">Importing {importing} file(s)…</p>}
+              {recorder ? (
+                <button className="block recording" onClick={() => recorder.stop()}>■ Stop recording</button>
+              ) : (
+                <button className="block" onClick={startVoiceOver} title="Record from your microphone while the video plays">
+                  🎙 Record voice-over
+                </button>
+              )}
               <p className="hint">Or drag files anywhere onto the editor. Videos and photos are added to the end of the timeline; music goes on the audio track at the playhead.</p>
               <div className="grid2">
                 {project.assets.map((a) => (
@@ -369,6 +476,15 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
             {project.clips.length === 0 && project.texts.length === 0 && (
               <div className="preview-empty">Import a video or photo to get started</div>
             )}
+            <FirstRunTips
+              storageKey="bee.tips.video"
+              title="Welcome to the video editor 🎬"
+              tips={[
+                'Import clips: they line up on the timeline automatically.',
+                'Drag clips to reorder, drag their edges to trim, and press S to split.',
+                'Click ⇄ between two clips to add a transition. Press ? for all shortcuts.',
+              ]}
+            />
           </div>
           <div className="transport">
             <button onClick={() => seek(0)} title="Go to start (Home)">⏮</button>
@@ -395,9 +511,11 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
               clip={selectedClip}
               assetName={project.assets.find((a) => a.id === selectedClip.assetId)?.name ?? ''}
               isVideo={project.assets.find((a) => a.id === selectedClip.assetId)?.kind === 'video'}
+              isFirst={project.clips[0]?.id === selectedClip.id}
               mark={mark}
               update={updateClip}
               updateFilters={updateFilters}
+              applyTransitionToAll={applyTransitionToAll}
             />
           ) : selectedText ? (
             <>
@@ -457,14 +575,12 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
                   Edit clip under playhead
                 </button>
               )}
-              <h4>Shortcuts</h4>
-              <ul className="shortcuts">
-                <li><kbd>Space</kbd> play / pause</li>
-                <li><kbd>S</kbd> split at playhead</li>
-                <li><kbd>Del</kbd> delete selected</li>
-                <li><kbd>←</kbd> <kbd>→</kbd> step a frame (Shift: 1s)</li>
-                <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</li>
-              </ul>
+              <p className="hint">
+                {saveState === 'saving' && 'Saving…'}
+                {saveState === 'saved' && '✓ Saved in this browser. Reopen it from the home screen any time.'}
+                {saveState === 'error' && '⚠ Could not save in this browser (storage may be full or blocked).'}
+              </p>
+              <button className="block" onClick={() => setShowHelp(true)}>⌨ Keyboard shortcuts</button>
             </>
           )}
         </aside>
@@ -480,7 +596,10 @@ export function VideoEditor({ onExit, aspect }: { onExit: () => void; aspect?: {
         onBegin={mark}
         onChange={setTransient}
         onCommit={set}
+        onTransitionClick={onTransitionClick}
       />
+
+      {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
 
       {exportProgress !== null && (
         <div className="modal-backdrop">
@@ -500,16 +619,20 @@ function ClipInspector({
   clip,
   assetName,
   isVideo,
+  isFirst,
   mark,
   update,
   updateFilters,
+  applyTransitionToAll,
 }: {
   clip: Clip;
   assetName: string;
   isVideo: boolean;
+  isFirst: boolean;
   mark: () => void;
   update: (patch: Partial<Clip>, live?: boolean) => void;
   updateFilters: (patch: Partial<ClipFilters>) => void;
+  applyTransitionToAll: (t: Transition | undefined) => void;
 }) {
   const f = clip.filters;
   const maxFade = Math.min(3, clipDuration(clip) / 2);
@@ -530,12 +653,44 @@ function ClipInspector({
       )}
       <RangeField label="Fade in" value={clip.fadeIn} min={0} max={maxFade} step={0.1} onStart={mark} onChange={(v) => update({ fadeIn: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
       <RangeField label="Fade out" value={clip.fadeOut} min={0} max={maxFade} step={0.1} onStart={mark} onChange={(v) => update({ fadeOut: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
+      {!isFirst && (
+        <>
+          <h4>Transition in</h4>
+          <div className="grid3">
+            <button className={!clip.transition ? 'active' : ''} onClick={() => update({ transition: undefined })}>None</button>
+            {TRANSITIONS.map((t) => (
+              <button
+                key={t.type}
+                className={clip.transition?.type === t.type ? 'active' : ''}
+                onClick={() => update({ transition: { type: t.type, duration: Math.min(clip.transition?.duration ?? 0.5, maxTransition(clip)) } })}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {clip.transition && (
+            <>
+              <RangeField
+                label="Transition length"
+                value={clip.transition.duration}
+                min={0.1}
+                max={maxTransition(clip)}
+                step={0.1}
+                onStart={mark}
+                onChange={(v) => update({ transition: { ...clip.transition!, duration: v } }, true)}
+                format={(v) => `${v.toFixed(1)}s`}
+              />
+              <button className="block" onClick={() => applyTransitionToAll(clip.transition)}>Apply to all clips</button>
+            </>
+          )}
+        </>
+      )}
       <h4>Filters</h4>
       <div className="grid3">
         {FILTER_PRESETS.map((p) => (
           <button
             key={p.label}
-            className={JSON.stringify(p.filters) === JSON.stringify(f) ? 'active' : ''}
+            className={sameFilters(f, p.filters) ? 'active' : ''}
             onClick={() => update({ filters: p.filters })}
           >
             {p.label}
@@ -543,11 +698,7 @@ function ClipInspector({
         ))}
       </div>
       <h4>Adjust</h4>
-      <RangeField label="Brightness" value={f.brightness} min={0.2} max={2} step={0.01} onStart={mark} onChange={(v) => updateFilters({ brightness: v })} />
-      <RangeField label="Contrast" value={f.contrast} min={0.2} max={2} step={0.01} onStart={mark} onChange={(v) => updateFilters({ contrast: v })} />
-      <RangeField label="Saturation" value={f.saturation} min={0} max={3} step={0.01} onStart={mark} onChange={(v) => updateFilters({ saturation: v })} />
-      <RangeField label="Blur" value={f.blur} min={0} max={10} step={0.1} onStart={mark} onChange={(v) => updateFilters({ blur: v })} />
-      <RangeField label="Black & white" value={f.grayscale} min={0} max={1} step={0.01} onStart={mark} onChange={(v) => updateFilters({ grayscale: v })} />
+      <FilterSliders filters={f} mark={mark} onChange={updateFilters} />
       <button className="block" onClick={() => update({ filters: NEUTRAL_FILTERS })}>Reset adjustments</button>
     </>
   );

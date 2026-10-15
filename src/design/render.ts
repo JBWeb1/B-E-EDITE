@@ -1,4 +1,5 @@
-import { center, wrapText } from './model';
+import { cssFilter } from '../lib/filters';
+import { center, gradientLine, wrapText } from './model';
 import type { DesignDoc, DesignElement, ShapeElement, TextElement } from './types';
 
 /** Cache of decoded images keyed by src. Calls `onLoad` when a new image finishes loading. */
@@ -40,6 +41,7 @@ export function textFont(el: TextElement): string {
 /** Lines of a text element as drawn, using the context for measurement. */
 export function textLines(ctx: CanvasRenderingContext2D, el: TextElement): string[] {
   ctx.font = textFont(el);
+  ctx.letterSpacing = `${el.letterSpacing ?? 0}px`;
   return wrapText(el.text, el.width, (s) => ctx.measureText(s).width);
 }
 
@@ -121,6 +123,12 @@ function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: I
     if (img) {
       roundedRect(ctx, el.x, el.y, el.width, el.height, el.radius);
       ctx.clip();
+      if (el.flipX || el.flipY) {
+        ctx.translate(c.x, c.y);
+        ctx.scale(el.flipX ? -1 : 1, el.flipY ? -1 : 1);
+        ctx.translate(-c.x, -c.y);
+      }
+      ctx.filter = cssFilter(el.filters);
       ctx.drawImage(img, el.x, el.y, el.width, el.height);
     }
   } else {
@@ -131,14 +139,39 @@ function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: I
     const lh = el.fontSize * el.lineHeight;
     const tx = el.align === 'left' ? el.x : el.align === 'right' ? el.x + el.width : el.x + el.width / 2;
     const padTop = (lh - el.fontSize) / 2;
-    lines.forEach((line, i) => ctx.fillText(line, tx, el.y + padTop + i * lh));
+    if (el.shadow) {
+      ctx.shadowColor = 'rgba(0,0,0,0.45)';
+      ctx.shadowBlur = el.fontSize * 0.15;
+      ctx.shadowOffsetX = el.fontSize * 0.04;
+      ctx.shadowOffsetY = el.fontSize * 0.06;
+    }
+    const outline = el.outlineWidth ?? 0;
+    lines.forEach((line, i) => {
+      const y = el.y + padTop + i * lh;
+      if (outline > 0) {
+        ctx.strokeStyle = el.outlineColor ?? '#000000';
+        ctx.lineWidth = outline * 2; // half of the stroke is covered by the fill
+        ctx.lineJoin = 'round';
+        ctx.strokeText(line, tx, y);
+        ctx.shadowColor = 'transparent';
+      }
+      ctx.fillText(line, tx, y);
+    });
   }
   ctx.restore();
 }
 
 /** Draw the whole design (no editor overlays) in doc coordinates. */
 export function renderDesign(ctx: CanvasRenderingContext2D, doc: DesignDoc, images: ImageCache, skipId?: string) {
-  ctx.fillStyle = doc.background;
+  if (doc.gradient) {
+    const [a, b] = gradientLine(doc.width, doc.height, doc.gradient.angle);
+    const g = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+    g.addColorStop(0, doc.gradient.from);
+    g.addColorStop(1, doc.gradient.to);
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = doc.background;
+  }
   ctx.fillRect(0, 0, doc.width, doc.height);
   for (const el of doc.elements) {
     if (el.id !== skipId) drawElement(ctx, el, images);
@@ -158,4 +191,22 @@ export async function exportDesign(doc: DesignDoc, type: 'image/png' | 'image/jp
   return new Promise((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Export failed'))), type, 0.92),
   );
+}
+
+const thumbCache = new Map<DesignDoc, string>();
+
+/** Small JPEG preview of a design (cached per doc object). */
+export function designThumbnail(doc: DesignDoc, maxSize = 240): string {
+  const cached = thumbCache.get(doc);
+  if (cached) return cached;
+  const scale = maxSize / Math.max(doc.width, doc.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(doc.width * scale);
+  canvas.height = Math.round(doc.height * scale);
+  const ctx = canvas.getContext('2d')!;
+  ctx.scale(scale, scale);
+  renderDesign(ctx, doc, new ImageCache(() => {}));
+  const url = canvas.toDataURL('image/jpeg', 0.85);
+  thumbCache.set(doc, url);
+  return url;
 }

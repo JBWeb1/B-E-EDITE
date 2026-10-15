@@ -17,6 +17,10 @@ import {
   trimStart,
   cssFilter,
   NEUTRAL_FILTERS,
+  assignLanes,
+  computePeaks,
+  maxTransition,
+  transitionAt,
 } from './timeline';
 import type { MediaAsset } from './types';
 
@@ -112,5 +116,51 @@ describe('effects', () => {
   it('splits text overlays', () => {
     const out = splitTexts([createTextOverlay(2, { duration: 4 })], 3);
     expect(out.map((o) => [o.start, o.duration])).toEqual([[2, 1], [3, 3]]);
+  });
+});
+
+describe('transitions', () => {
+  const a = createClip(video('a', 4));
+  const b = { ...createClip(video('b', 4)), transition: { type: 'fade' as const, duration: 1 } };
+  const placed = layoutClips([a, b]);
+
+  it('reports eased progress only inside the transition window', () => {
+    expect(transitionAt(placed[1], 4)?.progress).toBe(0);
+    expect(transitionAt(placed[1], 4.5)?.progress).toBeCloseTo(0.5);
+    expect(transitionAt(placed[1], 5.2)).toBeNull();
+  });
+
+  it('ignores a transition on the first clip', () => {
+    expect(transitionAt(layoutClips([b])[0], 0.5)).toBeNull();
+  });
+
+  it('caps the length at half the clip', () => {
+    expect(maxTransition(createClip(video('x', 1)))).toBe(0.5);
+    expect(maxTransition(createClip(video('x', 10)))).toBe(2);
+  });
+
+  it('drops the transition from the second half of a split', () => {
+    const out = splitClips([a, b], 6);
+    expect(out[1].transition).toBeDefined();
+    expect(out[2].transition).toBeUndefined();
+  });
+});
+
+describe('computePeaks', () => {
+  it('buckets samples and normalises to the loudest', () => {
+    const samples = new Float32Array([0.1, -0.2, 0.5, -1, 0.25, 0]);
+    expect(computePeaks(samples, 6, 3)).toEqual([0.2, 1, 0.25]);
+  });
+});
+
+describe('assignLanes', () => {
+  it('stacks overlapping items and reuses free rows', () => {
+    const items = [
+      { s: 0, e: 4 },
+      { s: 0, e: 2 },
+      { s: 2, e: 5 },
+      { s: 4, e: 6 },
+    ];
+    expect(assignLanes(items, (i) => i.s, (i) => i.e)).toEqual([0, 1, 1, 0]);
   });
 });

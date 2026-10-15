@@ -1,3 +1,5 @@
+import type { Filters } from '../lib/filters';
+
 export type AssetKind = 'video' | 'image' | 'audio';
 
 export interface MediaAsset {
@@ -11,15 +13,19 @@ export interface MediaAsset {
   width?: number;
   height?: number;
   thumbnail?: string;
+  /** Loudness samples (0..1), PEAKS_PER_SECOND per second, for drawing waveforms. */
+  peaks?: number[];
 }
 
-export interface ClipFilters {
-  brightness: number; // 1 = unchanged
-  contrast: number;
-  saturation: number;
-  blur: number; // px
-  grayscale: number; // 0..1
+export type TransitionType = 'fade' | 'black' | 'slide' | 'zoom' | 'wipe';
+
+export interface Transition {
+  type: TransitionType;
+  /** Seconds at the start of the clip. */
+  duration: number;
 }
+
+export type ClipFilters = Filters;
 
 /** A clip on the main (magnetic) track. Clips play back to back. */
 export interface Clip {
@@ -33,6 +39,8 @@ export interface Clip {
   fadeIn: number;
   fadeOut: number;
   filters: ClipFilters;
+  /** Transition from the previous clip into this one. */
+  transition?: Transition;
 }
 
 export interface TextOverlay {

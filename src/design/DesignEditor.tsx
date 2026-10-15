@@ -1,22 +1,34 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { downloadBlob, readFileAsDataURL } from '../lib/download';
+import { FILTER_PRESETS, NEUTRAL_FILTERS, sameFilters } from '../lib/filters';
+import type { Filters } from '../lib/filters';
 import { useHistory } from '../lib/history';
 import { uid } from '../lib/id';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
+import { FilterSliders } from '../ui/FilterSliders';
+import { FirstRunTips, ShortcutsDialog } from '../ui/Help';
+import type { Shortcut } from '../ui/Help';
 import {
   addElement,
+  alignElements,
+  boundsOf,
   createImage,
   createShape,
   createText,
-  duplicateElement,
+  distributeElements,
+  duplicateElements,
   elementAt,
+  elementsInRect,
   FONTS,
+  GRADIENT_PRESETS,
   handlePosition,
   HANDLE_SIGNS,
   isDesignDoc,
+  moveElements,
   moveLayer,
-  removeElement,
+  normalizeRect,
+  removeElements,
   resizeBox,
   resizeDoc,
   rotationFromPoint,
@@ -24,10 +36,10 @@ import {
   snapPosition,
   updateElement,
 } from './model';
-import type { Guide, Handle, LayerMove, Point } from './model';
-import { exportDesign, ImageCache, measureTextHeight, renderDesign } from './render';
+import type { AlignMode, Guide, Handle, LayerMove, Point, Rect } from './model';
+import { designThumbnail, exportDesign, ImageCache, measureTextHeight, renderDesign } from './render';
 import { SIZE_PRESETS, TEMPLATES } from './templates';
-import type { DesignDoc, DesignElement, ShapeKind, TextElement } from './types';
+import type { DesignDoc, DesignElement, Gradient, ShapeKind, TextElement } from './types';
 
 export const AUTOSAVE_KEY = 'bee.design.autosave';
 
@@ -38,13 +50,38 @@ const HANDLE_CURSORS: Record<Handle, string> = {
   nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize',
   n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize',
 };
+const ALIGN_BUTTONS: { mode: AlignMode; icon: string; label: string }[] = [
+  { mode: 'left', icon: '⇤', label: 'Left' },
+  { mode: 'hcenter', icon: '↔', label: 'Center' },
+  { mode: 'right', icon: '⇥', label: 'Right' },
+  { mode: 'top', icon: '⤒', label: 'Top' },
+  { mode: 'vcenter', icon: '↕', label: 'Middle' },
+  { mode: 'bottom', icon: '⤓', label: 'Bottom' },
+];
+
+const SHORTCUTS: Shortcut[] = [
+  { keys: ['Ctrl', 'Z'], action: 'Undo' },
+  { keys: ['Ctrl', 'Shift', 'Z'], action: 'Redo' },
+  { keys: ['Ctrl', 'C'], action: 'Copy' },
+  { keys: ['Ctrl', 'V'], action: 'Paste (also pastes images)' },
+  { keys: ['Ctrl', 'D'], action: 'Duplicate' },
+  { keys: ['Ctrl', 'A'], action: 'Select everything' },
+  { keys: ['Shift', 'Click'], action: 'Add to / remove from selection' },
+  { keys: ['Del'], action: 'Delete' },
+  { keys: ['Arrows'], action: 'Nudge 1px (Shift: 10px)' },
+  { keys: ['Alt', 'Drag'], action: 'Move without snapping' },
+  { keys: ['Shift', 'Rotate'], action: 'Rotate in 15° steps' },
+  { keys: ['Esc'], action: 'Deselect' },
+  { keys: ['?'], action: 'Show this help' },
+];
 
 type Tab = 'templates' | 'text' | 'shapes' | 'uploads' | 'background';
 
 type Drag =
-  | { mode: 'move'; start: Point; el: DesignElement }
+  | { mode: 'move'; start: Point; origins: Map<string, Point>; bounds: Rect; clickedId: string; moved: boolean }
   | { mode: 'resize'; start: Point; el: DesignElement; handle: Handle }
-  | { mode: 'rotate'; el: DesignElement };
+  | { mode: 'rotate'; el: DesignElement }
+  | { mode: 'marquee'; start: Point; base: string[] };
 
 let measureCtx: CanvasRenderingContext2D | null = null;
 function fitTextHeight(el: TextElement): number {
@@ -66,12 +103,17 @@ function isTyping(target: EventTarget | null) {
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 }
 
+const gradientCss = (g: Gradient) => `linear-gradient(${g.angle + 90}deg, ${g.from}, ${g.to})`;
+
 export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; onExit: () => void }) {
   const history = useHistory<DesignDoc>(initialDoc);
   const { state: doc, set, setTransient, mark } = history;
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [guides, setGuides] = useState<Guide[]>([]);
+  const [marquee, setMarquee] = useState<Rect | null>(null);
+  const [menu, setMenu] = useState<Point | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
   const [tab, setTab] = useState<Tab>('templates');
   const [zoomOverride, setZoomOverride] = useState<number | null>(null);
   const [fitZoom, setFitZoom] = useState(0.5);
@@ -83,12 +125,20 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
-  const clipboardRef = useRef<DesignElement | null>(null);
+  const clipboardRef = useRef<DesignElement[]>([]);
   const images = useMemo(() => new ImageCache(() => setImageVersion((v) => v + 1)), []);
+  const templateThumbs = useMemo(() => TEMPLATES.map((t) => designThumbnail(t.build(), 200)), []);
 
   const zoom = zoomOverride ?? fitZoom;
-  const selected = doc.elements.find((e) => e.id === selectedId) ?? null;
+  const selectedEls = doc.elements.filter((e) => selectedIds.includes(e.id));
+  const selected = selectedEls.length === 1 ? selectedEls[0] : null;
   const editing = doc.elements.find((e) => e.id === editingId && e.type === 'text') as TextElement | undefined;
+
+  // Drop selection ids that no longer exist (after undo, delete, template swap…).
+  useEffect(() => {
+    const ids = new Set(doc.elements.map((e) => e.id));
+    setSelectedIds((sel) => (sel.every((id) => ids.has(id)) ? sel : sel.filter((id) => ids.has(id))));
+  }, [doc.elements]);
 
   // Autosave so work survives a refresh.
   useEffect(() => {
@@ -131,16 +181,27 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
     renderDesign(ctx, doc, images, editingId ?? undefined);
 
     const px = 1 / zoom;
-    if (selected && !editingId) {
-      const c = { x: selected.x + selected.width / 2, y: selected.y + selected.height / 2 };
-      ctx.save();
-      ctx.translate(c.x, c.y);
-      ctx.rotate((selected.rotation * Math.PI) / 180);
-      ctx.strokeStyle = selected.locked ? '#9ca3af' : '#7c3aed';
-      ctx.lineWidth = 2 * px;
-      ctx.strokeRect(-selected.width / 2, -selected.height / 2, selected.width, selected.height);
-      ctx.restore();
-      if (!selected.locked) {
+    if (!editingId) {
+      for (const el of selectedEls) {
+        const c = { x: el.x + el.width / 2, y: el.y + el.height / 2 };
+        ctx.save();
+        ctx.translate(c.x, c.y);
+        ctx.rotate((el.rotation * Math.PI) / 180);
+        ctx.strokeStyle = el.locked ? '#9ca3af' : '#7c3aed';
+        ctx.lineWidth = (selected ? 2 : 1.5) * px;
+        ctx.strokeRect(-el.width / 2, -el.height / 2, el.width, el.height);
+        ctx.restore();
+      }
+      if (selectedEls.length > 1) {
+        const b = boundsOf(selectedEls)!;
+        ctx.save();
+        ctx.setLineDash([6 * px, 4 * px]);
+        ctx.strokeStyle = '#7c3aed';
+        ctx.lineWidth = px;
+        ctx.strokeRect(b.x, b.y, b.width, b.height);
+        ctx.restore();
+      }
+      if (selected && !selected.locked) {
         const size = 10 * px;
         ctx.fillStyle = '#ffffff';
         ctx.strokeStyle = '#7c3aed';
@@ -157,6 +218,13 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
         ctx.stroke();
       }
     }
+    if (marquee) {
+      ctx.fillStyle = 'rgba(124, 58, 237, 0.1)';
+      ctx.strokeStyle = '#7c3aed';
+      ctx.lineWidth = px;
+      ctx.fillRect(marquee.x, marquee.y, marquee.width, marquee.height);
+      ctx.strokeRect(marquee.x, marquee.y, marquee.width, marquee.height);
+    }
     ctx.strokeStyle = '#ec4899';
     ctx.lineWidth = px;
     for (const g of guides) {
@@ -170,7 +238,8 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
       }
       ctx.stroke();
     }
-  }, [doc, zoom, selected, editingId, guides, images, imageVersion]);
+    // selectedEls/selected are derived from doc + selectedIds, which are listed.
+  }, [doc, zoom, selectedIds, editingId, guides, marquee, images, imageVersion]);
 
   const toDoc = (e: { clientX: number; clientY: number }): Point => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -189,19 +258,44 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
     return null;
   };
 
+  const startMove = (p: Point, ids: string[], clickedId: string) => {
+    const movable = doc.elements.filter((e) => ids.includes(e.id) && !e.locked);
+    if (movable.length === 0) return;
+    dragRef.current = {
+      mode: 'move',
+      start: p,
+      origins: new Map(movable.map((e) => [e.id, { x: e.x, y: e.y }])),
+      bounds: boundsOf(movable)!,
+      clickedId,
+      moved: false,
+    };
+  };
+
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (editingId) return;
+    if (editingId || e.button !== 0) return;
+    setMenu(null);
     const p = toDoc(e);
     const handle = selected ? hitHandle(selected, p) : null;
     if (selected && handle) {
       dragRef.current = handle === 'rotate' ? { mode: 'rotate', el: selected } : { mode: 'resize', start: p, el: selected, handle };
     } else {
       const hit = elementAt(doc, p, 6 / zoom);
-      setSelectedId(hit?.id ?? null);
-      if (hit && !hit.locked) dragRef.current = { mode: 'move', start: p, el: hit };
+      if (hit && e.shiftKey) {
+        const next = selectedIds.includes(hit.id) ? selectedIds.filter((id) => id !== hit.id) : [...selectedIds, hit.id];
+        setSelectedIds(next);
+        if (next.includes(hit.id)) startMove(p, next, hit.id);
+      } else if (hit) {
+        const next = selectedIds.includes(hit.id) ? selectedIds : [hit.id];
+        setSelectedIds(next);
+        startMove(p, next, hit.id);
+      } else {
+        const base = e.shiftKey ? selectedIds : [];
+        setSelectedIds(base);
+        dragRef.current = { mode: 'marquee', start: p, base };
+      }
     }
     if (dragRef.current) {
-      mark();
+      if (dragRef.current.mode !== 'marquee') mark();
       e.currentTarget.setPointerCapture(e.pointerId);
     }
   };
@@ -215,15 +309,37 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
       e.currentTarget.style.cursor = cursor;
       return;
     }
-    const el = drag.el;
-    if (drag.mode === 'move') {
-      const raw = { x: el.x + p.x - drag.start.x, y: el.y + p.y - drag.start.y, width: el.width, height: el.height };
-      const snapped = e.altKey ? { ...raw, guides: [] } : snapPosition(doc, el.id, raw, 8 / zoom);
-      setGuides(snapped.guides);
-      setTransient((d) => updateElement(d, el.id, { x: Math.round(snapped.x), y: Math.round(snapped.y) }));
+    if (drag.mode === 'marquee') {
+      const r = normalizeRect(drag.start, p);
+      setMarquee(r);
+      const inside = elementsInRect(doc, r);
+      setSelectedIds([...new Set([...drag.base, ...inside])]);
+    } else if (drag.mode === 'move') {
+      let dx = p.x - drag.start.x;
+      let dy = p.y - drag.start.y;
+      if (!drag.moved && Math.hypot(dx, dy) * zoom < 3) return;
+      drag.moved = true;
+      if (!e.altKey) {
+        const ids = [...drag.origins.keys()];
+        const raw = { ...drag.bounds, x: drag.bounds.x + dx, y: drag.bounds.y + dy };
+        const snapped = snapPosition(doc, ids, raw, 8 / zoom);
+        dx += snapped.x - raw.x;
+        dy += snapped.y - raw.y;
+        setGuides(snapped.guides);
+      } else {
+        setGuides([]);
+      }
+      setTransient((d) => ({
+        ...d,
+        elements: d.elements.map((el) => {
+          const o = drag.origins.get(el.id);
+          return o ? { ...el, x: Math.round(o.x + dx), y: Math.round(o.y + dy) } : el;
+        }),
+      }));
     } else if (drag.mode === 'rotate') {
-      setTransient((d) => updateElement(d, el.id, { rotation: Math.round(rotationFromPoint(el, p, e.shiftKey)) }));
+      setTransient((d) => updateElement(d, drag.el.id, { rotation: Math.round(rotationFromPoint(drag.el, p, e.shiftKey)) }));
     } else {
+      const el = drag.el;
       const delta = { x: p.x - drag.start.x, y: p.y - drag.start.y };
       const [sx, sy] = HANDLE_SIGNS[drag.handle];
       const corner = !!(sx && sy);
@@ -240,24 +356,46 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
     }
   };
 
-  const onPointerUp = () => {
+  const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current;
     dragRef.current = null;
+    // A plain click on one item of a multi-selection selects just that item.
+    if (drag?.mode === 'move' && !drag.moved && !e.shiftKey && selectedIds.length > 1) setSelectedIds([drag.clickedId]);
     setGuides([]);
+    setMarquee(null);
   };
 
   const onDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const hit = elementAt(doc, toDoc(e), 6 / zoom);
     if (hit?.type === 'text' && !hit.locked) {
-      setSelectedId(hit.id);
+      setSelectedIds([hit.id]);
       setEditingId(hit.id);
       mark();
     }
   };
 
+  const onContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const hit = elementAt(doc, toDoc(e), 6 / zoom);
+    if (hit && !selectedIds.includes(hit.id)) setSelectedIds([hit.id]);
+    if (!hit) setSelectedIds([]);
+    setMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  // Close the context menu on any outside click.
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: PointerEvent) => {
+      if (!(e.target as HTMLElement).closest('.context-menu')) setMenu(null);
+    };
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, [menu]);
+
   const insert = useCallback(
     (el: DesignElement) => {
       set((d) => addElement(d, el));
-      setSelectedId(el.id);
+      setSelectedIds([el.id]);
     },
     [set],
   );
@@ -284,20 +422,51 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
     else set(fn);
   };
 
+  const patchImageFilters = (patch: Partial<Filters>) => {
+    if (selected?.type !== 'image') return;
+    patchSelected({ filters: { ...(selected.filters ?? NEUTRAL_FILTERS), ...patch } }, true);
+  };
+
   const deleteSelected = useCallback(() => {
-    if (!selectedId) return;
-    set((d) => removeElement(d, selectedId));
-    setSelectedId(null);
-  }, [selectedId, set]);
+    if (selectedIds.length === 0) return;
+    set((d) => removeElements(d, selectedIds));
+  }, [selectedIds, set]);
 
   const duplicateSelected = useCallback(() => {
-    if (!selectedId) return;
-    const result = duplicateElement(doc, selectedId);
+    if (selectedIds.length === 0) return;
+    const result = duplicateElements(doc, selectedIds);
     set(result.doc);
-    setSelectedId(result.id);
-  }, [doc, selectedId, set]);
+    setSelectedIds(result.ids);
+  }, [doc, selectedIds, set]);
 
-  const layer = (move: LayerMove) => selectedId && set((d) => moveLayer(d, selectedId, move));
+  const copySelected = useCallback(() => {
+    clipboardRef.current = doc.elements.filter((e) => selectedIds.includes(e.id));
+  }, [doc, selectedIds]);
+
+  const paste = useCallback(() => {
+    if (clipboardRef.current.length === 0) return;
+    const copies = clipboardRef.current.map((e) => ({ ...e, id: uid(e.type), x: e.x + 20, y: e.y + 20, locked: false }));
+    clipboardRef.current = copies;
+    set((d) => ({ ...d, elements: [...d.elements, ...copies] }));
+    setSelectedIds(copies.map((c) => c.id));
+  }, [set]);
+
+  const toggleLock = () => {
+    const lock = !selectedEls.every((e) => e.locked);
+    set((d) => ({ ...d, elements: d.elements.map((e) => (selectedIds.includes(e.id) ? { ...e, locked: lock } : e)) }));
+  };
+
+  const layer = (move: LayerMove) => {
+    if (selectedIds.length === 0) return;
+    set((d) => {
+      // Keep the selection's relative order when moving several layers.
+      const ordered = d.elements.filter((e) => selectedIds.includes(e.id)).map((e) => e.id);
+      const sequence = move === 'top' || move === 'down' ? ordered : [...ordered].reverse();
+      return sequence.reduce((acc, id) => moveLayer(acc, id, move), d);
+    });
+  };
+
+  const align = (mode: AlignMode) => set((d) => alignElements(d, selectedIds, mode));
 
   // Keyboard shortcuts.
   useEffect(() => {
@@ -315,19 +484,25 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
       } else if (mod && key === 'd') {
         e.preventDefault();
         duplicateSelected();
-      } else if (mod && key === 'c' && selected) {
-        clipboardRef.current = selected;
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selected && !selected.locked) {
+      } else if (mod && key === 'a') {
+        e.preventDefault();
+        setSelectedIds(doc.elements.map((el) => el.id));
+      } else if (mod && key === 'c') {
+        copySelected();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
         deleteSelected();
       } else if (e.key === 'Escape') {
-        setSelectedId(null);
-      } else if (e.key.startsWith('Arrow') && selected && !selected.locked) {
+        setSelectedIds([]);
+        setMenu(null);
+      } else if (e.key === '?') {
+        setShowHelp(true);
+      } else if (e.key.startsWith('Arrow') && selectedIds.length) {
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
         const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
-        set((d) => updateElement(d, selected.id, { x: selected.x + dx, y: selected.y + dy }));
+        set((d) => moveElements(d, selectedIds, dx, dy));
       }
     };
     const onPaste = (e: ClipboardEvent) => {
@@ -336,12 +511,9 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
       if (files.length) {
         e.preventDefault();
         void addImageFiles(files);
-      } else if (clipboardRef.current) {
+      } else if (clipboardRef.current.length) {
         e.preventDefault();
-        const src = clipboardRef.current;
-        const copy = { ...src, id: uid(src.type), x: src.x + 20, y: src.y + 20, locked: false };
-        clipboardRef.current = copy;
-        insert(copy);
+        paste();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -350,7 +522,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('paste', onPaste);
     };
-  }, [history, selected, set, insert, deleteSelected, duplicateSelected, addImageFiles]);
+  }, [history, doc, selectedIds, set, deleteSelected, duplicateSelected, copySelected, paste, addImageFiles]);
 
   const doExport = async (type: 'image/png' | 'image/jpeg') => {
     setBusy(true);
@@ -373,7 +545,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
       const parsed = JSON.parse(await file.text());
       if (!isDesignDoc(parsed)) throw new Error('Not a design file');
       history.reset(parsed);
-      setSelectedId(null);
+      setSelectedIds([]);
     } catch {
       alert('Could not open that file. Choose a .bee.json design saved from B-E-EDITE.');
     }
@@ -383,7 +555,11 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
     { label: 'Add a heading', preset: { text: 'Heading', fontSize: Math.round(doc.width / 10), fontWeight: 'bold' } },
     { label: 'Add a subheading', preset: { text: 'Subheading', fontSize: Math.round(doc.width / 16), fontWeight: 'bold' } },
     { label: 'Add body text', preset: { text: 'Body text', fontSize: Math.round(doc.width / 28) } },
+    { label: 'Outlined title', preset: { text: 'OUTLINE', fontSize: Math.round(doc.width / 9), fontWeight: 'bold', fontFamily: 'Impact, sans-serif', color: '#ffffff', outlineWidth: 4, outlineColor: '#111827', letterSpacing: 4 } },
+    { label: 'Shadow title', preset: { text: 'Shadow', fontSize: Math.round(doc.width / 10), fontWeight: 'bold', color: '#f59e0b', shadow: true } },
   ];
+
+  const allLocked = selectedEls.length > 0 && selectedEls.every((e) => e.locked);
 
   return (
     <div className="editor">
@@ -416,6 +592,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
         </select>
         <button className="primary" disabled={busy} onClick={() => doExport('image/png')}>Download PNG</button>
         <button disabled={busy} onClick={() => doExport('image/jpeg')}>JPG</button>
+        <button className="ghost" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)">?</button>
       </header>
 
       <div className="workspace">
@@ -433,18 +610,20 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
             <>
               <h3>Templates</h3>
               <div className="grid2">
-                {TEMPLATES.map((t) => (
+                {TEMPLATES.map((t, i) => (
                   <button
                     key={t.label}
-                    className="card"
+                    className="card template-card"
+                    title={t.label}
                     onClick={() => {
                       if (doc.elements.length === 0 || confirm('Replace the current design with this template?')) {
                         set(t.build());
-                        setSelectedId(null);
+                        setSelectedIds([]);
                       }
                     }}
                   >
-                    {t.label}
+                    <img src={templateThumbs[i]} alt="" />
+                    <span>{t.label}</span>
                   </button>
                 ))}
               </div>
@@ -532,12 +711,33 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
           {tab === 'background' && (
             <>
               <h3>Background</h3>
-              <ColorField label="Color" value={doc.background} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, background: v }))} />
-              <div className="swatches">
-                {SWATCHES.map((c) => (
-                  <button key={c} className="swatch" style={{ background: c }} onClick={() => set((d) => ({ ...d, background: c }))} title={c} />
-                ))}
+              <div className="row">
+                <button className={!doc.gradient ? 'active' : ''} onClick={() => set((d) => ({ ...d, gradient: null }))}>Solid</button>
+                <button className={doc.gradient ? 'active' : ''} onClick={() => !doc.gradient && set((d) => ({ ...d, gradient: GRADIENT_PRESETS[0] }))}>
+                  Gradient
+                </button>
               </div>
+              {doc.gradient ? (
+                <>
+                  <div className="swatches">
+                    {GRADIENT_PRESETS.map((g, i) => (
+                      <button key={i} className="swatch" style={{ background: gradientCss(g) }} onClick={() => set((d) => ({ ...d, gradient: g }))} />
+                    ))}
+                  </div>
+                  <ColorField label="From" value={doc.gradient.from} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, gradient: { ...d.gradient!, from: v } }))} />
+                  <ColorField label="To" value={doc.gradient.to} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, gradient: { ...d.gradient!, to: v } }))} />
+                  <RangeField label="Angle" value={doc.gradient.angle} min={0} max={360} step={5} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, gradient: { ...d.gradient!, angle: v } }))} format={(v) => `${v}°`} />
+                </>
+              ) : (
+                <>
+                  <ColorField label="Color" value={doc.background} onStart={mark} onChange={(v) => setTransient((d) => ({ ...d, background: v }))} />
+                  <div className="swatches">
+                    {SWATCHES.map((c) => (
+                      <button key={c} className="swatch" style={{ background: c }} onClick={() => set((d) => ({ ...d, background: c, gradient: null }))} title={c} />
+                    ))}
+                  </div>
+                </>
+              )}
             </>
           )}
         </aside>
@@ -546,7 +746,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
           className="stage"
           ref={stageRef}
           onPointerDown={(e) => {
-            if (e.target === e.currentTarget) setSelectedId(null);
+            if (e.target === e.currentTarget) setSelectedIds([]);
           }}
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
@@ -562,6 +762,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
               onDoubleClick={onDoubleClick}
+              onContextMenu={onContextMenu}
             />
             {editing && (
               <textarea
@@ -582,6 +783,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
                   height: Math.max(editing.height, editing.fontSize * editing.lineHeight) * zoom,
                   font: `${editing.italic ? 'italic ' : ''}${editing.fontWeight} ${editing.fontSize * zoom}px ${editing.fontFamily}`,
                   lineHeight: editing.lineHeight,
+                  letterSpacing: `${(editing.letterSpacing ?? 0) * zoom}px`,
                   color: editing.color,
                   textAlign: editing.align,
                   transform: `rotate(${editing.rotation}deg)`,
@@ -589,15 +791,55 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
               />
             )}
           </div>
+          <FirstRunTips
+            storageKey="bee.tips.design"
+            title="Welcome to the design editor 👋"
+            tips={[
+              'Pick a template or add text, shapes and photos from the left.',
+              'Drag on empty canvas to select several things at once; Shift-click adds to the selection.',
+              'Right-click anything for quick actions. Press ? for all shortcuts.',
+            ]}
+          />
         </main>
 
         <aside className="panel right">
-          {selected ? (
+          {selectedEls.length > 1 ? (
+            <>
+              <h3>{selectedEls.length} elements selected</h3>
+              <h4>Align</h4>
+              <div className="grid3">
+                {ALIGN_BUTTONS.map((a) => (
+                  <button key={a.mode} onClick={() => align(a.mode)} title={`Align ${a.label.toLowerCase()}`}>
+                    {a.icon} {a.label}
+                  </button>
+                ))}
+              </div>
+              <h4>Spacing</h4>
+              <div className="row">
+                <button disabled={selectedEls.length < 3} onClick={() => set((d) => distributeElements(d, selectedIds, 'x'))} title="Even horizontal spacing (3+ items)">
+                  ⇹ Horizontally
+                </button>
+                <button disabled={selectedEls.length < 3} onClick={() => set((d) => distributeElements(d, selectedIds, 'y'))} title="Even vertical spacing (3+ items)">
+                  ⇳ Vertically
+                </button>
+              </div>
+              <h4>Arrange</h4>
+              <div className="row">
+                <button onClick={() => layer('top')}>Bring to front</button>
+                <button onClick={() => layer('bottom')}>Send to back</button>
+              </div>
+              <div className="row">
+                <button onClick={duplicateSelected}>Duplicate</button>
+                <button onClick={toggleLock}>{allLocked ? 'Unlock' : 'Lock'}</button>
+                <button className="danger" onClick={deleteSelected} disabled={allLocked}>Delete</button>
+              </div>
+            </>
+          ) : selected ? (
             <>
               <h3>{selected.name}</h3>
               <div className="row">
                 <button onClick={duplicateSelected} title="Duplicate (Ctrl+D)">Duplicate</button>
-                <button onClick={() => patchSelected({ locked: !selected.locked })}>{selected.locked ? 'Unlock' : 'Lock'}</button>
+                <button onClick={toggleLock}>{selected.locked ? 'Unlock' : 'Lock'}</button>
                 <button className="danger" onClick={deleteSelected} disabled={selected.locked}>Delete</button>
               </div>
 
@@ -611,7 +853,7 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
                     <span>Font</span>
                     <select value={selected.fontFamily} onChange={(e) => patchSelected({ fontFamily: e.target.value })}>
                       {FONTS.map((f) => (
-                        <option key={f} value={f}>{f.split(',')[0].replace(/"/g, '')}</option>
+                        <option key={f} value={f} style={{ fontFamily: f }}>{f.split(',')[0].replace(/"/g, '')}</option>
                       ))}
                     </select>
                   </label>
@@ -627,6 +869,23 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
                   </div>
                   <ColorField label="Color" value={selected.color} onStart={mark} onChange={(v) => patchSelected({ color: v }, true)} />
                   <RangeField label="Line height" value={selected.lineHeight} min={0.8} max={3} step={0.05} onStart={mark} onChange={(v) => patchSelected({ lineHeight: v }, true)} />
+                  <RangeField label="Letter spacing" value={selected.letterSpacing ?? 0} min={-5} max={50} step={1} onStart={mark} onChange={(v) => patchSelected({ letterSpacing: v }, true)} format={(v) => `${v}px`} />
+                  <h4>Effects</h4>
+                  <div className="row">
+                    <button className={selected.shadow ? 'active' : ''} onClick={() => patchSelected({ shadow: !selected.shadow })}>Shadow</button>
+                    <button
+                      className={(selected.outlineWidth ?? 0) > 0 ? 'active' : ''}
+                      onClick={() => patchSelected({ outlineWidth: (selected.outlineWidth ?? 0) > 0 ? 0 : Math.max(2, Math.round(selected.fontSize / 25)) })}
+                    >
+                      Outline
+                    </button>
+                  </div>
+                  {(selected.outlineWidth ?? 0) > 0 && (
+                    <>
+                      <RangeField label="Outline width" value={selected.outlineWidth ?? 0} min={1} max={30} step={1} onStart={mark} onChange={(v) => patchSelected({ outlineWidth: v }, true)} format={(v) => `${v}px`} />
+                      <ColorField label="Outline color" value={selected.outlineColor ?? '#000000'} onStart={mark} onChange={(v) => patchSelected({ outlineColor: v }, true)} />
+                    </>
+                  )}
                 </>
               )}
 
@@ -644,7 +903,23 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
               )}
 
               {selected.type === 'image' && (
-                <RangeField label="Corner radius" value={selected.radius} min={0} max={Math.min(selected.width, selected.height) / 2} step={1} onStart={mark} onChange={(v) => patchSelected({ radius: v }, true)} />
+                <>
+                  <div className="row">
+                    <button className={selected.flipX ? 'active' : ''} onClick={() => patchSelected({ flipX: !selected.flipX })}>⇋ Flip H</button>
+                    <button className={selected.flipY ? 'active' : ''} onClick={() => patchSelected({ flipY: !selected.flipY })}>⇵ Flip V</button>
+                  </div>
+                  <RangeField label="Corner radius" value={selected.radius} min={0} max={Math.min(selected.width, selected.height) / 2} step={1} onStart={mark} onChange={(v) => patchSelected({ radius: v }, true)} />
+                  <h4>Filters</h4>
+                  <div className="grid3">
+                    {FILTER_PRESETS.map((p) => (
+                      <button key={p.label} className={sameFilters(selected.filters, p.filters) ? 'active' : ''} onClick={() => patchSelected({ filters: p.filters })}>
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <h4>Adjust</h4>
+                  <FilterSliders filters={selected.filters ?? NEUTRAL_FILTERS} mark={mark} onChange={patchImageFilters} />
+                </>
               )}
 
               <RangeField label="Transparency" value={selected.opacity} min={0} max={1} step={0.01} onStart={mark} onChange={(v) => patchSelected({ opacity: v }, true)} />
@@ -655,9 +930,13 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
                 <NumberField label="H" value={Math.round(selected.height)} min={0} onChange={(v) => patchSelected({ height: v })} />
               </div>
               <NumberField label="Rotation°" value={selected.rotation} onChange={(v) => patchSelected({ rotation: ((v % 360) + 360) % 360 })} />
-              <div className="row">
-                <button onClick={() => patchSelected({ x: Math.round((doc.width - selected.width) / 2) })}>Center H</button>
-                <button onClick={() => patchSelected({ y: Math.round((doc.height - selected.height) / 2) })}>Center V</button>
+              <h4>Align to page</h4>
+              <div className="grid3">
+                {ALIGN_BUTTONS.map((a) => (
+                  <button key={a.mode} onClick={() => align(a.mode)} disabled={selected.locked} title={`Align ${a.label.toLowerCase()}`}>
+                    {a.icon} {a.label}
+                  </button>
+                ))}
               </div>
               <h4>Arrange</h4>
               <div className="row">
@@ -671,8 +950,8 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
             <>
               <h3>Design</h3>
               <p className="hint">
-                {doc.width} × {doc.height}px. Click an element to edit it. Drag to move, use the handles to resize or rotate.
-                Hold Alt while dragging to turn off snapping.
+                {doc.width} × {doc.height}px. Click an element to edit it, or drag across the canvas to select several.
+                Drag to move; use the handles to resize or rotate. Hold Alt while dragging to turn off snapping.
               </p>
             </>
           )}
@@ -681,7 +960,14 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
           <ul className="layers">
             {[...doc.elements].reverse().map((el) => (
               <li key={el.id}>
-                <button className={el.id === selectedId ? 'active' : ''} onClick={() => setSelectedId(el.id)}>
+                <button
+                  className={selectedIds.includes(el.id) ? 'active' : ''}
+                  onClick={(e) =>
+                    setSelectedIds((sel) =>
+                      e.shiftKey ? (sel.includes(el.id) ? sel.filter((id) => id !== el.id) : [...sel, el.id]) : [el.id],
+                    )
+                  }
+                >
                   <span>{el.type === 'text' ? 'T' : el.type === 'image' ? '🖼' : '◆'}</span>
                   <span className="layer-name">{el.type === 'text' ? el.text.slice(0, 24) || 'Text' : el.name}</span>
                   {el.locked && <span title="Locked">🔒</span>}
@@ -692,6 +978,36 @@ export function DesignEditor({ initialDoc, onExit }: { initialDoc: DesignDoc; on
           </ul>
         </aside>
       </div>
+
+      {menu && (
+        <div className="context-menu" style={{ left: menu.x, top: menu.y }} onClick={() => setMenu(null)}>
+          {selectedEls.length > 0 && (
+            <>
+              <button onClick={copySelected}>Copy <kbd>Ctrl C</kbd></button>
+              <button onClick={duplicateSelected}>Duplicate <kbd>Ctrl D</kbd></button>
+              <button onClick={paste} disabled={clipboardRef.current.length === 0}>Paste <kbd>Ctrl V</kbd></button>
+              <hr />
+              <button onClick={() => layer('top')}>Bring to front</button>
+              <button onClick={() => layer('bottom')}>Send to back</button>
+              <button onClick={() => align('hcenter')}>{selectedEls.length > 1 ? 'Align centers' : 'Center on page'}</button>
+              <button onClick={toggleLock}>{allLocked ? 'Unlock' : 'Lock'}</button>
+              <hr />
+              <button className="danger" onClick={deleteSelected} disabled={allLocked}>Delete <kbd>Del</kbd></button>
+            </>
+          )}
+          {selectedEls.length === 0 && (
+            <>
+              <button onClick={paste} disabled={clipboardRef.current.length === 0}>Paste <kbd>Ctrl V</kbd></button>
+              <button onClick={() => setSelectedIds(doc.elements.map((e) => e.id))} disabled={doc.elements.length === 0}>
+                Select all <kbd>Ctrl A</kbd>
+              </button>
+              <button onClick={() => setTab('background')}>Change background</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

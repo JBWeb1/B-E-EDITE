@@ -592,9 +592,11 @@ h4 {
 
 .timeline {
   height: 200px;
+  min-height: 200px;
+  max-height: 320px;
   flex-shrink: 0;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
   background: var(--panel);
   border-top: 1px solid var(--border);
   user-select: none;
@@ -603,7 +605,7 @@ h4 {
 .timeline-inner {
   position: relative;
   min-width: 100%;
-  height: 100%;
+  min-height: 100%;
   padding-left: 0;
   touch-action: none;
 }
@@ -811,4 +813,156 @@ kbd {
   .panel.right {
     display: none;
   }
+}
+
+/* ---------- Added in v0.2 ---------- */
+
+.template-card {
+  flex-direction: column;
+  padding: 6px;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.template-card img {
+  width: 100%;
+  height: 90px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #0b0d12;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 200px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.context-menu button {
+  justify-content: space-between;
+  border: 0;
+  background: transparent;
+  padding: 7px 10px;
+}
+
+.context-menu button:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.context-menu kbd {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.context-menu hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+
+.stage,
+.preview-frame {
+  position: relative;
+}
+
+.tips {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: 340px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  font-size: 13px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  z-index: 20;
+}
+
+.tips ul {
+  margin: 8px 0 12px;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.shortcut-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.shortcut-table td {
+  padding: 5px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcut-table td:first-child {
+  white-space: nowrap;
+  width: 45%;
+}
+
+.grid3 button {
+  padding: 6px 4px;
+  font-size: 12px;
+}
+
+.transition-chip {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 11px;
+  z-index: 4;
+  background: var(--panel);
+  border-color: var(--muted);
+}
+
+.transition-chip.on {
+  background: var(--accent);
+  border-color: #fff;
+}
+
+.waveform {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.recording {
+  color: #fca5a5;
+  border-color: var(--danger);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.home-card img {
+  width: 100%;
+  height: 110px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: #0b0d12;
+}
+
+.home-card.continue {
+  border-color: var(--accent);
 }

@@ -1,5 +1,5 @@
-import { cssFilter, fadeOpacity, locate, projectDuration, textAnimation, textsAt } from './timeline';
-import type { MediaAsset, TextOverlay, VideoProject } from './types';
+import { computePeaks, cssFilter, fadeOpacity, locate, projectDuration, textAnimation, textsAt, transitionAt } from './timeline';
+import type { Clip, MediaAsset, TextOverlay, VideoProject } from './types';
 
 /** Seconds of drift allowed between the clock and a playing media element before re-seeking. */
 const DRIFT_TOLERANCE = 0.3;
@@ -231,29 +231,111 @@ export class VideoEngine {
     const hit = locate(p.clips, this.time);
     if (hit) {
       const asset = p.assets.find((a) => a.id === hit.clip.assetId);
-      const source: CanvasImageSource | null =
-        asset?.kind === 'video'
-          ? (this.videos.get(asset.id)?.readyState ?? 0) >= 2 ? this.videos.get(asset.id)! : null
-          : asset?.kind === 'image'
-            ? this.images.get(asset.id)?.complete ? this.images.get(asset.id)! : null
-            : null;
-      if (source && asset) {
-        const sw = asset.width ?? W;
-        const sh = asset.height ?? H;
-        const scale = Math.min(W / sw, H / sh);
-        const dw = sw * scale;
-        const dh = sh * scale;
-        ctx.globalAlpha = fadeOpacity(hit.clip, this.time - hit.start);
-        ctx.filter = cssFilter(hit.clip.filters);
-        ctx.drawImage(source, (W - dw) / 2, (H - dh) / 2, dw, dh);
-        ctx.filter = 'none';
-        ctx.globalAlpha = 1;
+      const source = asset ? this.sourceFor(asset) : null;
+      const alpha = fadeOpacity(hit.clip, this.time - hit.start);
+      const tr = transitionAt(hit, this.time);
+      // The outgoing clip is shown as its last drawn frame, so transitions work even
+      // between two halves of the same video (which share one <video> element).
+      const prevId = p.clips[hit.index - 1]?.id;
+      if (tr && this.snapshotClipId === prevId) {
+        const q = tr.progress;
+        const snap = this.snapshot;
+        const current = (a: number, transform?: () => void) => {
+          if (!source || !asset) return;
+          ctx.save();
+          transform?.();
+          this.drawClip(source, asset, hit.clip, alpha * a);
+          ctx.restore();
+        };
+        switch (tr.type) {
+          case 'fade':
+            ctx.drawImage(snap, 0, 0);
+            current(q);
+            break;
+          case 'black':
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, W, H);
+            if (q < 0.5) {
+              ctx.globalAlpha = 1 - q * 2;
+              ctx.drawImage(snap, 0, 0);
+              ctx.globalAlpha = 1;
+            } else {
+              current(q * 2 - 1);
+            }
+            break;
+          case 'slide':
+            ctx.drawImage(snap, -q * W, 0);
+            current(1, () => ctx.translate((1 - q) * W, 0));
+            break;
+          case 'zoom':
+            ctx.drawImage(snap, 0, 0);
+            current(q, () => {
+              const z = 1 + 0.35 * (1 - q);
+              ctx.translate(W / 2, H / 2);
+              ctx.scale(z, z);
+              ctx.translate(-W / 2, -H / 2);
+            });
+            break;
+          case 'wipe':
+            ctx.drawImage(snap, 0, 0);
+            current(1, () => {
+              ctx.beginPath();
+              ctx.rect(0, 0, q * W, H);
+              ctx.clip();
+            });
+            break;
+        }
+      } else if (source && asset) {
+        this.drawClip(source, asset, hit.clip, alpha);
+        if (!tr) this.takeSnapshot(hit.clip.id, W, H);
       }
     }
 
     // Animations only run during playback so paused frames always show text clearly.
     for (const o of textsAt(p.texts, this.time)) drawText(ctx, o, this.time, W, H, this.playing);
     ctx.restore();
+  }
+
+  private snapshot = document.createElement('canvas');
+  private snapshotClipId: string | null = null;
+
+  /** Remember the frame just drawn (without text) as the outgoing frame for a transition. */
+  private takeSnapshot(clipId: string, W: number, H: number) {
+    if (this.snapshot.width !== W || this.snapshot.height !== H) {
+      this.snapshot.width = W;
+      this.snapshot.height = H;
+    }
+    this.snapshot.getContext('2d')!.drawImage(this.canvas, 0, 0);
+    this.snapshotClipId = clipId;
+  }
+
+  private sourceFor(asset: MediaAsset): CanvasImageSource | null {
+    if (asset.kind === 'video') {
+      const v = this.videos.get(asset.id);
+      return v && v.readyState >= 2 ? v : null;
+    }
+    if (asset.kind === 'image') {
+      const img = this.images.get(asset.id);
+      return img?.complete && img.naturalWidth > 0 ? img : null;
+    }
+    return null;
+  }
+
+  /** Draw a clip's frame letterboxed into the canvas, with its filters. */
+  private drawClip(source: CanvasImageSource, asset: MediaAsset, clip: Clip, alpha: number) {
+    const ctx = this.ctx;
+    const W = this.canvas.width;
+    const H = this.canvas.height;
+    const sw = asset.width ?? W;
+    const sh = asset.height ?? H;
+    const scale = Math.min(W / sw, H / sh);
+    const dw = sw * scale;
+    const dh = sh * scale;
+    ctx.globalAlpha = alpha;
+    ctx.filter = cssFilter(clip.filters);
+    ctx.drawImage(source, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    ctx.filter = 'none';
+    ctx.globalAlpha = 1;
   }
 
   onEnded(fn: () => void) {
@@ -368,12 +450,15 @@ export async function probeMedia(file: File, id: string): Promise<MediaAsset> {
     el.onloadedmetadata = () => resolve();
     el.onerror = () => reject(new Error(`Could not read ${file.name}`));
   });
-  // Some WebM files report Infinity until you seek past the end.
-  if (!Number.isFinite(el.duration)) {
+  const decoded = kind === 'audio' ? await decodeAudio(file) : null;
+  // Some WebM files (e.g. from MediaRecorder) report Infinity until you seek past the end.
+  if (!Number.isFinite(el.duration) && !decoded) {
     el.currentTime = 1e9;
-    await new Promise((r) => (el.ondurationchange = r));
+    await Promise.race([new Promise((r) => (el.ondurationchange = r)), new Promise((r) => setTimeout(r, 3000))]);
   }
-  const asset: MediaAsset = { ...base, duration: el.duration };
+  const duration = Number.isFinite(el.duration) ? el.duration : decoded?.duration ?? 0;
+  const asset: MediaAsset = { ...base, duration };
+  if (decoded) asset.peaks = computePeaks(decoded.getChannelData(0), decoded.sampleRate);
   if (el instanceof HTMLVideoElement) {
     asset.width = el.videoWidth;
     asset.height = el.videoHeight;
@@ -389,3 +474,12 @@ export async function probeMedia(file: File, id: string): Promise<MediaAsset> {
   return asset;
 }
 
+
+async function decodeAudio(file: File): Promise<AudioBuffer | null> {
+  try {
+    const ctx = new OfflineAudioContext(1, 1, 44100);
+    return await ctx.decodeAudioData(await file.arrayBuffer());
+  } catch {
+    return null; // Waveform is optional.
+  }
+}

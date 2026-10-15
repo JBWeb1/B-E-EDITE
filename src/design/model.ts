@@ -13,6 +13,20 @@ export const FONTS = [
   'Impact, sans-serif',
   '"Trebuchet MS", sans-serif',
   '"Brush Script MT", cursive',
+  'Arial Black, sans-serif',
+  'Verdana, sans-serif',
+  '"Times New Roman", serif',
+  '"Comic Sans MS", cursive',
+  'Palatino, "Palatino Linotype", serif',
+];
+
+export const GRADIENT_PRESETS = [
+  { from: '#7c3aed', to: '#ec4899', angle: 45 },
+  { from: '#0ea5e9', to: '#22c55e', angle: 90 },
+  { from: '#f97316', to: '#facc15', angle: 135 },
+  { from: '#111827', to: '#4b5563', angle: 90 },
+  { from: '#fdf2f8', to: '#e0e7ff', angle: 45 },
+  { from: '#1e3a8a', to: '#06b6d4', angle: 0 },
 ];
 
 export function createDoc(width: number, height: number, name = 'Untitled design'): DesignDoc {
@@ -228,16 +242,17 @@ export interface Guide {
  */
 export function snapPosition(
   doc: DesignDoc,
-  movingId: string,
+  exclude: string[],
   box: { x: number; y: number; width: number; height: number },
   threshold: number,
 ): { x: number; y: number; guides: Guide[] } {
   const xs = [0, doc.width / 2, doc.width];
   const ys = [0, doc.height / 2, doc.height];
   for (const e of doc.elements) {
-    if (e.id === movingId) continue;
-    xs.push(e.x, e.x + e.width / 2, e.x + e.width);
-    ys.push(e.y, e.y + e.height / 2, e.y + e.height);
+    if (exclude.includes(e.id)) continue;
+    const b = aabb(e);
+    xs.push(b.x, b.x + b.width / 2, b.x + b.width);
+    ys.push(b.y, b.y + b.height / 2, b.y + b.height);
   }
   const best = (offsets: number[], targets: number[]) => {
     let found: { delta: number; pos: number } | null = null;
@@ -312,4 +327,132 @@ export function resizeDoc(doc: DesignDoc, width: number, height: number): Design
       return { ...scaled, radius: e.radius * scale } as DesignElement;
     }),
   };
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Axis-aligned bounding box of an element, including rotation. */
+export function aabb(el: DesignElement): Rect {
+  if (!el.rotation) return { x: el.x, y: el.y, width: el.width, height: el.height };
+  const c = center(el);
+  const corners = (['nw', 'ne', 'se', 'sw'] as Handle[]).map((h) => {
+    const [sx, sy] = HANDLE_SIGNS[h];
+    return rotatePoint({ x: c.x + (sx * el.width) / 2, y: c.y + (sy * el.height) / 2 }, c, el.rotation);
+  });
+  const xs = corners.map((p) => p.x);
+  const ys = corners.map((p) => p.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
+/** Bounding box around several elements, or null when the list is empty. */
+export function boundsOf(elements: DesignElement[]): Rect | null {
+  if (elements.length === 0) return null;
+  const boxes = elements.map(aabb);
+  const x = Math.min(...boxes.map((b) => b.x));
+  const y = Math.min(...boxes.map((b) => b.y));
+  const right = Math.max(...boxes.map((b) => b.x + b.width));
+  const bottom = Math.max(...boxes.map((b) => b.y + b.height));
+  return { x, y, width: right - x, height: bottom - y };
+}
+
+/** Normalise a drag rectangle (which may have negative size). */
+export function normalizeRect(a: Point, b: Point): Rect {
+  return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
+}
+
+/** Ids of elements whose bounding box overlaps the rectangle. */
+export function elementsInRect(doc: DesignDoc, r: Rect): string[] {
+  return doc.elements
+    .filter((e) => {
+      const b = aabb(e);
+      return b.x < r.x + r.width && b.x + b.width > r.x && b.y < r.y + r.height && b.y + b.height > r.y;
+    })
+    .map((e) => e.id);
+}
+
+export function moveElements(doc: DesignDoc, ids: string[], dx: number, dy: number): DesignDoc {
+  return {
+    ...doc,
+    elements: doc.elements.map((e) => (ids.includes(e.id) && !e.locked ? { ...e, x: e.x + dx, y: e.y + dy } : e)),
+  };
+}
+
+export function removeElements(doc: DesignDoc, ids: string[]): DesignDoc {
+  return { ...doc, elements: doc.elements.filter((e) => !ids.includes(e.id) || e.locked) };
+}
+
+/** Copy elements (keeping their stacking order) and place the copies on top. */
+export function duplicateElements(doc: DesignDoc, ids: string[], offset = 20): { doc: DesignDoc; ids: string[] } {
+  const copies = doc.elements
+    .filter((e) => ids.includes(e.id))
+    .map((e) => ({ ...e, id: uid(e.type), x: e.x + offset, y: e.y + offset, locked: false }));
+  return { doc: { ...doc, elements: [...doc.elements, ...copies] }, ids: copies.map((c) => c.id) };
+}
+
+export type AlignMode = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom';
+
+/**
+ * Align elements. A single element aligns to the page; several elements
+ * align to the box around them.
+ */
+export function alignElements(doc: DesignDoc, ids: string[], mode: AlignMode): DesignDoc {
+  const targets = doc.elements.filter((e) => ids.includes(e.id) && !e.locked);
+  if (targets.length === 0) return doc;
+  const frame: Rect =
+    ids.length === 1 ? { x: 0, y: 0, width: doc.width, height: doc.height } : boundsOf(doc.elements.filter((e) => ids.includes(e.id)))!;
+  const moved = new Map<string, Point>();
+  for (const e of targets) {
+    const b = aabb(e);
+    let dx = 0;
+    let dy = 0;
+    if (mode === 'left') dx = frame.x - b.x;
+    if (mode === 'hcenter') dx = frame.x + frame.width / 2 - (b.x + b.width / 2);
+    if (mode === 'right') dx = frame.x + frame.width - (b.x + b.width);
+    if (mode === 'top') dy = frame.y - b.y;
+    if (mode === 'vcenter') dy = frame.y + frame.height / 2 - (b.y + b.height / 2);
+    if (mode === 'bottom') dy = frame.y + frame.height - (b.y + b.height);
+    moved.set(e.id, { x: Math.round(e.x + dx), y: Math.round(e.y + dy) });
+  }
+  return { ...doc, elements: doc.elements.map((e) => (moved.has(e.id) ? { ...e, ...moved.get(e.id)! } : e)) };
+}
+
+/** Space 3+ elements evenly between the outermost two along an axis. */
+export function distributeElements(doc: DesignDoc, ids: string[], axis: 'x' | 'y'): DesignDoc {
+  const targets = doc.elements.filter((e) => ids.includes(e.id));
+  if (targets.length < 3) return doc;
+  const pos = axis === 'x' ? 'x' : 'y';
+  const size = axis === 'x' ? 'width' : 'height';
+  const items = targets.map((e) => ({ e, b: aabb(e) })).sort((a, b) => a.b[pos] - b.b[pos]);
+  const first = items[0].b;
+  const last = items[items.length - 1].b;
+  const total = items.reduce((sum, i) => sum + i.b[size], 0);
+  const gap = (last[pos] + last[size] - first[pos] - total) / (items.length - 1);
+  const moved = new Map<string, number>();
+  let cursor = first[pos];
+  for (const { e, b } of items) {
+    if (!e.locked) moved.set(e.id, Math.round(e[pos] + (cursor - b[pos])));
+    cursor += b[size] + gap;
+  }
+  return { ...doc, elements: doc.elements.map((e) => (moved.has(e.id) ? { ...e, [pos]: moved.get(e.id)! } : e)) };
+}
+
+/** Start and end points of a gradient across a w×h box at `angle` degrees. */
+export function gradientLine(w: number, h: number, angle: number): [Point, Point] {
+  const r = (angle * Math.PI) / 180;
+  const dx = Math.cos(r);
+  const dy = Math.sin(r);
+  // Half-length so the gradient reaches the corners.
+  const half = (Math.abs(w * dx) + Math.abs(h * dy)) / 2;
+  const c = { x: w / 2, y: h / 2 };
+  return [
+    { x: c.x - dx * half, y: c.y - dy * half },
+    { x: c.x + dx * half, y: c.y + dy * half },
+  ];
 }

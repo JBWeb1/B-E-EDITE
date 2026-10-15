@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  aabb,
   addElement,
+  alignElements,
+  boundsOf,
+  distributeElements,
+  duplicateElements,
+  elementsInRect,
+  gradientLine,
+  moveElements,
+  normalizeRect,
+  removeElements,
+  updateElement,
   createDoc,
   createShape,
   duplicateElement,
@@ -98,13 +109,13 @@ describe('layers', () => {
 
 describe('snapPosition', () => {
   it('snaps to the canvas center', () => {
-    const s = snapPosition(doc, 'x', { x: 397, y: 10, width: 200, height: 100 }, 8);
+    const s = snapPosition(doc, ['x'], { x: 397, y: 10, width: 200, height: 100 }, 8);
     expect(s.x).toBe(400);
     expect(s.guides).toContainEqual({ axis: 'x', pos: 500 });
   });
 
   it('does not snap beyond the threshold', () => {
-    const s = snapPosition(doc, 'x', { x: 380, y: 220, width: 200, height: 100 }, 8);
+    const s = snapPosition(doc, ['x'], { x: 380, y: 220, width: 200, height: 100 }, 8);
     expect(s).toMatchObject({ x: 380, y: 220, guides: [] });
   });
 });
@@ -122,5 +133,57 @@ describe('resizeDoc', () => {
     const d = addElement(doc, rect({ x: 0, y: 0, width: 1000, height: 1000 }));
     const r = resizeDoc(d, 2000, 1000);
     expect(r.elements[0]).toMatchObject({ x: 500, y: 0, width: 1000, height: 1000 });
+  });
+});
+
+describe('multi-select helpers', () => {
+  const a = rect({ id: 'a', x: 100, y: 100, width: 100, height: 100 });
+  const b = rect({ id: 'b', x: 400, y: 300, width: 100, height: 50 });
+  const c = rect({ id: 'c', x: 900, y: 500, width: 50, height: 50 });
+  const d = [a, b, c].reduce(addElement, doc);
+
+  it('computes bounds including rotation', () => {
+    expect(boundsOf([a, b])).toEqual({ x: 100, y: 100, width: 400, height: 250 });
+    const rotated = aabb(rect({ x: 0, y: 0, width: 100, height: 100, rotation: 45 }));
+    expect(rotated.width).toBeCloseTo(141.42, 1);
+  });
+
+  it('finds elements touching a marquee', () => {
+    expect(elementsInRect(d, normalizeRect({ x: 450, y: 600 }, { x: 150, y: 150 }))).toEqual(['a', 'b']);
+  });
+
+  it('moves, removes and duplicates several elements, skipping locked ones', () => {
+    const locked = updateElement(d, 'b', { locked: true });
+    const moved = moveElements(locked, ['a', 'b'], 10, 5);
+    expect(moved.elements.map((e) => [e.x, e.y])).toEqual([[110, 105], [400, 300], [900, 500]]);
+    expect(removeElements(locked, ['a', 'b']).elements.map((e) => e.id)).toEqual(['b', 'c']);
+    const dup = duplicateElements(d, ['a', 'c']);
+    expect(dup.doc.elements).toHaveLength(5);
+    expect(dup.ids).toHaveLength(2);
+  });
+
+  it('aligns a single element to the page and several to their bounds', () => {
+    expect(alignElements(d, ['a'], 'right').elements[0].x).toBe(900);
+    const left = alignElements(d, ['a', 'b', 'c'], 'left');
+    expect(left.elements.map((e) => e.x)).toEqual([100, 100, 100]);
+    const middle = alignElements(d, ['a', 'b'], 'vcenter');
+    expect(middle.elements.map((e) => e.y + e.height / 2)).toEqual([225, 225, 525]);
+  });
+
+  it('distributes with equal gaps', () => {
+    const out = distributeElements(d, ['a', 'b', 'c'], 'x');
+    const [ea, eb, ec] = out.elements;
+    expect(eb.x - (ea.x + ea.width)).toBeCloseTo(ec.x - (eb.x + eb.width), 0);
+    expect(ea.x).toBe(100);
+    expect(ec.x).toBe(900);
+  });
+});
+
+describe('gradientLine', () => {
+  it('spans the box along the angle', () => {
+    expect(gradientLine(200, 100, 0)).toEqual([{ x: 0, y: 50 }, { x: 200, y: 50 }]);
+    const [a, b] = gradientLine(200, 100, 90);
+    expect(a.y).toBeCloseTo(0);
+    expect(b.y).toBeCloseTo(100);
   });
 });

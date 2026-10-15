@@ -1,19 +1,11 @@
 import { uid } from '../lib/id';
-import type { AudioClip, Clip, ClipFilters, MediaAsset, TextOverlay, VideoProject } from './types';
+import { NEUTRAL_FILTERS } from '../lib/filters';
+import type { AudioClip, Clip, MediaAsset, TextOverlay, TransitionType, VideoProject } from './types';
 
 export const DEFAULT_IMAGE_SECONDS = 3;
 export const MIN_CLIP_SECONDS = 0.1;
 
-export const NEUTRAL_FILTERS: ClipFilters = { brightness: 1, contrast: 1, saturation: 1, blur: 0, grayscale: 0 };
-
-export const FILTER_PRESETS: { label: string; filters: ClipFilters }[] = [
-  { label: 'Original', filters: NEUTRAL_FILTERS },
-  { label: 'Vivid', filters: { ...NEUTRAL_FILTERS, contrast: 1.15, saturation: 1.5 } },
-  { label: 'Warm', filters: { ...NEUTRAL_FILTERS, brightness: 1.05, saturation: 1.2, contrast: 1.05 } },
-  { label: 'Mono', filters: { ...NEUTRAL_FILTERS, grayscale: 1, contrast: 1.1 } },
-  { label: 'Fade', filters: { ...NEUTRAL_FILTERS, contrast: 0.8, saturation: 0.7, brightness: 1.1 } },
-  { label: 'Dream', filters: { ...NEUTRAL_FILTERS, blur: 1.5, brightness: 1.1, saturation: 1.2 } },
-];
+export { cssFilter, FILTER_PRESETS, NEUTRAL_FILTERS } from '../lib/filters';
 
 export const ASPECTS = [
   { label: '16:9 Landscape', width: 1280, height: 720 },
@@ -116,7 +108,7 @@ export function splitClips(clips: Clip[], t: number): Clip[] {
   const { clip, index, sourceTime } = hit;
   if (sourceTime - clip.in < MIN_CLIP_SECONDS || clip.out - sourceTime < MIN_CLIP_SECONDS) return clips;
   const left: Clip = { ...clip, out: sourceTime, fadeOut: 0 };
-  const right: Clip = { ...clip, id: uid('clip'), in: sourceTime, fadeIn: 0 };
+  const right: Clip = { ...clip, id: uid('clip'), in: sourceTime, fadeIn: 0, transition: undefined };
   return [...clips.slice(0, index), left, right, ...clips.slice(index + 1)];
 }
 
@@ -168,17 +160,6 @@ export function fadeOpacity(clip: Clip, local: number): number {
   return Math.max(0, Math.min(1, a));
 }
 
-export function cssFilter(f: ClipFilters): string {
-  const parts = [
-    f.brightness !== 1 && `brightness(${f.brightness})`,
-    f.contrast !== 1 && `contrast(${f.contrast})`,
-    f.saturation !== 1 && `saturate(${f.saturation})`,
-    f.blur > 0 && `blur(${f.blur}px)`,
-    f.grayscale > 0 && `grayscale(${f.grayscale})`,
-  ].filter(Boolean);
-  return parts.length ? parts.join(' ') : 'none';
-}
-
 export function textsAt(texts: TextOverlay[], t: number): TextOverlay[] {
   return texts.filter((o) => t >= o.start && t < o.start + o.duration);
 }
@@ -202,4 +183,61 @@ export function textAnimation(o: TextOverlay, t: number): { alpha: number; scale
     default:
       return { alpha: 1, scale: 1, dy: 0 };
   }
+}
+
+export const PEAKS_PER_SECOND = 20;
+
+export const TRANSITIONS: { type: TransitionType; label: string }[] = [
+  { type: 'fade', label: 'Crossfade' },
+  { type: 'black', label: 'Dip to black' },
+  { type: 'slide', label: 'Slide' },
+  { type: 'zoom', label: 'Zoom' },
+  { type: 'wipe', label: 'Wipe' },
+];
+
+/** Longest transition a clip allows (half its length, at most 2s). */
+export function maxTransition(clip: Clip): number {
+  return Math.max(0.1, Math.min(2, clipDuration(clip) / 2));
+}
+
+/** If time `t` is inside the transition into a placed clip, its type and eased 0..1 progress. */
+export function transitionAt(placed: PlacedClip, t: number): { type: TransitionType; progress: number } | null {
+  const tr = placed.clip.transition;
+  if (!tr || placed.index === 0 || tr.duration <= 0) return null;
+  const local = t - placed.start;
+  if (local < 0 || local >= tr.duration) return null;
+  const x = local / tr.duration;
+  return { type: tr.type, progress: x * x * (3 - 2 * x) };
+}
+
+/** Reduce raw samples to `perSecond` loudness values in 0..1 (normalised to the loudest). */
+export function computePeaks(samples: Float32Array, sampleRate: number, perSecond = PEAKS_PER_SECOND): number[] {
+  const bucket = Math.max(1, Math.floor(sampleRate / perSecond));
+  const peaks: number[] = [];
+  for (let i = 0; i < samples.length; i += bucket) {
+    let max = 0;
+    const end = Math.min(samples.length, i + bucket);
+    for (let j = i; j < end; j++) {
+      const v = Math.abs(samples[j]);
+      if (v > max) max = v;
+    }
+    peaks.push(max);
+  }
+  const loudest = Math.max(...peaks, 1e-6);
+  return peaks.map((p) => Math.round((p / loudest) * 100) / 100);
+}
+
+/** Give each item a row so overlapping items don't cover each other (first free row wins). */
+export function assignLanes<T>(items: T[], start: (item: T) => number, end: (item: T) => number): number[] {
+  const order = items.map((_, i) => i).sort((a, b) => start(items[a]) - start(items[b]));
+  const laneEnds: number[] = [];
+  const lanes = new Array<number>(items.length);
+  for (const i of order) {
+    const s = start(items[i]);
+    let lane = laneEnds.findIndex((e) => e <= s + 1e-6);
+    if (lane < 0) lane = laneEnds.length;
+    laneEnds[lane] = end(items[i]);
+    lanes[i] = lane;
+  }
+  return lanes;
 }

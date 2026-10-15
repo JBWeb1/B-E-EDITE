@@ -1,8 +1,11 @@
 import { useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { formatTime } from '../lib/download';
-import { clipDuration, dropIndex, layoutClips, moveItem, projectDuration, trimEnd, trimStart } from './timeline';
+import { assignLanes, clipDuration, dropIndex, layoutClips, moveItem, PEAKS_PER_SECOND, projectDuration, trimEnd, trimStart } from './timeline';
 import type { AudioClip, Clip, TextOverlay, VideoProject } from './types';
+
+/** Height of one row in the text and audio tracks. */
+const LANE = 34;
 
 export type Selection = { kind: 'clip' | 'text' | 'audio'; id: string } | null;
 
@@ -19,6 +22,8 @@ interface Props {
   onChange: (fn: (p: VideoProject) => VideoProject) => void;
   /** Discrete, undoable change. */
   onCommit: (fn: (p: VideoProject) => VideoProject) => void;
+  /** The transition button between two clips was clicked (id of the incoming clip). */
+  onTransitionClick: (clipId: string) => void;
 }
 
 type Drag =
@@ -30,7 +35,7 @@ type Drag =
   | { kind: 'trim-audio'; edge: 'start' | 'end'; item: AudioClip; startX: number }
   | { kind: 'scrub' };
 
-export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBegin, onChange, onCommit }: Props) {
+export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBegin, onChange, onCommit, onTransitionClick }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
@@ -39,6 +44,9 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
   const width = Math.max(duration + 10, 30) * pps;
   const placed = layoutClips(project.clips);
   const assetOf = (id: string) => project.assets.find((a) => a.id === id);
+  const textLanes = assignLanes(project.texts, (o) => o.start, (o) => o.start + o.duration);
+  const audioLanes = assignLanes(project.audio, (a) => a.start, (a) => a.start + a.out - a.in);
+  const laneHeight = (count: number) => Math.max(1, count) * LANE;
 
   const timeAt = (clientX: number) => {
     const rect = innerRef.current!.getBoundingClientRect();
@@ -143,13 +151,13 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
           ))}
         </div>
 
-        <div className="track text-track">
+        <div className="track text-track" style={{ height: laneHeight(Math.max(0, ...textLanes) + 1) }}>
           <span className="track-label">Text</span>
           {project.texts.map((o) => (
             <div
               key={o.id}
               className={`item text-item ${selection?.id === o.id ? 'selected' : ''}`}
-              style={{ left: o.start * pps, width: o.duration * pps }}
+              style={{ left: o.start * pps, width: o.duration * pps, top: textLanes[project.texts.indexOf(o)] * LANE, height: LANE - 4, bottom: 'auto' }}
               onPointerDown={(e) => begin(e, { kind: 'move-text', item: o, startX: e.clientX }, { kind: 'text', id: o.id })}
             >
               <span className="item-label">T {o.text}</span>
@@ -197,19 +205,31 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
               </div>
             );
           })}
+          {placed.slice(1).map(({ clip, start }) => (
+            <button
+              key={`tr-${clip.id}`}
+              className={`transition-chip ${clip.transition ? 'on' : ''}`}
+              style={{ left: start * pps }}
+              title={clip.transition ? 'Edit transition' : 'Add a transition'}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => onTransitionClick(clip.id)}
+            >
+              ⇄
+            </button>
+          ))}
           {dropAt !== null && (
             <div className="drop-marker" style={{ left: (placed[dropAt]?.start ?? duration) * pps }} />
           )}
           {project.clips.length === 0 && <span className="track-empty">Import media and it will appear here</span>}
         </div>
 
-        <div className="track audio-track">
+        <div className="track audio-track" style={{ height: laneHeight(Math.max(0, ...audioLanes) + 1) }}>
           <span className="track-label">Audio</span>
           {project.audio.map((a) => (
             <div
               key={a.id}
               className={`item audio-item ${selection?.id === a.id ? 'selected' : ''}`}
-              style={{ left: a.start * pps, width: (a.out - a.in) * pps }}
+              style={{ left: a.start * pps, width: (a.out - a.in) * pps, top: audioLanes[project.audio.indexOf(a)] * LANE, height: LANE - 4, bottom: 'auto' }}
               onPointerDown={(e) => begin(e, { kind: 'move-audio', item: a, startX: e.clientX }, { kind: 'audio', id: a.id })}
             >
               <span
@@ -218,6 +238,7 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
                   begin(e, { kind: 'trim-audio', edge: 'start', item: a, startX: e.clientX }, { kind: 'audio', id: a.id })
                 }
               />
+              <Waveform peaks={assetOf(a.assetId)?.peaks} from={a.in} to={a.out} />
               <span className="item-label">♪ {assetOf(a.assetId)?.name}</span>
               <span
                 className="edge end"
@@ -232,5 +253,18 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
         <div className="playhead" style={{ left: time * pps }} />
       </div>
     </div>
+  );
+}
+
+/** Bars showing loudness for the visible part [from, to] (seconds) of an audio file. */
+function Waveform({ peaks, from, to }: { peaks?: number[]; from: number; to: number }) {
+  if (!peaks?.length) return null;
+  const slice = peaks.slice(Math.floor(from * PEAKS_PER_SECOND), Math.ceil(to * PEAKS_PER_SECOND));
+  if (slice.length === 0) return null;
+  const d = slice.map((p, i) => `M${i + 0.5} ${50 - p * 48}V${50 + p * 48}`).join('');
+  return (
+    <svg className="waveform" viewBox={`0 0 ${slice.length} 100`} preserveAspectRatio="none" aria-hidden>
+      <path d={d} stroke="#a7f3d0" strokeWidth="0.6" vectorEffect="non-scaling-stroke" />
+    </svg>
   );
 }
