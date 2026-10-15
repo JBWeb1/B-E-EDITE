@@ -144,7 +144,7 @@ button.primary,
   background: var(--grad);
   background-size: 140% 140%;
   border-color: transparent;
-  color: #fff;
+  color: var(--on-accent, #fff);
   font-weight: 600;
   box-shadow: 0 4px 14px rgba(139, 92, 246, 0.3);
 }
@@ -717,6 +717,7 @@ kbd {
   display: flex;
   flex-direction: column;
   height: 100%;
+  color: var(--text);
   background: var(--bg);
 }
 
@@ -2076,8 +2077,9 @@ kbd {
   background: var(--bg);
 }
 
-.editor.cc .primary {
-  box-shadow: 0 4px 14px rgba(0, 200, 210, 0.25);
+.editor.cc .primary,
+.editor.cc .primary:hover:not(:disabled) {
+  box-shadow: 0 4px 14px var(--accent-soft);
 }
 
 .editor.cc .workspace {
@@ -2089,7 +2091,7 @@ kbd {
 
 .editor.cc .panel {
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--panel-radius, 8px);
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -2639,8 +2641,12 @@ kbd {
 }
 
 .editor.cc .clip-item {
-  background-color: #1d3b41;
-  box-shadow: inset 0 0 0 1px rgba(0, 200, 210, 0.35);
+  background-color: var(--clip-main, #1d3b41);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.editor.cc .overlay-item {
+  background-color: var(--clip-overlay, #b45309);
 }
 
 .clip-meta {
@@ -2673,28 +2679,25 @@ kbd {
 }
 
 .editor.cc .text-item {
-  background: linear-gradient(180deg, #b7791f, #975a16);
+  background: var(--clip-text, #a16207);
 }
 
 .effect-item {
-  background: linear-gradient(180deg, #7c3aed, #6d28d9);
+  background: var(--clip-fx, #6d28d9);
 }
 
 .editor.cc .audio-item {
-  background: linear-gradient(180deg, #0f766e, #115e59);
+  background: var(--clip-audio, #115e59);
 }
 
-.editor.cc .playhead {
-  background: #fff;
-}
-
+.editor.cc .playhead,
 .editor.cc .playhead::before {
-  background: #fff;
+  background: var(--playhead, #fff);
 }
 
 .editor.cc .transition-chip.on {
   background: var(--accent);
-  color: #001b1d;
+  color: var(--on-accent, #001b1d);
 }
 
 @media (max-width: 1100px) {
@@ -2794,5 +2797,288 @@ kbd {
   }
   .page-head {
     display: none;
+  }
+}
+
+/* =========================================================
+   Editor look: layout options and the settings dialog
+   ========================================================= */
+
+.editor.cc .cc-player,
+.editor.cc .page-strip {
+  border-radius: var(--panel-radius, 8px);
+}
+
+.editor.cc .cc-toolbar {
+  border-radius: var(--panel-radius, 8px) var(--panel-radius, 8px) 0 0;
+}
+
+.editor.cc .timeline {
+  border-radius: 0 0 var(--panel-radius, 8px) var(--panel-radius, 8px);
+}
+
+/* Library on the right: details move to the left. */
+.editor[data-library='right'] .cc-library {
+  order: 3;
+}
+.editor[data-library='right'] .cc-details {
+  order: 1;
+}
+.editor[data-library='right'] .preview-area,
+.editor[data-library='right'] .stage-column {
+  order: 2;
+}
+
+.editor[data-timeline='small'] .timeline {
+  height: 170px;
+  min-height: 170px;
+}
+.editor[data-timeline='large'] .timeline {
+  height: 320px;
+  min-height: 320px;
+  max-height: 440px;
+}
+.editor[data-timeline='large'] .track.main-track {
+  height: 80px;
+}
+
+/* Compact: denser like pro editors. */
+.editor[data-density='compact'] {
+  font-size: 12.5px;
+}
+.editor[data-density='compact'] .topbar {
+  min-height: 44px;
+}
+.editor[data-density='compact'] .workspace {
+  gap: 2px;
+  padding: 2px 2px 0;
+}
+.editor[data-density='compact'] .cc-tabs button {
+  padding: 4px 3px 5px;
+  font-size: 10.5px;
+}
+.editor[data-density='compact'] .cc-library-body,
+.editor[data-density='compact'] .cc-details-body {
+  padding: 8px 10px;
+}
+.editor[data-density='compact'] .cc-panel-head {
+  height: 28px;
+}
+.editor[data-density='compact'] .cc-toolbar {
+  height: 34px;
+  margin: 2px 2px 0;
+}
+.editor[data-density='compact'] .timeline {
+  margin: 0 2px 2px;
+}
+.editor[data-density='compact'] button {
+  min-height: 30px;
+}
+
+/* Light templates: keep the canvas / player area dark-free where it helps. */
+.editor[data-light] .topbar,
+.editor[data-light] .panel,
+.editor[data-light] .cc-player,
+.editor[data-light] .cc-toolbar,
+.editor[data-light] .timeline,
+.editor[data-light] .page-strip {
+  box-shadow: 0 1px 2px rgba(15, 20, 30, 0.06);
+}
+.editor.design[data-light] .stage {
+  background-color: #e6e8ed;
+  background-image: radial-gradient(rgba(0, 0, 0, 0.07) 1px, transparent 1px);
+}
+.editor[data-light] .text-style {
+  background: #1b1b1f !important;
+}
+.editor[data-light] .item {
+  color: #fff;
+}
+.editor[data-light] .logo {
+  filter: invert(1);
+}
+.editor[data-light] .modal-backdrop {
+  background: rgba(20, 24, 33, 0.35);
+}
+
+/* Settings dialog */
+
+.look-modal {
+  width: min(720px, calc(100% - 32px));
+}
+
+.look-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.look-head h3 {
+  margin: 0;
+}
+
+.look-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 12px 0 6px;
+}
+
+.look-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 8px;
+  text-align: left;
+  background: var(--surface);
+  white-space: normal;
+}
+
+.look-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+
+.look-card strong {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.look-card small {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 11px;
+}
+
+.look-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  height: 84px;
+  padding: 3px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.lp-top {
+  height: 8px;
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 4px;
+}
+
+.lp-top span {
+  width: 16px;
+  border-radius: 2px;
+}
+
+.lp-main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1.6fr 0.9fr;
+  gap: 3px;
+}
+
+.lp-player {
+  display: grid;
+  place-items: center;
+}
+
+.lp-player span {
+  width: 74%;
+  height: 70%;
+}
+
+.lp-timeline {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 2px 4px;
+}
+
+.lp-timeline span {
+  height: 4px;
+  border-radius: 1px;
+}
+
+.lp-timeline i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 38%;
+  width: 1px;
+}
+
+.look-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.look-option > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.look-option .segmented {
+  width: 260px;
+  margin: 3px 0;
+}
+
+.look-accents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.look-accents .swatch {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 50%;
+}
+
+.look-accents .swatch.active {
+  box-shadow: 0 0 0 2px var(--surface-2), 0 0 0 4px var(--text);
+}
+
+.custom-swatch {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: conic-gradient(#ef4444, #f59e0b, #22c55e, #06b6d4, #3b82f6, #a855f7, #ef4444);
+  cursor: pointer;
+}
+
+.custom-swatch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.look-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+@media (max-width: 760px) {
+  .look-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .look-option {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  .look-option .segmented {
+    width: 100%;
   }
 }

@@ -10,6 +10,8 @@ import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { removeBackgroundFromImage } from '../lib/bgremove';
 import { FilterSliders } from '../ui/FilterSliders';
 import { FirstRunTips, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
+import { LookSettings } from '../ui/LookSettings';
+import { alpha, lookAttributes, lookStyle, templateById, useLook } from '../lib/look';
 import { Icon } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
 import { Menu, MenuItem } from '../ui/Menu';
@@ -167,6 +169,10 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [menu, setMenu] = useState<Point | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showLook, setShowLook] = useState(false);
+  const look = useLook();
+  // Selection outlines follow the editor's highlight colour.
+  const selectColor = look.accent ?? templateById(look.template).palette.accent;
   const [tab, setTab] = useState<Tab>('templates');
   const [zoomOverride, setZoomOverride] = useState<number | null>(null);
   const [fitZoom, setFitZoom] = useState(0.5);
@@ -299,7 +305,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
         ctx.save();
         ctx.translate(c.x, c.y);
         ctx.rotate((el.rotation * Math.PI) / 180);
-        ctx.strokeStyle = el.locked ? '#9ca3af' : '#00c8d2';
+        ctx.strokeStyle = el.locked ? '#9ca3af' : selectColor;
         ctx.lineWidth = (selected ? 2 : 1.5) * px;
         ctx.strokeRect(-el.width / 2, -el.height / 2, el.width, el.height);
         ctx.restore();
@@ -308,7 +314,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
         const b = boundsOf(selectedEls)!;
         ctx.save();
         ctx.setLineDash([6 * px, 4 * px]);
-        ctx.strokeStyle = '#00c8d2';
+        ctx.strokeStyle = selectColor;
         ctx.lineWidth = px;
         ctx.strokeRect(b.x, b.y, b.width, b.height);
         ctx.restore();
@@ -316,7 +322,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       if (selected && !selected.locked) {
         const size = 10 * px;
         ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#00c8d2';
+        ctx.strokeStyle = selectColor;
         ctx.lineWidth = 1.5 * px;
         for (const h of visibleHandles(selected)) {
           const p = handlePosition(selected, h);
@@ -331,8 +337,8 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       }
     }
     if (marquee) {
-      ctx.fillStyle = 'rgba(0, 200, 210, 0.1)';
-      ctx.strokeStyle = '#00c8d2';
+      ctx.fillStyle = alpha(selectColor, 0.1);
+      ctx.strokeStyle = selectColor;
       ctx.lineWidth = px;
       ctx.fillRect(marquee.x, marquee.y, marquee.width, marquee.height);
       ctx.strokeRect(marquee.x, marquee.y, marquee.width, marquee.height);
@@ -351,7 +357,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       ctx.stroke();
     }
     // selectedEls/selected are derived from doc + selectedIds, which are listed.
-  }, [doc, zoom, selectedIds, editingId, guides, marquee, images, imageVersion, previewTime]);
+  }, [doc, zoom, selectedIds, editingId, guides, marquee, images, imageVersion, previewTime, selectColor]);
 
   const toDoc = (e: { clientX: number; clientY: number }): Point => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -722,7 +728,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   };
 
   return (
-    <div className="editor design cc">
+    <div className="editor design cc" style={lookStyle(look)} {...lookAttributes(look)}>
       <header className="topbar">
         <div className="topbar-group">
           <button className="brand-btn" onClick={onExit} title="Back to home" aria-label="Home">
@@ -749,6 +755,9 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
           />
         </div>
         <div className="topbar-group end">
+          <button className="icon-btn" onClick={() => setShowLook(true)} title="Editor look: themes and layout" aria-label="Editor look">
+            <Icon name="palette" />
+          </button>
           <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="help" />
           </button>
@@ -1320,6 +1329,8 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
           )}
         </div>
       )}
+
+      {showLook && <LookSettings onClose={() => setShowLook(false)} />}
 
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
       {presenting !== null && <Presenter file={file} startPage={presenting} onClose={() => setPresenting(null)} />}

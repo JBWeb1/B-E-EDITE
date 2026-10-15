@@ -9,6 +9,8 @@ import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { FilterSliders } from '../ui/FilterSliders';
 import { FirstRunTips, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import type { Shortcut } from '../ui/Help';
+import { LookSettings } from '../ui/LookSettings';
+import { lookAttributes, lookStyle, useLook } from '../lib/look';
 import { Icon } from '../ui/Icon';
 import type { IconName } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
@@ -161,6 +163,8 @@ export function VideoEditor({
   const [importing, setImporting] = useState(0);
   const [exportProgress, setExportProgress] = useState<number | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showLook, setShowLook] = useState(false);
+  const look = useLook();
   const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
   const [exportDialog, setExportDialog] = useState(false);
   const [exportOpts, setExportOpts] = useState<ExportOptions>({ fps: 30, bitrate: 8_000_000 });
@@ -829,6 +833,8 @@ export function VideoEditor({
   return (
     <div
       className="editor video cc"
+      style={lookStyle(look)}
+      {...lookAttributes(look)}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
@@ -863,6 +869,9 @@ export function VideoEditor({
           />
         </div>
         <div className="topbar-group end">
+          <button className="icon-btn" onClick={() => setShowLook(true)} title="Editor look: themes and layout" aria-label="Editor look">
+            <Icon name="palette" />
+          </button>
           <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="help" />
           </button>
@@ -1155,6 +1164,8 @@ export function VideoEditor({
         onCommit={set}
         onTransitionClick={onTransitionClick}
       />
+
+      {showLook && <LookSettings onClose={() => setShowLook(false)} />}
 
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
 

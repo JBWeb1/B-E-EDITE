@@ -52,6 +52,7 @@ npm run test:e2e   # full browser test against the preview (needs `npx playwrigh
 ## Features
 
 ### ✨ Look & feel
+- **Editor look setting** (🎨 palette button in either editor): one-click templates styled after popular editing apps — B-E Motion, CapCut style, Premiere Pro style, DaVinci Resolve style, Final Cut style and a light Canva style. Then fine-tune: library panel left or right, small/medium/large timeline, rounded or square corners, roomy or compact spacing, and any highlight colour. Saved on your device and used in both editors. (The templates only borrow a colour scheme and layout feel; B-E Motion isn't affiliated with those apps.)
 - Clean dark interface with an icon set, gradient accents, and smooth hover/focus states
 - Tidy top bar: every export option lives in one **Download** menu
 - Works on phones: panels stack, and tapping the open tab again folds the side panel away

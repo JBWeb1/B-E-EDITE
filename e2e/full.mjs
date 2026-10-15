@@ -346,6 +346,24 @@ await page.keyboard.press('Control+z');
 await page.getByRole('button', { name: 'Mute Main' }).click();
 check('mute main track', (await page.locator('.main-track.muted').count()) === 1);
 await page.keyboard.press('Control+z');
+// Editor look: templates and layout options, saved across reloads
+await page.getByRole('button', { name: 'Editor look' }).click();
+await page.getByRole('button', { name: 'Premiere Pro style', exact: true }).click();
+check('look template applies', (await page.locator('.editor[data-density="compact"][data-timeline="large"]').count()) === 1);
+await page.getByRole('group', { name: 'Library panel' }).getByRole('button', { name: 'Right', exact: true }).click();
+check('library side option', (await page.locator('.editor[data-library="right"]').count()) === 1);
+await page.keyboard.press('Escape');
+check('Esc closes look dialog', (await page.locator('.look-modal').count()) === 0);
+await page.reload();
+await page.locator('.project-card').first().waitFor().catch(() => {});
+const lookSaved = await page.evaluate(() => JSON.parse(localStorage.getItem('bee.look') ?? '{}'));
+check('look is saved', lookSaved.template === 'premiere' && lookSaved.library === 'right');
+await page.locator('.project-card', { hasText: 'VIDEO' }).locator('.home-card').click();
+await page.locator('.clip-item').first().waitFor();
+check('look applies after reload', (await page.locator('.editor[data-library="right"][data-density="compact"]').count()) === 1);
+await page.getByRole('button', { name: 'Editor look' }).click();
+await page.getByRole('button', { name: 'CapCut style', exact: true }).click();
+await page.getByRole('button', { name: 'Done' }).click();
 await page.screenshot({ path: process.env.SHOT ?? path.join(OUT, 'video.png') });
 
 // Home: delete a project
