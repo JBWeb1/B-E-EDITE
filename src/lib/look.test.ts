@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alpha, DEFAULT_TEMPLATE, isCustomized, LOOK_TEMPLATES, lookAttributes, lookFromTemplate, lookStyle, luminance, mix, parseLook } from './look';
+import { alpha, DEFAULT_TEMPLATE, normalizeLook, isCustomized, LOOK_TEMPLATES, lookAttributes, lookFromTemplate, lookStyle, luminance, mix, parseLook } from './look';
 
 describe('editor look', () => {
   it('templates have unique ids and valid colours', () => {
@@ -48,8 +48,13 @@ describe('editor look', () => {
   });
 
   it('exposes layout options as data attributes', () => {
-    expect(lookAttributes({ ...lookFromTemplate('canva'), library: 'right' })).toEqual({ 'data-library': 'right', 'data-timeline': 'medium', 'data-density': 'comfortable', 'data-light': 'true' });
+    expect(lookAttributes({ ...lookFromTemplate('canva'), library: 'right' })).toEqual({ 'data-library': 'right', 'data-timeline': 'medium', 'data-density': 'comfortable', 'data-corners': 'round', 'data-light': 'true' });
     expect(lookAttributes(lookFromTemplate('capcut'))['data-light']).toBeUndefined();
+  });
+
+  it('treats the template colour as no custom accent', () => {
+    expect(normalizeLook({ ...lookFromTemplate('capcut'), accent: '#00C8D2' }).accent).toBeNull();
+    expect(normalizeLook({ ...lookFromTemplate('capcut'), accent: '#ef4444' }).accent).toBe('#ef4444');
   });
 
   it('colour helpers', () => {

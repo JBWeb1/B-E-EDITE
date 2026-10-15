@@ -2817,16 +2817,40 @@ kbd {
   border-radius: 0 0 var(--panel-radius, 8px) var(--panel-radius, 8px);
 }
 
-/* Library on the right: details move to the left. */
-.editor[data-library='right'] .cc-library {
-  order: 3;
+/* Library on the right: details move to the left. Phones keep the stacked order. */
+@media (min-width: 761px) {
+  .editor[data-library='right'] .cc-library {
+    order: 3;
+  }
+  .editor[data-library='right'] .cc-details {
+    order: 1;
+  }
+  .editor[data-library='right'] .preview-area,
+  .editor[data-library='right'] .stage-column {
+    order: 2;
+  }
 }
-.editor[data-library='right'] .cc-details {
-  order: 1;
+
+/* Square corners everywhere, except things that are meant to be circles. */
+.editor[data-corners='square'] :is(button, .button, input, select, textarea, .item, .card, .asset, .asset img, .fx-thumb, .sfx-row, .page-thumb, .page-thumb img, .segmented, .zoom, .modal, .look-card, .look-preview, .library-empty, .tips, .menu-panel, .context-menu, .clip-name, .clip-len, .asset-dur, .preview, .artboard):not(.play-btn, .sfx-play, .look-accents .swatch, .custom-swatch, input[type='range'], input[type='color']) {
+  border-radius: 2px !important;
 }
-.editor[data-library='right'] .preview-area,
-.editor[data-library='right'] .stage-column {
-  order: 2;
+.editor[data-corners='square'] .cc-tabs button {
+  border-radius: 0 !important;
+}
+
+/* The design editor's page strip follows the timeline size. */
+.editor[data-timeline='small'] :is(.page-thumb, .page-add) {
+  height: 44px;
+}
+.editor[data-timeline='small'] .page-head {
+  height: 44px;
+}
+.editor[data-timeline='large'] :is(.page-thumb, .page-add) {
+  height: 90px;
+}
+.editor[data-timeline='large'] .page-head {
+  height: 90px;
 }
 
 .editor[data-timeline='small'] .timeline {
@@ -3080,5 +3104,23 @@ kbd {
   }
   .look-option .segmented {
     width: 100%;
+  }
+}
+
+/* Phones: page actions go under the thumbnails, and thumbnails stay small. */
+@media (max-width: 760px) {
+  .design .page-strip {
+    flex-wrap: wrap;
+    padding: 8px;
+  }
+  .design .page-list {
+    flex: 1 1 100%;
+  }
+  .design .page-actions {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
+  .editor[data-timeline] :is(.page-thumb, .page-add) {
+    height: 52px;
   }
 }

@@ -243,6 +243,7 @@ export function lookAttributes(look: Look) {
     'data-library': look.library,
     'data-timeline': look.timeline,
     'data-density': look.density,
+    'data-corners': look.corners,
     'data-light': templateById(look.template).palette.light ? 'true' : undefined,
   };
 }
@@ -266,7 +267,14 @@ function read(): Look {
   return current;
 }
 
+/** A custom accent equal to the template's own colour is no custom accent at all. */
+export function normalizeLook(look: Look): Look {
+  const own = templateById(look.template).palette.accent;
+  return look.accent && look.accent.toLowerCase() === own.toLowerCase() ? { ...look, accent: null } : look;
+}
+
 export function setLook(next: Look) {
+  next = normalizeLook(next);
   current = next;
   try {
     localStorage.setItem(KEY, JSON.stringify(next));

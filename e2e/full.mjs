@@ -361,6 +361,59 @@ check('look is saved', lookSaved.template === 'premiere' && lookSaved.library ==
 await page.locator('.project-card', { hasText: 'VIDEO' }).locator('.home-card').click();
 await page.locator('.clip-item').first().waitFor();
 check('look applies after reload', (await page.locator('.editor[data-library="right"][data-density="compact"]').count()) === 1);
+// Each option, measured on the page
+const lookPick = async (group, name) => {
+  if (!(await page.locator('.look-modal').count())) await page.getByRole('button', { name: 'Editor look' }).click();
+  await page.getByRole('group', { name: group }).getByRole('button', { name, exact: true }).click();
+};
+const lookDone = () => page.getByRole('button', { name: 'Done' }).click();
+const measure = () =>
+  page.evaluate(() => {
+    const box = (s) => document.querySelector(s)?.getBoundingClientRect();
+    const editor = document.querySelector('.editor');
+    return {
+      lib: box('.cc-library').x,
+      det: box('.cc-details').x,
+      timeline: Math.round(box('.timeline').height),
+      btnRadius: getComputedStyle(document.querySelector('.cc-details-body button')).borderTopLeftRadius,
+      font: getComputedStyle(editor).fontSize,
+      accent: getComputedStyle(editor).getPropertyValue('--accent').trim(),
+      exportBg: getComputedStyle(document.querySelector('.topbar .primary')).backgroundImage,
+    };
+  });
+check('library on the right', (await measure()).lib > (await measure()).det);
+await lookPick('Library panel', 'Left');
+check('library on the left', (await measure()).lib < (await measure()).det);
+const sizes = [];
+for (const t of ['Small', 'Medium', 'Large']) {
+  await lookPick('Timeline', t);
+  sizes.push((await measure()).timeline);
+}
+check('timeline small < medium < large', sizes[0] < sizes[1] && sizes[1] < sizes[2], sizes.join(' < '));
+await lookPick('Corners', 'Square');
+check('square corners reach buttons', (await measure()).btnRadius === '2px');
+await lookPick('Corners', 'Rounded');
+check('rounded corners on buttons', (await measure()).btnRadius !== '2px');
+await lookPick('Spacing', 'Roomy');
+const roomyFont = (await measure()).font;
+await lookPick('Spacing', 'Compact');
+check('compact spacing is denser', parseFloat((await measure()).font) < parseFloat(roomyFont));
+await page.getByRole('button', { name: 'Highlight #ef4444' }).click();
+const red = await measure();
+check('highlight colour applies', red.accent === '#ef4444' && red.exportBg.includes('rgb(239, 68, 68)'));
+await page.locator('input[aria-label="Custom highlight colour"]').fill('#12ab34');
+check('custom highlight colour', (await measure()).accent === '#12ab34');
+await page.getByRole('button', { name: 'Highlight #2d8ceb' }).click();
+check('template colour is not a change', (await page.evaluate(() => JSON.parse(localStorage.getItem('bee.look')).accent)) === null);
+const resetBtn = page.getByRole('button', { name: 'Reset to template' });
+check('reset enabled after changes', !(await resetBtn.isDisabled()));
+await resetBtn.click();
+const afterReset = await page.evaluate(() => JSON.parse(localStorage.getItem('bee.look')));
+check(
+  'reset to template',
+  (await resetBtn.isDisabled()) && afterReset.template === 'premiere' && afterReset.library === 'left' && afterReset.timeline === 'large' && afterReset.corners === 'square' && afterReset.accent === null,
+);
+await lookDone();
 await page.getByRole('button', { name: 'Editor look' }).click();
 await page.getByRole('button', { name: 'CapCut style', exact: true }).click();
 await page.getByRole('button', { name: 'Done' }).click();
@@ -385,6 +438,41 @@ await phone.getByRole('button', { name: 'Add a heading' }).click();
 check('phone: add text', (await phone.locator('.layers li button').count()) === 1);
 const overflow = await phone.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
 check('phone: no sideways scrolling', !overflow);
+
+// Editor look in the design editor: selection colour and page strip size
+const dz = await newPage();
+await dz.goto(`${BASE}/?new=design`);
+await dz.locator('.template-card').first().click();
+await dz.getByRole('button', { name: 'Editor look' }).click();
+await dz.getByRole('button', { name: 'Highlight #ef4444' }).click();
+await dz.getByRole('group', { name: 'Timeline' }).getByRole('button', { name: 'Small', exact: true }).click();
+const smallThumb = (await dz.locator('.page-thumb').first().boundingBox()).height;
+await dz.getByRole('group', { name: 'Timeline' }).getByRole('button', { name: 'Large', exact: true }).click();
+const largeThumb = (await dz.locator('.page-thumb').first().boundingBox()).height;
+check('page strip follows timeline size', smallThumb < largeThumb, `${smallThumb} < ${largeThumb}`);
+await dz.getByRole('button', { name: 'Done' }).click();
+await dz.locator('.layers button', { hasText: 'BIG SALE' }).click();
+await dz.waitForTimeout(200);
+const redPixels = await dz.locator('.artboard canvas').evaluate((c) => {
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - 239) < 6 && Math.abs(d[i + 1] - 68) < 6 && Math.abs(d[i + 2] - 68) < 6) n++;
+  return n;
+});
+check('canvas selection uses the highlight colour', redPixels > 200, `${redPixels} px`);
+const dphone = await newPage({ width: 390, height: 844 });
+await dphone.goto(`${BASE}/?new=design`);
+await dphone.getByRole('button', { name: 'Editor look' }).click();
+for (const [g, n] of [['Library panel', 'Right'], ['Timeline', 'Large'], ['Spacing', 'Compact'], ['Corners', 'Square']]) {
+  await dphone.getByRole('group', { name: g }).getByRole('button', { name: n, exact: true }).click();
+}
+await dphone.getByRole('button', { name: 'Done' }).click();
+const phoneLayout = await dphone.evaluate(() => {
+  const y = (s) => document.querySelector(s).getBoundingClientRect().y;
+  const add = document.querySelector('.page-add').getBoundingClientRect();
+  return { stacked: y('.cc-library') < y('.stage-column') && y('.stage-column') < y('.cc-details'), addVisible: add.right <= innerWidth && add.width > 50, overflow: document.documentElement.scrollWidth > innerWidth + 1 };
+});
+check('phone: look options keep the stacked layout', phoneLayout.stacked && phoneLayout.addVisible && !phoneLayout.overflow, JSON.stringify(phoneLayout));
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 const failed = results.filter((r) => !r.ok);
