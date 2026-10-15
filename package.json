@@ -1,8 +1,8 @@
 {
-  "name": "b-e-edite",
+  "name": "b-e-motion",
   "private": true,
   "version": "0.1.0",
-  "description": "B-E-EDITE: an easy browser-based editor for designs (Canva-style) and videos (CapCut-style).",
+  "description": "B-E Motion: an easy browser-based editor for designs (Canva-style) and videos (CapCut-style).",
   "type": "module",
   "scripts": {
     "dev": "vite",

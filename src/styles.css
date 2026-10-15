@@ -1,5 +1,5 @@
 /* =========================================================
-   B-E-EDITE — dark, clean, violet-accented theme
+   B-E Motion — dark, clean, violet-accented theme
    ========================================================= */
 
 :root {
@@ -400,20 +400,29 @@ kbd {
   align-items: center;
   gap: 10px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  font-size: 17px;
+  letter-spacing: -0.01em;
   margin-bottom: 48px;
 }
 
-.logo-mark {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: var(--grad);
-  color: #fff;
-  font-weight: 800;
-  box-shadow: 0 6px 18px rgba(139, 92, 246, 0.45);
+.logo {
+  display: block;
+  user-select: none;
+}
+
+.brand-btn {
+  height: 34px;
+  min-height: 34px;
+  padding: 0 8px;
+  background: transparent;
+  border-color: transparent;
+  opacity: 0.92;
+}
+
+.brand-btn:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: transparent;
+  opacity: 1;
 }
 
 .home-hero h1 {

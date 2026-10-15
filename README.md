@@ -1,4 +1,6 @@
-# B-E-EDITE
+# B-E Motion
+
+<img src="public/brand/b-e-motion-logo.png" alt="B-E Motion logo" width="320" />
 
 An easy, browser-based creative editor that combines a **Canva-style design editor** and a **CapCut-style video editor**. Everything runs locally in the browser, with no server, no sign-up, and nothing to install.
 

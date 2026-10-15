@@ -7,6 +7,7 @@ import { SIZE_PRESETS, TEMPLATES } from '../design/templates';
 import { deleteProject, listProjects, loadDesignProject, loadVideoProject, newProjectId } from '../lib/projects';
 import type { ProjectSummary } from '../lib/projects';
 import { Icon } from '../ui/Icon';
+import { APP_NAME, Logo } from '../ui/Logo';
 import { ASPECTS } from '../video/timeline';
 
 function timeAgo(ms: number): string {
@@ -58,8 +59,8 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
     <div className="home">
       <header className="home-hero">
         <div className="brand">
-          <span className="logo-mark">B</span>
-          <span>B-E-EDITE</span>
+          <Logo height={30} />
+          <span>{APP_NAME}</span>
         </div>
         <h1>
           Create something <span className="gradient-text">amazing</span>

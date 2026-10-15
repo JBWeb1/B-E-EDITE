@@ -8,6 +8,7 @@ import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { FilterSliders } from '../ui/FilterSliders';
 import { FirstRunTips, ShortcutsDialog } from '../ui/Help';
 import { Icon } from '../ui/Icon';
+import { Logo } from '../ui/Logo';
 import type { Shortcut } from '../ui/Help';
 import { probeMedia, VideoEngine } from './engine';
 import { putMedia, saveVideoProject } from '../lib/projects';
@@ -434,9 +435,10 @@ export function VideoEditor({
     >
       <header className="topbar">
         <div className="topbar-group">
-          <button className="icon-btn" onClick={onExit} title="Back to home" aria-label="Home">
-            <Icon name="home" />
+          <button className="brand-btn" onClick={onExit} title="Back to home" aria-label="Home">
+            <Logo height={17} />
           </button>
+          <span className="divider" />
           <input
             className="title-input"
             value={project.name}
