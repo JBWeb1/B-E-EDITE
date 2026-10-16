@@ -897,6 +897,46 @@ export class VideoEngine {
     ctx.restore();
   }
 
+  /**
+   * Draw the frame at `t` once every video has finished seeking there, and return the
+   * canvas (for analysing a video: pre-flight checks, best-frame picking).
+   */
+  async renderAt(t: number): Promise<HTMLCanvasElement> {
+    // Only the videos on screen at `t` matter (the main clip and any layers).
+    const p = this.project;
+    const all: HTMLVideoElement[] = [];
+    if (p) {
+      const hit = locate(p.clips, t);
+      const main = hit && this.videos.get(hit.clip.assetId);
+      if (main) all.push(main);
+      for (const o of p.overlays) {
+        const v = this.overlayVideos.get(o.id);
+        if (v && t >= o.start && t < o.start + o.out - o.in) all.push(v);
+      }
+    }
+    // Wait until each one has the frame at its new position (or give up after 1.5 s).
+    const ready = (v: HTMLVideoElement) =>
+      new Promise<void>((resolve) => {
+        const events = ['seeked', 'loadeddata', 'canplay', 'error'];
+        const check = () => {
+          if (v.seeking || v.readyState < 2) return;
+          finish();
+        };
+        const finish = () => {
+          clearTimeout(timer);
+          events.forEach((e) => v.removeEventListener(e, check));
+          resolve();
+        };
+        const timer = setTimeout(finish, 1500);
+        events.forEach((e) => v.addEventListener(e, check));
+        check();
+      });
+    this.seek(t);
+    await Promise.all(all.filter((v) => v.src).map(ready));
+    this.draw();
+    return this.canvas;
+  }
+
   /** PNG of the clip frame at the playhead (without text), for "freeze frame". */
   captureClipFrame(): Promise<Blob | null> {
     this.draw();

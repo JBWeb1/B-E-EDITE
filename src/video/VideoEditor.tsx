@@ -24,6 +24,10 @@ import { TemplateGallery } from './TemplateGallery';
 import { sceneFile, VIDEO_TEMPLATES } from './videoTemplates';
 import type { VideoTemplate } from './videoTemplates';
 import { ExportDialog } from './ExportDialog';
+import { PreflightDialog, SafeZoneOverlay } from './PreflightDialog';
+import { overlap, SAFE_ZONES, textBox } from './preflight';
+import type { FixId, Platform } from './preflight';
+import { defaultPlatform } from './preflightRun';
 import type { VideoExportChoice } from './ExportDialog';
 import { extensionFor, mixSoundtrack } from './export';
 import { LOOKS } from './grade';
@@ -234,6 +238,15 @@ export function VideoEditor({
   const look = useLook();
   const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
   const [exportDialog, setExportDialog] = useState(false);
+  const [preflight, setPreflight] = useState(false);
+  const [platform, setPlatform] = useState<Platform>(() => defaultPlatform(initialProject ?? { width: aspect?.width ?? 16, height: aspect?.height ?? 9 }));
+  const [showZones, setShowZones] = useState(false);
+  // Follow the video's shape: vertical videos default to TikTok, landscape to YouTube.
+  useEffect(() => {
+    const vertical = project.height > project.width;
+    setPlatform((p) => (SAFE_ZONES.find((z) => z.id === p)!.vertical === vertical ? p : defaultPlatform(project)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.width, project.height]);
   const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error' | null>(null);
   const [script, setScript] = useState('');
@@ -384,6 +397,78 @@ export function VideoEditor({
     const clip = createAudioClip(a, at);
     set((p) => ({ ...p, assets: p.assets.some((x) => x.id === a.id) ? p.assets : [...p.assets, a], audio: [...p.audio, clip] }));
     setSelection({ kind: 'audio', id: clip.id });
+  };
+
+  // ---------- Pre-flight fixes ----------
+
+  const applyFix = (fix: FixId, ids: string[]) => {
+    const only = new Set(ids);
+    const zone = SAFE_ZONES.find((z) => z.id === platform)!;
+    switch (fix) {
+      case 'add-hook-title': {
+        const o = createTextOverlay(0, { text: 'WAIT FOR IT 👀', y: 0.3, size: 0.09, duration: 2.5, bold: true, stroke: '#000000', animator: 'rise', animation: 'none' });
+        set((p) => ({ ...p, texts: [...p.texts, o] }));
+        setSelection({ kind: 'text', id: o.id });
+        break;
+      }
+      case 'trim-slow-start': {
+        const cut = Number(ids[0]) || 0;
+        set((p) => {
+          const [first, ...rest] = p.clips;
+          if (!first || clipDuration(first) <= cut + 0.5) return p;
+          return { ...p, clips: [{ ...first, in: first.in + cut * first.speed }, ...rest] };
+        });
+        break;
+      }
+      case 'add-captions':
+        setTab('ai');
+        setPanelOpen(true);
+        break;
+      case 'slow-captions':
+        set((p) => {
+          const starts = [...p.texts].filter((t) => !t.shape && !t.template).map((t) => t.start).sort((a, b) => a - b);
+          // Never past the end of the footage (that would make the video longer).
+          const placedNow = layoutClips(p.clips);
+          const footageEnd = Math.max(placedNow.length ? placedNow[placedNow.length - 1].end : 0, ...p.overlays.map((o) => o.start + o.out - o.in));
+          return {
+            ...p,
+            texts: p.texts.map((t) => {
+              if (!only.has(t.id)) return t;
+              const next = Math.min(starts.find((s) => s > t.start + 0.01) ?? Infinity, footageEnd > t.start ? footageEnd : Infinity);
+              const needed = t.text.replace(/\s+/g, ' ').trim().length / 17;
+              return { ...t, duration: Math.max(t.duration, Math.min(needed, next - t.start)) };
+            }),
+          };
+        });
+        break;
+      case 'bigger-captions':
+        set((p) => ({ ...p, texts: p.texts.map((t) => (only.has(t.id) ? { ...t, size: 0.045 / (t.scale ?? 1) } : t)) }));
+        break;
+      case 'caption-box':
+        set((p) => ({ ...p, texts: p.texts.map((t) => (only.has(t.id) ? { ...t, stroke: '#000000' } : t)) }));
+        break;
+      case 'remove-flashes':
+        set((p) => ({ ...p, effects: p.effects.filter((e) => !only.has(e.id)) }));
+        break;
+      case 'move-into-safe-zone':
+        set((p) => ({
+          ...p,
+          texts: p.texts.map((t) => {
+            if (!only.has(t.id)) return t;
+            let { x, y } = t;
+            // Nudge away from each covered area it overlaps, keeping it on screen.
+            for (let pass = 0; pass < 3; pass++) {
+              const box = textBox({ ...t, x, y }, p.width, p.height);
+              const hit = zone.covered.find((c) => overlap(box, c) > 0.05);
+              if (!hit) break;
+              if (hit.w > 0.5) y = hit.y > 0.5 ? hit.y - box.h / 2 - 0.02 : hit.y + hit.h + box.h / 2 + 0.02;
+              else x = hit.x - box.w / 2 - 0.02 + (t.template?.startsWith('lower-third') ? -box.w / 2 : 0);
+            }
+            return { ...t, x: Math.max(0.05, Math.min(0.95, x)), y: Math.max(0.08, Math.min(0.92, y)) };
+          }),
+        }));
+        break;
+    }
   };
 
   // ---------- Video templates ----------
@@ -1381,6 +1466,9 @@ export function VideoEditor({
           <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="keyboard" />
           </button>
+          <button className="tour-preflight" onClick={() => setPreflight(true)} disabled={duration <= 0 || progress !== null} title="Pre-flight check: hook score, safe zones and accessibility">
+            <Icon name="check" /> <span className="label">Check</span>
+          </button>
           <button className="primary tour-export" onClick={() => setExportDialog(true)} disabled={duration <= 0 || progress !== null}>
             <Icon name="download" /> <span className="label">Export</span>
           </button>
@@ -1426,6 +1514,14 @@ export function VideoEditor({
               onPointerUp={() => (dragRef.current = null)}
             />
             {project.clips.length === 0 && project.texts.length === 0 && project.overlays.length === 0 && <div className="preview-empty">Import a video or photo to get started</div>}
+            {showZones && (
+              <CanvasCover canvasRef={canvasRef}>
+                <SafeZoneOverlay platform={platform} />
+                <button className="safe-zone-close" onClick={() => setShowZones(false)} aria-label="Hide safe zones" title="Hide safe zones">
+                  <Icon name="x" size={14} />
+                </button>
+              </CanvasCover>
+            )}
           </div>
           <div className="cc-player-bar">
             <span className="timecode">
@@ -1671,8 +1767,25 @@ export function VideoEditor({
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
       {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
+      {preflight && (
+        <PreflightDialog
+          project={project}
+          platform={platform}
+          onPlatform={setPlatform}
+          showZones={showZones}
+          onShowZones={setShowZones}
+          onClose={() => setPreflight(false)}
+          onSeek={(t) => {
+            setPreflight(false);
+            seek(t + 0.05);
+          }}
+          onFix={applyFix}
+          onExport={() => (setPreflight(false), setExportDialog(true))}
+        />
+      )}
       {exportDialog && (
         <ExportDialog
+          onPreflight={() => (setExportDialog(false), setPreflight(true))}
           project={project}
           duration={duration}
           onClose={() => setExportDialog(false)}
@@ -2248,5 +2361,29 @@ function TextInspector({
         </>
       )}
     </>
+  );
+}
+
+/** A box laid exactly over the player canvas (for overlays such as safe zones). */
+function CanvasCover({ canvasRef, children }: { canvasRef: React.RefObject<HTMLCanvasElement>; children: ReactNode }) {
+  const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const measure = () => setBox({ left: c.offsetLeft, top: c.offsetTop, width: c.offsetWidth, height: c.offsetHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(c);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [canvasRef]);
+  if (!box) return null;
+  return (
+    <div className="canvas-cover" style={box}>
+      {children}
+    </div>
   );
 }

@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:e2e": "node e2e/full.mjs",
     "test:e2e:pro": "node e2e/pro.mjs",
-    "test:e2e:next": "node e2e/next.mjs"
+    "test:e2e:next": "node e2e/next.mjs",
+    "test:e2e:unique": "node e2e/unique.mjs"
   },
   "dependencies": {
     "react": "18.3.1",

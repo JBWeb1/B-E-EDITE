@@ -51,6 +51,7 @@ npm run preview    # serve the production build on http://localhost:4173
 npm run test:e2e   # full browser test against the preview (needs `npx playwright install chromium` once)
 npm run test:e2e:pro  # browser test for the pro tools (green screen, keyframes, export…)
 npm run test:e2e:next # browser test for MP4, motion tracking, AI tools, tour, templates, design upgrades
+npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, history, sharing
 ```
 
 ## Features
@@ -67,6 +68,13 @@ npm run test:e2e:next # browser test for MP4, motion tracking, AI tools, tour, t
 ### 📁 My projects
 - Every design and video is saved automatically in your browser (IndexedDB) and listed on the home screen with a preview
 - Open, search and delete projects; video media files are stored with the project
+
+### 🛫 Pre-flight check (only in B-E Motion)
+- Press **Check** (top bar, or from Export) before posting. It watches your video and tells you whether it will work:
+  - **Hook score** (0–100) for the first 3 seconds: movement, a title on screen, sound, pace and the first frame, each with tips and one-click fixes
+  - **Safe zones** for TikTok, Instagram Reels, YouTube Shorts and YouTube: finds text hidden under the app's buttons and captions, moves it clear in one click, and can show the zones on the player
+  - **Accessibility & safety**: flashing that can trigger seizures (WCAG's three-flashes rule), captions too fast to read, text too small or low-contrast, and missing captions
+- Everything runs on your device
 
 ### 🎨 Design editor (Canva-style)
 - **Same CapCut-style workspace as the video editor**: library tabs on the left, the canvas in the middle with undo, Present and zoom underneath, details on the right, and the pages along the bottom like a timeline

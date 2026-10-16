@@ -40,6 +40,7 @@ export function ExportDialog({
   onWatermark,
   onLogo,
   onAspect,
+  onPreflight,
 }: {
   project: VideoProject;
   duration: number;
@@ -50,6 +51,7 @@ export function ExportDialog({
   onWatermark: (w: Watermark | null, live?: boolean) => void;
   onLogo: (file: File) => void;
   onAspect: (width: number, height: number) => void;
+  onPreflight?: () => void;
 }) {
   const [short, setShort] = useState(1080);
   const [fps, setFps] = useState<Fps>(30);
@@ -97,6 +99,11 @@ export function ExportDialog({
             <Icon name="x" />
           </button>
         </div>
+        {onPreflight && (
+          <button className="pf-cta" onClick={onPreflight}>
+            <Icon name="check" size={15} /> Run the pre-flight check first <small>hook score · safe zones · accessibility</small>
+          </button>
+        )}
         <p className="hint">
           {formatTime(duration)} · output {size.width} × {size.height} · {fps} fps · about {estimateMB(duration, bitrate).toFixed(1)} MB
         </p>
