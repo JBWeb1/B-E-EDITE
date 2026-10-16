@@ -1,6 +1,8 @@
 import { cssFilter } from '../lib/filters';
 import { makePdf } from '../lib/pdf';
 import { animationAt, animationOrder } from './animate';
+import { elementAtTime } from './motion';
+import { adjustedImage, isNeutralPhoto } from './photo';
 import type { AnimFrame } from './animate';
 import { center, cropRect, gradientLine, wrapText } from './model';
 import { pageDuration, pageView } from './pages';
@@ -191,7 +193,8 @@ function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: I
       }
       ctx.filter = cssFilter(el.filters);
       const r = cropRect(img.naturalWidth, img.naturalHeight, el.crop);
-      ctx.drawImage(img, r.x, r.y, r.width, r.height, el.x, el.y, el.width, el.height);
+      if (isNeutralPhoto(el.photo)) ctx.drawImage(img, r.x, r.y, r.width, r.height, el.x, el.y, el.width, el.height);
+      else ctx.drawImage(adjustedImage(img, el.src, r.x, r.y, r.width, r.height, el.photo!), el.x, el.y, el.width, el.height);
     }
   } else {
     const lines = textLines(ctx, el);
@@ -242,7 +245,7 @@ export function renderDesign(ctx: CanvasRenderingContext2D, doc: DesignDoc, imag
   doc.elements.forEach((el, i) => {
     if (el.id === skipId) return;
     const anim = order && order[i] >= 0 ? animationAt(el.animation, order[i], time!) : undefined;
-    drawElement(ctx, el, images, anim, doc);
+    drawElement(ctx, time === undefined ? el : elementAtTime(el, time, doc), images, anim, doc);
   });
 }
 

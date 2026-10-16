@@ -4252,3 +4252,22 @@ button.link {
 .tour-actions > span {
   flex: 1;
 }
+
+/* ---------- Design keyframes & photo tools ---------- */
+.motion-time {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+.motion-time > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.motion-note {
+  margin: 4px 0 8px;
+}
+.photo-tools h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

@@ -123,10 +123,13 @@ export function KeyframeTools({
   mark,
   onSeekLocal,
   update,
+  motionBlur = true,
 }: {
   item: Animatable;
   local: number;
   length: number;
+  /** Offer the motion blur switch (layers that can draw it). */
+  motionBlur?: boolean;
   base: { x: number; y: number; scale: number; rotation: number; opacity: number };
   mark: () => void;
   onSeekLocal: (t: number) => void;
@@ -177,9 +180,11 @@ export function KeyframeTools({
       </div>
       <h4>Movement</h4>
       <div className="row">
-        <button className={item.motionBlur ? 'active' : ''} onClick={() => update({ motionBlur: !item.motionBlur })} aria-pressed={!!item.motionBlur} title="Smooth, natural blur on fast movement">
-          Motion blur
-        </button>
+        {motionBlur && (
+          <button className={item.motionBlur ? 'active' : ''} onClick={() => update({ motionBlur: !item.motionBlur })} aria-pressed={!!item.motionBlur} title="Smooth, natural blur on fast movement">
+            Motion blur
+          </button>
+        )}
         <button
           className={item.wiggle ? 'active' : ''}
           onClick={() => update({ wiggle: item.wiggle ? null : { amount: 0.5, speed: 2 } })}

@@ -220,6 +220,52 @@ const card = await tour.boundingBox();
 check('phone: tour card fits the screen', card && card.x >= 0 && card.x + card.width <= 390 && card.y >= 0 && card.y + card.height <= 844, JSON.stringify(card));
 await fresh.close();
 
+// ---------- Design editor: keyframes, photo tools, templates
+await page.goto(`${BASE}/?new=design`);
+await page.getByRole('button', { name: /Elements/ }).click();
+await page.getByTitle('rect').click();
+const right = page.locator('.panel.right');
+const art = page.locator('.artboard canvas');
+const artPixel = (fx, fy) =>
+  art.evaluate((c, [x, y]) => Array.from(c.getContext('2d').getImageData(Math.round(x * (c.width - 1)), Math.round(y * (c.height - 1)), 1, 1).data), [fx, fy]);
+const purple = (px) => px[2] > 180 && px[1] < 120;
+check('design element offers keyframes', (await right.getByRole('button', { name: 'Add Left / right keyframe' }).count()) === 1);
+await right.getByRole('button', { name: 'Add Left / right keyframe' }).click();
+const timeSlider = right.locator('.motion-time input[type=range]');
+await timeSlider.fill('2');
+await right.locator('.anim-field', { hasText: 'Left / right' }).locator('input[type=range]').fill('0.8');
+await settle();
+const at2 = [await artPixel(0.8, 0.5), await artPixel(0.5, 0.5)];
+await timeSlider.fill('0');
+await settle();
+const at0 = [await artPixel(0.8, 0.5), await artPixel(0.5, 0.5)];
+check('keyframes move the design element over time', purple(at2[0]) && !purple(at2[1]) && purple(at0[1]) && !purple(at0[0]), `t2 ${at2.map((p) => p.join(',')).join(' / ')}; t0 ${at0.map((p) => p.join(',')).join(' / ')}`);
+await right.getByRole('button', { name: 'Done' }).click();
+await right.locator('.anim-presets button').first().click();
+check('one-click animations work in the design editor', (await right.locator('.anim-field.animated').count()) >= 1);
+await page.getByRole('button', { name: /Uploads/ }).click();
+await page.locator('.panel input[type=file][accept="image/*"]').first().setInputFiles(`${FIX}/greenscreen.png`);
+await right.getByRole('button', { name: 'Golden hour' }).waitFor({ timeout: 10000 });
+const photoBefore = await artPixel(0.5, 0.5);
+await right.getByRole('button', { name: 'Golden hour' }).click();
+await settle();
+const photoAfter = await artPixel(0.5, 0.5);
+check('photo look warms the picture', photoAfter[0] - photoAfter[2] > photoBefore[0] - photoBefore[2] + 10, `${photoBefore.join(',')} → ${photoAfter.join(',')}`);
+await right.locator('.photo-tools .anim-field, .photo-tools .field', { hasText: 'Exposure' }).locator('input[type=range]').fill('1');
+await settle();
+const brighter = await artPixel(0.5, 0.5);
+check('exposure slider brightens the photo', Math.max(...brighter.slice(0, 3)) > Math.max(...photoAfter.slice(0, 3)) + 20, `${photoAfter.join(',')} → ${brighter.join(',')}`);
+await right.getByRole('button', { name: 'Reset photo' }).click();
+await settle();
+const reset = await artPixel(0.5, 0.5);
+check('reset photo restores it', Math.abs(reset[2] - photoBefore[2]) < 6 && Math.abs(reset[0] - photoBefore[0]) < 6, reset.join(','));
+await page.goto(BASE);
+const designTemplates = await page.locator('section', { has: page.getByRole('heading', { name: 'Start from a template' }) }).locator('.home-card').count();
+check('more design templates', designTemplates >= 15, String(designTemplates));
+await page.locator('.home-card', { hasText: 'Animated Launch' }).click();
+await page.locator('.artboard canvas').waitFor();
+check('animated template plays its keyframes', await page.getByRole('button', { name: '▶ Preview animation' }).isEnabled());
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

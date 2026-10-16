@@ -74,7 +74,8 @@ npm run test:e2e:next # browser test for MP4, motion tracking, AI tools, tour, t
 - **Multiple pages** (great for presentations and carousels): add, duplicate, reorder and delete pages from the page strip
 - **Present mode**: full-screen slideshow with arrow-key navigation
 - **Animations**: per-element entrances (fade, rise, pop, slide, wipe) or "Animate this page"; download the design as an **animated video**
-- 7 templates with previews (social, video, print, business), filterable by category
+- **Keyframes** for any element: scrub *Time on page*, press ◆ on position, size, angle or opacity, and it moves between them. One-click animations and easing too, the same controls as the video editor. Dragging an animated element moves its whole path
+- 15 templates with previews (social, video, print, business), filterable by category. New ones: podcast cover, recipe story, fitness class, real estate, webinar banner, restaurant menu, thank-you card and an animated launch slide
 - **Magic resize**: switch canvas size and the layout scales to fit
 - Text (heading / subheading / body / outlined / shadow), 10 shapes (rectangle, circle, triangle, star, line, heart, arrow, speech bubble, hexagon, diamond), emoji stickers, and image uploads
 - Drag to move, handles to resize, a handle to rotate
@@ -87,6 +88,7 @@ npm run test:e2e:next # browser test for MP4, motion tracking, AI tools, tour, t
 - Text effects: shadow and outline
 - **Background remover** for photos with a plain background (white, green screen, studio wall), with a strength slider and Restore
 - Photo editing: **crop** (Original, 1:1, 4:5, 3:2, 16:9, 9:16 with zoom and position), flip, filter presets, brightness/contrast/saturation/blur/B&W
+- **Photo tools**: exposure, temperature, tint, highlights, shadows, sharpen and vignette, plus one-click looks (Auto enhance, Golden hour, Cool blue, Portrait, Crisp, Moody)
 - One-click swatches of colors already used in the design
 - Solid or **gradient** backgrounds
 - Layers panel, bring forward/back, lock, duplicate
@@ -183,9 +185,12 @@ Video
 - [x] Transitions between clips (crossfade, dip to black, slide, zoom, wipe)
 - [x] Picture-in-picture overlay track, plus stickers on video
 - [x] Captions from a script and .srt import/export
-- [ ] Automatic speech-to-text captions and text-to-speech
+- [x] Automatic speech-to-text captions, translation and text-to-speech (AI tab)
+- [x] Silence removal and auto Shorts
+- [x] Motion tracking
+- [x] MP4 export
 - [x] Motion presets (zoom/pan)
-- [ ] Full keyframe animation (position/scale/opacity)
+- [x] Full keyframe animation (position/scale/opacity), in both editors
 - [x] Audio waveforms and voice-over recording
 - [ ] Beat markers
 - [ ] Faster-than-realtime MP4 export (WebCodecs / ffmpeg.wasm)

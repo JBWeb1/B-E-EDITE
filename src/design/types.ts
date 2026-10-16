@@ -1,4 +1,6 @@
 import type { Filters } from '../lib/filters';
+import type { Keyframes } from '../video/anim';
+import type { PhotoAdjust } from './photo';
 
 export interface ElementBase {
   id: string;
@@ -13,6 +15,10 @@ export interface ElementBase {
   locked?: boolean;
   /** How the element enters when the page is presented or exported as a video. */
   animation?: ElementAnimation;
+  /** Keyframes (seconds from when the page appears), as for video layers. */
+  keys?: Keyframes;
+  /** Gentle hand-held wobble while the page plays. */
+  wiggle?: { amount: number; speed: number } | null;
 }
 
 export type ElementAnimation = 'none' | 'fade' | 'rise' | 'pop' | 'slide' | 'wipe';
@@ -53,6 +59,8 @@ export interface ImageElement extends ElementBase {
   flipX?: boolean;
   flipY?: boolean;
   filters?: Filters;
+  /** Exposure, white balance, highlights/shadows, sharpen, vignette. */
+  photo?: PhotoAdjust;
   /** Size of the original picture, used for cropping. */
   naturalWidth?: number;
   naturalHeight?: number;

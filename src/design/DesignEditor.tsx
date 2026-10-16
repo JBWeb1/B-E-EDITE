@@ -51,6 +51,9 @@ import {
 } from './model';
 import type { AlignMode, Guide, Handle, LayerMove, Point, Rect } from './model';
 import { animateAll, ANIMATIONS, entranceLength } from './animate';
+import { MotionSection, PhotoTools } from './DesignPanels';
+import { motionLength, shiftKeys } from './motion';
+import type { Keyframes } from '../video/anim';
 import { blankPage, duplicatePage, insertPage, isDesignFile, movePage, normalizeFile, pageDuration, pageView, removePage, withPage } from './pages';
 import { Presenter } from './Presenter';
 import { designThumbnail, exportDesign, exportDesignVideo, exportPdf, ImageCache, measureTextHeight, renderDesign } from './render';
@@ -103,7 +106,7 @@ const SHORTCUTS: Shortcut[] = [
 type Tab = 'templates' | 'text' | 'elements' | 'uploads' | 'background';
 
 type Drag =
-  | { mode: 'move'; start: Point; origins: Map<string, Point>; bounds: Rect; clickedId: string; moved: boolean }
+  | { mode: 'move'; start: Point; origins: Map<string, Point & { keys?: Keyframes }>; bounds: Rect; clickedId: string; moved: boolean }
   | { mode: 'resize'; start: Point; el: DesignElement; handle: Handle }
   | { mode: 'rotate'; el: DesignElement }
   | { mode: 'marquee'; start: Point; base: string[] };
@@ -169,6 +172,9 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const [presenting, setPresenting] = useState<number | null>(null);
   const [previewStart, setPreviewStart] = useState<number | null>(null);
   const [previewTime, setPreviewTime] = useState<number | null>(null);
+  /** Page time shown while editing keyframes (null = normal editing). */
+  const [motionTime, setMotionTime] = useState<number | null>(null);
+  const shownTime = previewTime ?? motionTime;
   const [videoProgress, setVideoProgress] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -230,7 +236,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   // Play the page's entrance animations on the canvas.
   useEffect(() => {
     if (previewStart === null) return;
-    const end = entranceLength(doc) + 0.3;
+    const end = Math.max(entranceLength(doc), motionLength(doc.elements)) + 0.3;
     let raf = 0;
     const tick = () => {
       const t = (performance.now() - previewStart) / 1000;
@@ -248,6 +254,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
 
   const setFile = fileSet;
   const goToPage = (i: number) => {
+    setMotionTime(null);
     setPageIndex(Math.max(0, Math.min(i, file.pages.length - 1)));
     setSelectedIds([]);
     setEditingId(null);
@@ -308,10 +315,10 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
     canvas.style.height = `${doc.height * zoom}px`;
     const ctx = canvas.getContext('2d')!;
     ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, 0, 0);
-    renderDesign(ctx, doc, images, editingId ?? undefined, previewTime ?? undefined);
+    renderDesign(ctx, doc, images, editingId ?? undefined, shownTime ?? undefined);
 
     const px = 1 / zoom;
-    if (!editingId && previewTime === null) {
+    if (!editingId && shownTime === null) {
       for (const el of selectedEls) {
         const c = { x: el.x + el.width / 2, y: el.y + el.height / 2 };
         ctx.save();
@@ -369,7 +376,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       ctx.stroke();
     }
     // selectedEls/selected are derived from doc + selectedIds, which are listed.
-  }, [doc, zoom, selectedIds, editingId, guides, marquee, images, imageVersion, previewTime, selectColor]);
+  }, [doc, zoom, selectedIds, editingId, guides, marquee, images, imageVersion, shownTime, selectColor]);
 
   const toDoc = (e: { clientX: number; clientY: number }): Point => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -394,7 +401,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
     dragRef.current = {
       mode: 'move',
       start: p,
-      origins: new Map(movable.map((e) => [e.id, { x: e.x, y: e.y }])),
+      origins: new Map(movable.map((e) => [e.id, { x: e.x, y: e.y, keys: e.keys }])),
       bounds: boundsOf(movable)!,
       clickedId,
       moved: false,
@@ -404,6 +411,8 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (editingId || e.button !== 0) return;
     setMenu(null);
+    // Clicking the page leaves keyframe view and goes back to normal editing.
+    setMotionTime(null);
     const p = toDoc(e);
     const handle = selected ? hitHandle(selected, p) : null;
     if (selected && handle) {
@@ -463,7 +472,8 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
         ...d,
         elements: d.elements.map((el) => {
           const o = drag.origins.get(el.id);
-          return o ? { ...el, x: Math.round(o.x + dx), y: Math.round(o.y + dy) } : el;
+          // Moving an animated element moves its whole path with it.
+          return o ? { ...el, x: Math.round(o.x + dx), y: Math.round(o.y + dy), keys: shiftKeys(o.keys, dx / d.width, dy / d.height) } : el;
         }),
       }));
     } else if (drag.mode === 'rotate') {
@@ -1192,6 +1202,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                   </div>
                   <h4>Adjust</h4>
                   <FilterSliders filters={selected.filters ?? NEUTRAL_FILTERS} mark={mark} onChange={patchImageFilters} />
+                  <PhotoTools el={selected} mark={mark} onChange={(photo, live) => patchSelected({ photo }, live)} />
                 </>
               )}
 
@@ -1209,6 +1220,16 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                   ))}
                 </select>
               </label>
+              <MotionSection
+                el={selected}
+                page={doc}
+                time={motionTime}
+                duration={pageDuration(file.pages[page])}
+                mark={mark}
+                onTime={setMotionTime}
+                onPlay={() => setPreviewStart(performance.now())}
+                update={patchSelected}
+              />
               <RangeField label="Transparency" value={selected.opacity} min={0} max={1} step={0.01} onStart={mark} onChange={(v) => patchSelected({ opacity: v }, true)} />
               <div className="grid2">
                 <NumberField label="X" value={Math.round(selected.x)} onChange={(v) => patchSelected({ x: v })} />
@@ -1258,7 +1279,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                   </button>
                 ))}
               </div>
-              <button className="block" onClick={() => setPreviewStart(performance.now())} disabled={entranceLength(doc) === 0}>
+              <button className="block" onClick={() => setPreviewStart(performance.now())} disabled={entranceLength(doc) === 0 && motionLength(doc.elements) === 0}>
                 ▶ Preview animation
               </button>
               <NumberField
