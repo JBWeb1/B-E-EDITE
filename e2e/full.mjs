@@ -93,7 +93,7 @@ await page.context().setOffline(false);
 check('app opens offline', offlineOk);
 // The installed app's "New design" shortcut opens straight into the editor.
 await page.goto(new URL('./?new=design', BASE).href);
-check('?new=design shortcut opens the editor', await page.locator('.artboard canvas').isVisible());
+check('?new=design shortcut opens the editor', await page.locator('.artboard canvas').waitFor({ timeout: 10000 }).then(() => true, () => false));
 await page.goto(BASE);
 
 // ---------- Design: basics
@@ -277,6 +277,7 @@ check('Space ignored while recording a voice-over', playingDuringRec === 1);
 
 // Bug fix: Esc closes the export dialog; Space during export does not pause it
 await page.getByRole('button', { name: 'Export', exact: true }).click();
+await page.locator('.modal').waitFor();
 await page.keyboard.press('Escape');
 check('Esc closes export dialog', (await page.locator('.modal').count()) === 0);
 await page.getByRole('button', { name: 'Export', exact: true }).click();
@@ -436,6 +437,7 @@ check('delete project from home', (await page.locator('.project-card').count()) 
 const phone = await newPage({ width: 390, height: 844 });
 await phone.goto(BASE);
 await phone.locator('.hero-card.design').click();
+await phone.locator('.artboard canvas').waitFor();
 check('phone: side panel starts folded', (await phone.locator('.panel.collapsed').count()) === 1);
 await phone.getByRole('button', { name: 'Text', exact: true }).click();
 await phone.getByRole('button', { name: 'Add a heading' }).click();

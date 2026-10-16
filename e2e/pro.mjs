@@ -209,6 +209,7 @@ await page.evaluate(() => document.activeElement?.blur?.());
 await page.keyboard.press('Home');
 await page.getByRole('button', { name: 'Export', exact: true }).click();
 const modal = page.locator('.export-modal');
+await modal.locator('.preset-card').first().waitFor();
 check('export presets listed', (await modal.locator('.preset-card').count()) >= 8);
 await modal.getByRole('group', { name: 'Resolution' }).getByRole('button', { name: '4K' }).click();
 check('4K output size', (await modal.locator('.hint').first().innerText()).includes('3840 × 2160'));

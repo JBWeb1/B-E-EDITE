@@ -85,6 +85,7 @@ check('safe zones show on the player', (await page.locator('.safe-zone').count()
 await page.getByRole('button', { name: 'Hide safe zones' }).click();
 check('safe zones can be hidden', (await page.locator('.safe-zone').count()) === 0);
 await page.getByRole('button', { name: 'Export', exact: true }).click();
+await page.getByRole('dialog', { name: 'Export video' }).waitFor();
 check('export offers the pre-flight check', (await page.getByRole('button', { name: /Run the pre-flight check/ }).count()) === 1);
 await page.keyboard.press('Escape');
 

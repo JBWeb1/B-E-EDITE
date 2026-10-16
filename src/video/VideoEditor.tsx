@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { downloadBlob, formatTime } from '../lib/download';
 import { cssFilter, sameFilters } from '../lib/filters';
@@ -19,16 +19,9 @@ import { Logo } from '../ui/Logo';
 import { keyAt, setKey, sourceTimeAt, transformAt } from './anim';
 import type { Keyframes } from './anim';
 import { loadFont, probeMedia, VideoEngine } from './engine';
-import { AIPanel } from './AIPanel';
 import { TemplateGallery } from './TemplateGallery';
 import { sceneFile, VIDEO_TEMPLATES } from './videoTemplates';
 import type { VideoTemplate } from './videoTemplates';
-import { ExportDialog } from './ExportDialog';
-import { PreflightDialog, SafeZoneOverlay } from './PreflightDialog';
-import { RecipesDialog } from './RecipesDialog';
-import { PostKitDialog } from './PostKitDialog';
-import { HistoryDialog } from './HistoryDialog';
-import { ShareDialog } from './ShareDialog';
 import { useLive } from './useLive';
 import type { Peer } from '../lib/p2p';
 import { restoreVersion, saveVersion } from './versions';
@@ -120,6 +113,21 @@ import type {
   Watermark,
   WordMode,
 } from './types';
+
+
+// Dialogs and the AI tab load the first time they are opened (keeps the editor quick to start).
+const AIPanel = lazy(() => import('./AIPanel').then((m) => ({ default: m.AIPanel })));
+const ExportDialog = lazy(() => import('./ExportDialog').then((m) => ({ default: m.ExportDialog })));
+const PreflightDialog = lazy(() => import('./PreflightDialog').then((m) => ({ default: m.PreflightDialog })));
+const SafeZoneOverlay = lazy(() => import('./PreflightDialog').then((m) => ({ default: m.SafeZoneOverlay })));
+const RecipesDialog = lazy(() => import('./RecipesDialog').then((m) => ({ default: m.RecipesDialog })));
+const PostKitDialog = lazy(() => import('./PostKitDialog').then((m) => ({ default: m.PostKitDialog })));
+const HistoryDialog = lazy(() => import('./HistoryDialog').then((m) => ({ default: m.HistoryDialog })));
+const ShareDialog = lazy(() => import('./ShareDialog').then((m) => ({ default: m.ShareDialog })));
+/** Fetch them in the background once the editor is idle, so they open instantly (and work offline). */
+const prefetchDialogs = () => {
+  for (const load of [() => import('./AIPanel'), () => import('./ExportDialog'), () => import('./PreflightDialog'), () => import('./RecipesDialog'), () => import('./PostKitDialog'), () => import('./HistoryDialog'), () => import('./ShareDialog')]) void load().catch(() => {});
+};
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 
@@ -279,6 +287,10 @@ export function VideoEditor({
   const [picking, setPicking] = useState<{ kind: 'clip' | 'overlay'; id: string } | null>(null);
   const [myLooks, setMyLooks] = useState<SavedLook[]>(loadSavedLooks);
   const [showTour, setShowTour] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(prefetchDialogs, 1500);
+    return () => clearTimeout(t);
+  }, []);
   // First visit: start the tour once the editor is on screen (it points at real parts of it).
   useEffect(() => {
     if (!tourSeen('bee.tour.video') && !tourSeen('bee.tips.video')) setShowTour(true);
@@ -1426,6 +1438,7 @@ export function VideoEditor({
       </>
     ),
     ai: (
+      <Suspense fallback={<p className="hint">Loading…</p>}>
       <AIPanel
         project={project}
         time={time}
@@ -1437,6 +1450,7 @@ export function VideoEditor({
           set((p) => ({ ...p, assets: [...p.assets, asset], audio: [...p.audio, createAudioClip(asset, at)] }));
         }}
       />
+      </Suspense>
     ),
   };
 
@@ -1554,7 +1568,9 @@ export function VideoEditor({
             {project.clips.length === 0 && project.texts.length === 0 && project.overlays.length === 0 && <div className="preview-empty">Import a video or photo to get started</div>}
             {showZones && (
               <CanvasCover canvasRef={canvasRef}>
-                <SafeZoneOverlay platform={platform} />
+                <Suspense fallback={null}>
+                  <SafeZoneOverlay platform={platform} />
+                </Suspense>
                 <button className="safe-zone-close" onClick={() => setShowZones(false)} aria-label="Hide safe zones" title="Hide safe zones">
                   <Icon name="x" size={14} />
                 </button>
@@ -1808,6 +1824,7 @@ export function VideoEditor({
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
       {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
+      <Suspense fallback={null}>
       {shareOpen && (
         <ShareDialog
           project={project}
@@ -1860,6 +1877,7 @@ export function VideoEditor({
           onAspect={(width, height) => set((p) => ({ ...p, width, height }))}
         />
       )}
+      </Suspense>
 
       {progress !== null && (
         <div className="modal-backdrop" data-modal>

@@ -4881,3 +4881,26 @@ button.link {
   cursor: pointer;
   color: var(--accent-text);
 }
+
+/* ---------- Loading an editor ---------- */
+.app-loading {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 18px;
+  background: var(--bg);
+}
+.app-loading-bar {
+  width: 120px;
+  height: 3px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 200% 100%;
+  animation: app-loading 1s linear infinite;
+}
+@keyframes app-loading {
+  to {
+    background-position: -200% 0;
+  }
+}

@@ -1,14 +1,12 @@
-import { useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { createDoc } from './design/model';
 import { toFile } from './design/pages';
 import { newProjectId } from './lib/projects';
-import { DesignEditor } from './design/DesignEditor';
 import type { DesignFile } from './design/types';
 import { Home } from './home/Home';
 import type { VideoProject } from './video/types';
-import { VideoEditor } from './video/VideoEditor';
-import { LiveJoin } from './share/LiveJoin';
-import { PhoneLink } from './share/PhoneLink';
+import { DesignEditor, LiveJoin, PhoneLink, prefetchAll, VideoEditor } from './lazy';
+import { Logo } from './ui/Logo';
 import type { Peer } from './lib/p2p';
 
 export type Screen =
@@ -20,6 +18,25 @@ export type Screen =
 
 export function App() {
   const [screen, setScreen] = useState<Screen>(startScreen);
+  useEffect(prefetchAll, []);
+  return (
+    <Suspense fallback={<Loading />}>
+      <Screens screen={screen} setScreen={setScreen} />
+    </Suspense>
+  );
+}
+
+/** Shown for a moment while an editor loads. */
+function Loading() {
+  return (
+    <div className="app-loading" role="status" aria-label="Loading">
+      <Logo height={28} />
+      <span className="app-loading-bar" />
+    </div>
+  );
+}
+
+function Screens({ screen, setScreen }: { screen: Screen; setScreen: (s: Screen) => void }) {
   const goHome = () => setScreen({ kind: 'home' });
 
   if (screen.kind === 'phone') return <PhoneLink code={screen.code} onDone={goHome} />;
