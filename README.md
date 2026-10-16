@@ -81,6 +81,11 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - On your next video, press **Apply** and it is all done in one step (one Undo takes it back). The outro stays the same distance from the end, music is trimmed to fit, captions take the saved style
 - Recipes keep their own copy of music and logos, so they still work after the original project is deleted
 
+### 📦 Post kit
+- Press **Post kit** when the video is done. It finds the video's three best-looking frames (sharp, colourful, well lit, without your text on top) and makes a **YouTube thumbnail**, an **Instagram post** and a **story / Reel cover** with your title and handle
+- Download each as PNG, or press **Edit** to finish it in the design editor
+- Also writes a **caption with hashtags** (from your titles and captions) and **YouTube chapters** that follow YouTube's rules (start at 0:00, at least three, 10 s or longer)
+
 ### 🎨 Design editor (Canva-style)
 - **Same CapCut-style workspace as the video editor**: library tabs on the left, the canvas in the middle with undo, Present and zoom underneath, details on the right, and the pages along the bottom like a timeline
 - Canvas sizes for Instagram post/story, YouTube thumbnail, presentation, Facebook cover, A4 poster

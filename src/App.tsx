@@ -28,6 +28,7 @@ export function App() {
         initialProject={screen.project}
         projectId={screen.projectId}
         template={screen.template}
+        onOpenDesign={(file, projectId) => setScreen({ kind: 'design', file, projectId })}
         onExit={goHome}
       />
     );

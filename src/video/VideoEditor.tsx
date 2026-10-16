@@ -26,6 +26,8 @@ import type { VideoTemplate } from './videoTemplates';
 import { ExportDialog } from './ExportDialog';
 import { PreflightDialog, SafeZoneOverlay } from './PreflightDialog';
 import { RecipesDialog } from './RecipesDialog';
+import { PostKitDialog } from './PostKitDialog';
+import type { DesignFile } from '../design/types';
 import { applyRecipe } from './recipes';
 import { overlap, SAFE_ZONES, textBox } from './preflight';
 import type { FixId, Platform } from './preflight';
@@ -216,8 +218,11 @@ export function VideoEditor({
   initialProject,
   projectId,
   template,
+  onOpenDesign,
 }: {
   onExit: () => void;
+  /** Open a design (made by the post kit) in the design editor. */
+  onOpenDesign?: (file: DesignFile, projectId: string) => void;
   aspect?: { width: number; height: number };
   initialProject?: VideoProject;
   /** Start from this ready-made video template (id from VIDEO_TEMPLATES). */
@@ -242,6 +247,7 @@ export function VideoEditor({
   const [exportDialog, setExportDialog] = useState(false);
   const [preflight, setPreflight] = useState(false);
   const [recipesOpen, setRecipesOpen] = useState(false);
+  const [postKit, setPostKit] = useState(false);
   const [platform, setPlatform] = useState<Platform>(() => defaultPlatform(initialProject ?? { width: aspect?.width ?? 16, height: aspect?.height ?? 9 }));
   const [showZones, setShowZones] = useState(false);
   // Follow the video's shape: vertical videos default to TikTok, landscape to YouTube.
@@ -1471,6 +1477,9 @@ export function VideoEditor({
           <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="keyboard" />
           </button>
+          <button onClick={() => setPostKit(true)} disabled={duration <= 0 || progress !== null} title="Post kit: thumbnail, post, story, caption, hashtags and chapters">
+            <Icon name="sparkles" /> <span className="label">Post kit</span>
+          </button>
           <button onClick={() => setRecipesOpen(true)} title="Edit recipes: save how this video is edited and replay it on another">
             <Icon name="wand" /> <span className="label">Recipes</span>
           </button>
@@ -1775,6 +1784,7 @@ export function VideoEditor({
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
       {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
+      {postKit && <PostKitDialog project={project} onClose={() => setPostKit(false)} onOpenDesign={onOpenDesign} />}
       {recipesOpen && <RecipesDialog project={project} onClose={() => setRecipesOpen(false)} onApply={(r, assets) => set((p) => applyRecipe(p, r, assets))} />}
       {preflight && (
         <PreflightDialog

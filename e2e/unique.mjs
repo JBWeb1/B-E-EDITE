@@ -121,6 +121,46 @@ await page.locator('.clip-item').first().waitFor();
 await settle();
 check('recipe sounds are saved with the project (own media copy)', (await page.locator('.audio-item').count()) === 2, String(await page.locator('.audio-item').count()));
 
+// ---------- Post kit
+await page.goto(BASE);
+await page.getByRole('button', { name: 'Video template: Product promo' }).click();
+await page.locator('.clip-item').nth(2).waitFor({ timeout: 20000 });
+await settle();
+await page.getByRole('button', { name: 'Post kit' }).click();
+const kit = page.getByRole('dialog', { name: 'Post kit' });
+await kit.locator('.kit-frames button').first().waitFor({ timeout: 60000 });
+check('post kit finds three best frames', (await kit.locator('.kit-frames button').count()) === 3);
+await kit.locator('.kit-preview img').nth(2).waitFor({ timeout: 20000 });
+check('thumbnail, post and story previews', (await kit.locator('.kit-preview img').count()) === 3);
+check('title taken from the video', (await kit.getByRole('textbox', { name: 'Post title' }).inputValue()) === 'NEW DROP');
+await kit.getByRole('textbox', { name: 'Your handle' }).fill('@beemotion');
+const kitCaption = await kit.getByRole('textbox', { name: 'Post caption' }).inputValue();
+check('caption with hashtags', /#\w+/.test(kitCaption) && kitCaption.includes('NEW DROP'), kitCaption.replace(/\n/g, ' / '));
+const thumbDl = page.waitForEvent('download');
+await kit.getByRole('button', { name: 'Download YouTube thumbnail' }).click();
+const thumb = fs.readFileSync(await (await thumbDl).path());
+check('thumbnail PNG is 1280×720', thumb.readUInt32BE(16) === 1280 && thumb.readUInt32BE(20) === 720, `${thumb.readUInt32BE(16)}×${thumb.readUInt32BE(20)}`);
+// The thumbnail shows the video frame, not a blank page.
+const thumbColours = await page.evaluate(async (b64) => {
+  const img = new Image();
+  img.src = 'data:image/png;base64,' + b64;
+  await img.decode();
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 36;
+  const g = c.getContext('2d');
+  g.drawImage(img, 0, 0, 64, 36);
+  const d = g.getImageData(0, 0, 64, 36).data;
+  const set = new Set();
+  for (let i = 0; i < d.length; i += 4) set.add(`${d[i] >> 4},${d[i + 1] >> 4},${d[i + 2] >> 4}`);
+  return set.size;
+}, thumb.toString('base64'));
+check('thumbnail uses the video frame', thumbColours > 20, `${thumbColours} colours`);
+check('short video explains chapters', (await kit.getByText(/Chapters need a video/).count()) === 1);
+await kit.getByRole('button', { name: 'Edit Instagram post' }).click();
+await page.locator('.artboard canvas').waitFor({ timeout: 10000 });
+check('post opens in the design editor', (await page.locator('.layers button').count()) >= 3, `${await page.locator('.layers button').count()} layers`);
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
