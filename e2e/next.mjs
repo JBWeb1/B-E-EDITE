@@ -159,6 +159,67 @@ await page.waitForFunction(() => /Made a/.test(document.querySelector('.ai-messa
 const shortRatio = await page.locator('canvas.preview').evaluate((c) => c.height / c.width);
 check('auto Short is vertical', Math.abs(shortRatio - 16 / 9) < 0.02, `${shortRatio.toFixed(3)}; ${await aiStatus.innerText().catch(() => '')}`);
 
+// ---------- Video templates
+await page.goto(BASE);
+await page.getByRole('button', { name: 'Video template: Product promo' }).click();
+await page.locator('.clip-item').nth(2).waitFor({ timeout: 20000 });
+await settle();
+const counts = {
+  clips: await page.locator('.clip-item').count(),
+  texts: await page.locator('.text-item').count(),
+  effects: await page.locator('.effect-item').count(),
+  sounds: await page.locator('.audio-item').count(),
+};
+check('home template builds a full video', counts.clips === 3 && counts.texts === 5 && counts.effects === 1 && counts.sounds === 3, JSON.stringify(counts));
+const square = await page.locator('canvas.preview').evaluate((c) => c.width / c.height);
+check('template sets its shape (square promo)', Math.abs(square - 1) < 0.01, square.toFixed(3));
+const centre = await page.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(c.width / 2, c.height * 0.2, 1, 1).data));
+check('template background is painted', centre[0] + centre[1] + centre[2] > 30, centre.join(','));
+// The Media tab is open already.
+await page.locator('.cc-library-body').getByRole('button', { name: 'Video template: Vlog intro' }).click();
+await page.waitForFunction(() => document.querySelectorAll('.clip-item').length === 2, null, { timeout: 20000 }).catch(() => {});
+const wide = await page.locator('canvas.preview').evaluate((c) => c.width / c.height);
+check('template from the Media tab replaces the timeline', (await page.locator('.clip-item').count()) === 2 && Math.abs(wide - 16 / 9) < 0.01, `${await page.locator('.clip-item').count()} clips, ${wide.toFixed(3)}`);
+await page.keyboard.press('Control+z');
+await settle();
+check('undo brings the previous video back', (await page.locator('.clip-item').count()) === 3);
+
+// ---------- Guided tour (fresh visitor)
+const fresh = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+const tp = await fresh.newPage();
+tp.on('pageerror', (e) => errors.push('tour pageerror: ' + e.message));
+await tp.goto(`${BASE}/?new=video`);
+const tour = tp.getByRole('dialog', { name: 'Guided tour' });
+await tour.waitFor({ timeout: 5000 }).catch(() => {});
+check('tour starts on the first visit', await tour.isVisible());
+const total = Number((await tour.locator('.tour-count').innerText()).split('/')[1]);
+let pointed = 0;
+for (let k = 1; k < total; k++) {
+  await tour.getByRole('button', { name: 'Next' }).click();
+  if (await tp.locator('.tour-spot').isVisible()) pointed++;
+}
+check('tour points at each part of the editor', total >= 6 && pointed === total - 1, `${pointed}/${total - 1} highlighted`);
+await tour.getByRole('button', { name: 'Start editing' }).click();
+check('tour closes when finished', !(await tour.isVisible()));
+await tp.goto(`${BASE}/?new=video`);
+await tp.locator('canvas.preview').waitFor();
+await tp.waitForTimeout(800);
+check('tour is not shown again', !(await tour.isVisible()));
+await tp.getByRole('button', { name: 'Guided tour' }).click();
+check('tour can be replayed from the ? button', await tour.isVisible());
+await tp.keyboard.press('Escape');
+check('Esc closes the tour', !(await tour.isVisible()));
+await tp.goto(`${BASE}/?new=design`);
+await tour.waitFor({ timeout: 5000 }).catch(() => {});
+check('design editor has its own tour', await tour.isVisible());
+await tour.getByRole('button', { name: 'Skip tour' }).click();
+await tp.setViewportSize({ width: 390, height: 844 });
+await tp.goto(`${BASE}/?new=video`);
+await tp.getByRole('button', { name: 'Guided tour' }).click();
+const card = await tour.boundingBox();
+check('phone: tour card fits the screen', card && card.x >= 0 && card.x + card.width <= 390 && card.y >= 0 && card.y + card.height <= 844, JSON.stringify(card));
+await fresh.close();
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

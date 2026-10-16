@@ -61,6 +61,9 @@ npm run test:e2e:next # browser test for MP4, motion tracking, AI tools, tour, t
 - Tidy top bar: every export option lives in one **Download** menu
 - Works on phones: panels stack, and tapping the open tab again folds the side panel away
 
+### 🧭 Guided tour
+- First-time visitors get a short tour of each editor: it highlights each part and explains it. Replay it any time with the **?** button (keyboard shortcuts moved to the ⌨ button)
+
 ### 📁 My projects
 - Every design and video is saved automatically in your browser (IndexedDB) and listed on the home screen with a preview
 - Open, search and delete projects; video media files are stored with the project
@@ -133,6 +136,7 @@ npm run test:e2e:next # browser test for MP4, motion tracking, AI tools, tour, t
 - **Voice-over recording** from the microphone while the video plays
 - Undo/redo, keyboard shortcuts (Space, S, Del, ←/→)
 - Export to **MP4** (H.264 in Chrome, Edge and Safari) or WebM with mixed audio; choose quality (small / standard / high) and 30 or 60 fps, with a file-size estimate
+- **Video templates**: vlog intro, product promo, travel story, YouTube end screen, birthday wishes and quote of the day. Each comes with titles, effects and sound, and opens from Home or the Media tab
 - **AI tools** (AI tab): **auto captions from speech**, **translate captions** into 16 languages, **AI voice-overs** from typed text, **remove silences** from talking videos, and **auto Shorts** (picks the loudest, liveliest moments and makes a vertical 9:16 clip). They run **on your device** for free (Whisper and MMS voices through transformers.js, downloaded once and cached; translation uses Chrome's built-in translator). Or open *AI settings* and paste your own OpenAI-compatible API key. The key is stored only in your browser
 - **Motion tracking**: select a text, sticker, shape or layer, press *Track motion* (Animate tab) and click the thing to follow on the player. It follows that object through the video and writes position keyframes for you. *Remove tracking* undoes it
 
@@ -153,7 +157,7 @@ The editing logic lives in pure functions (`design/model.ts`, `video/timeline.ts
 
 Easier to use
 - [x] First-run tips and a shortcuts panel
-- [ ] Full interactive onboarding tour
+- [x] Full interactive onboarding tour
 - [x] Multi-select (shift-click / marquee) and align/distribute tools
 - [ ] Grouping
 - [x] Right-click context menus

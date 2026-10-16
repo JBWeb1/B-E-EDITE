@@ -9,7 +9,9 @@ import { uid } from '../lib/id';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { removeBackgroundFromImage } from '../lib/bgremove';
 import { FilterSliders } from '../ui/FilterSliders';
-import { FirstRunTips, keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
+import { keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
+import { Tour, tourSeen } from '../ui/Tour';
+import type { TourStep } from '../ui/Tour';
 import { LookSettings } from '../ui/LookSettings';
 import { alpha, lookAttributes, lookStyle, templateById, useLook } from '../lib/look';
 import { Icon } from '../ui/Icon';
@@ -127,6 +129,15 @@ const gradientCss = (g: Gradient) => `linear-gradient(${g.angle + 90}deg, ${g.fr
 type Updater<T> = T | ((prev: T) => T);
 const applyUpdate = <T,>(u: Updater<T>, prev: T): T => (typeof u === 'function' ? (u as (p: T) => T)(prev) : u);
 
+const TOUR: TourStep[] = [
+  { title: 'Welcome to the design editor 👋', body: 'A quick tour of the main parts. Replay it any time with the ? button at the top.' },
+  { target: '.cc-library .cc-tabs', title: 'Add things', body: 'Templates, text, shapes, stickers and your photos live here. Click one to add it to the page.' },
+  { target: '.stage', title: 'Your page', body: 'Click to select, drag to move, and use the handles to resize or rotate. Drag on empty space to select several things; right-click for quick actions.' },
+  { target: '.cc-details', title: 'Details', body: 'Change the colour, font, effects, photo adjustments and animation of whatever is selected.' },
+  { target: '.page-strip', title: 'Pages', body: 'Add more pages for carousels and presentations, then press Present to show them full screen.' },
+  { target: '.tour-download', title: 'Download', body: 'Save as PNG, JPEG, PDF or an animated video.' },
+];
+
 export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: DesignFile; projectId: string; onExit: () => void }) {
   // Undo history covers the whole file; editing tools see one page at a time.
   const fileHistory = useHistory<DesignFile>(initialFile);
@@ -165,6 +176,11 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const [marquee, setMarquee] = useState<Rect | null>(null);
   const [menu, setMenu] = useState<Point | null>(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [showTour, setShowTour] = useState(false);
+  // First visit: start the tour once the editor is on screen (it points at real parts of it).
+  useEffect(() => {
+    if (!tourSeen('bee.tour.design') && !tourSeen('bee.tips.design')) setShowTour(true);
+  }, []);
   const [showLook, setShowLook] = useState(false);
   const look = useLook();
   // Selection outlines follow the editor's highlight colour.
@@ -754,11 +770,14 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
           <button className="icon-btn" onClick={() => setShowLook(true)} title="Editor look: themes and layout" aria-label="Editor look">
             <Icon name="palette" />
           </button>
-          <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+          <button className="icon-btn" onClick={() => setShowTour(true)} title="Guided tour" aria-label="Guided tour">
             <Icon name="help" />
           </button>
+          <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+            <Icon name="keyboard" />
+          </button>
           <Menu
-            buttonClassName="primary"
+            buttonClassName="primary tour-download"
             title="Download or save"
             label={
               <>
@@ -1019,15 +1038,6 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
               />
             )}
           </div>
-          <FirstRunTips
-            storageKey="bee.tips.design"
-            title="Welcome to the design editor 👋"
-            tips={[
-              'Pick a template or add text, shapes and photos from the left.',
-              'Drag on empty canvas to select several things at once; Shift-click adds to the selection.',
-              'Right-click anything for quick actions. Press ? for all shortcuts.',
-            ]}
-          />
         </main>
         <div className="cc-player-bar">
           <div className="cc-tools">
@@ -1329,6 +1339,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       {showLook && <LookSettings onClose={() => setShowLook(false)} />}
 
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
+      {showTour && <Tour steps={TOUR} storageKey="bee.tour.design" onClose={() => setShowTour(false)} />}
       {presenting !== null && <Presenter file={file} startPage={presenting} onClose={() => setPresenting(null)} />}
       {videoProgress !== null && (
         <div className="modal-backdrop" data-modal>

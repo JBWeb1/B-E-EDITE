@@ -12,6 +12,7 @@ import { lookAttributes, lookStyle, useLook } from '../lib/look';
 import { LookSettings } from '../ui/LookSettings';
 import { APP_NAME, Logo } from '../ui/Logo';
 import { ASPECTS } from '../video/timeline';
+import { TemplateGallery } from '../video/TemplateGallery';
 
 /** Size of a little preview of a w×h frame that fits in a 120×64 box. */
 function fitBox(w: number, h: number, maxW = 120, maxH = 64) {
@@ -149,6 +150,11 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
           </div>
         </section>
       )}
+
+      <section>
+        <h2>Video templates</h2>
+        <TemplateGallery onPick={(t) => onOpen({ kind: 'video', width: t.width, height: t.height, projectId: newProjectId(), template: t.id })} />
+      </section>
 
       <section>
         <h2>Video sizes</h2>

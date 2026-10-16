@@ -2119,11 +2119,12 @@ kbd {
 }
 
 .cc-tabs button {
+  flex: 1 0 auto;
   flex-direction: column;
   gap: 3px;
-  min-width: 46px;
-  padding: 6px 4px 7px;
-  font-size: 11px;
+  min-width: 38px;
+  padding: 6px 2px 7px;
+  font-size: 10.5px;
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -4101,7 +4102,7 @@ button.link {
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius, 10px);
-  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+  background: var(--surface-2);
 }
 .ai-message {
   margin: 12px 0 0;
@@ -4115,4 +4116,139 @@ button.link {
 .cc-library-body textarea {
   width: 100%;
   box-sizing: border-box;
+}
+
+/* ---------- Video templates ---------- */
+.vtpl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 14px;
+}
+.vtpl-grid.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.vtpl-card {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 8px 8px 10px;
+  min-width: 0;
+  white-space: normal;
+  text-align: left;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border-color: var(--border);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.vtpl-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-ring);
+}
+.vtpl-thumb {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: calc(var(--radius) - 4px);
+  background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.vtpl-thumb img {
+  height: 100%;
+  width: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+.vtpl-card strong {
+  font-size: 13px;
+}
+.vtpl-card small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.vtpl-grid.compact .vtpl-card strong {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* ---------- Guided tour ---------- */
+.tour {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+.tour-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 6, 10, 0.62);
+}
+.tour-spot {
+  position: absolute;
+  border-radius: 12px;
+  box-shadow: 0 0 0 9999px rgba(5, 6, 10, 0.62), 0 0 0 2px var(--accent), 0 0 24px 4px var(--accent-ring);
+  transition: all 0.25s ease;
+  pointer-events: none;
+}
+.tour-card {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 16px 16px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  animation: tour-in 0.2s ease;
+}
+@keyframes tour-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.tour-card h3 {
+  margin: 4px 0 6px;
+  font-size: 17px;
+}
+.tour-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.tour-count {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--accent-text);
+}
+.tour-dots {
+  display: flex;
+  gap: 5px;
+  margin: 12px 0;
+}
+.tour-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  transition: width 0.2s ease;
+}
+.tour-dots span.on {
+  width: 18px;
+  background: var(--accent);
+}
+.tour-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tour-actions > span {
+  flex: 1;
 }

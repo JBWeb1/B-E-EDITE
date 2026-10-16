@@ -278,7 +278,7 @@ export function AIPanel({
           ))}
         </select>
         <button onClick={translate} disabled={captionItems.length === 0}>
-          Translate {captionItems.length || ''}
+          {captionItems.length ? `Translate ${captionItems.length} caption${captionItems.length === 1 ? '' : 's'}` : 'Translate'}
         </button>
       </div>
 

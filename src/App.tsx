@@ -11,7 +11,7 @@ import { VideoEditor } from './video/VideoEditor';
 export type Screen =
   | { kind: 'home' }
   | { kind: 'design'; file: DesignFile; projectId: string }
-  | { kind: 'video'; width: number; height: number; projectId: string; project?: VideoProject };
+  | { kind: 'video'; width: number; height: number; projectId: string; project?: VideoProject; template?: string };
 
 export function App() {
   const [screen, setScreen] = useState<Screen>(startScreen);
@@ -27,6 +27,7 @@ export function App() {
         aspect={{ width: screen.width, height: screen.height }}
         initialProject={screen.project}
         projectId={screen.projectId}
+        template={screen.template}
         onExit={goHome}
       />
     );

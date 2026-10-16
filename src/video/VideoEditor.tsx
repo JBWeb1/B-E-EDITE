@@ -7,7 +7,9 @@ import { uid } from '../lib/id';
 import { putMedia, saveVideoProject } from '../lib/projects';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { FilterSliders } from '../ui/FilterSliders';
-import { FirstRunTips, keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
+import { keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
+import { Tour, tourSeen } from '../ui/Tour';
+import type { TourStep } from '../ui/Tour';
 import type { Shortcut } from '../ui/Help';
 import { LookSettings } from '../ui/LookSettings';
 import { lookAttributes, lookStyle, useLook } from '../lib/look';
@@ -18,6 +20,9 @@ import { keyAt, setKey, sourceTimeAt, transformAt } from './anim';
 import type { Keyframes } from './anim';
 import { loadFont, probeMedia, VideoEngine } from './engine';
 import { AIPanel } from './AIPanel';
+import { TemplateGallery } from './TemplateGallery';
+import { sceneFile, VIDEO_TEMPLATES } from './videoTemplates';
+import type { VideoTemplate } from './videoTemplates';
 import { ExportDialog } from './ExportDialog';
 import type { VideoExportChoice } from './ExportDialog';
 import { extensionFor, mixSoundtrack } from './export';
@@ -169,6 +174,16 @@ const STICKERS = [
   '🎉', '🎊', '🎁', '🎵', '🎬', '📸', '🚀', '⚡', '🌈', '☀️', '🌙', '❄️', '🍕', '☕', '🏆', '✅',
 ];
 
+const TOUR: TourStep[] = [
+  { title: 'Welcome to the video editor 🎬', body: 'A quick tour of the main parts — it takes 30 seconds. Replay it any time with the ? button at the top.' },
+  { target: '.cc-tabs', title: 'Your library', body: 'Import videos, photos and music, and find text, titles, effects, transitions, filters and the AI tools here.' },
+  { target: '.vtpl-grid', title: 'Start from a template', body: 'Not sure where to begin? Pick a ready-made video (vlog intro, product promo…) and change the words.' },
+  { target: '.preview-frame', title: 'The player', body: 'Watch your video here. Click text or layers on the player to select them, and drag to move them.' },
+  { target: '.timeline', title: 'The timeline', body: 'Clips play left to right. Drag to reorder, drag the edges to trim, press S to split. Text, layers, effects and sound get their own tracks.' },
+  { target: '.cc-details', title: 'Details', body: 'Everything about the selected item: style, animation with keyframes (◆), colour, speed, green screen and motion tracking.' },
+  { target: '.tour-export', title: 'Export', body: 'Save your video as MP4 or WebM in up to 4K, with one-click sizes for TikTok, YouTube and Instagram.' },
+];
+
 const DEFAULT_TRANSITION: Transition = { type: 'fade', duration: 0.5 };
 
 type LibraryTab = 'media' | 'audio' | 'text' | 'titles' | 'effects' | 'transitions' | 'filters' | 'ai';
@@ -194,10 +209,13 @@ export function VideoEditor({
   aspect,
   initialProject,
   projectId,
+  template,
 }: {
   onExit: () => void;
   aspect?: { width: number; height: number };
   initialProject?: VideoProject;
+  /** Start from this ready-made video template (id from VIDEO_TEMPLATES). */
+  template?: string;
   projectId: string;
 }) {
   const history = useHistory<VideoProject>(() =>
@@ -225,6 +243,11 @@ export function VideoEditor({
   /** Waiting for a click on the player to pick a green-screen colour for this item. */
   const [picking, setPicking] = useState<{ kind: 'clip' | 'overlay'; id: string } | null>(null);
   const [myLooks, setMyLooks] = useState<SavedLook[]>(loadSavedLooks);
+  const [showTour, setShowTour] = useState(false);
+  // First visit: start the tour once the editor is on screen (it points at real parts of it).
+  useEffect(() => {
+    if (!tourSeen('bee.tour.video') && !tourSeen('bee.tips.video')) setShowTour(true);
+  }, []);
   /** Waiting for a click on the player: the point this item should follow (motion tracking). */
   const [trackPick, setTrackPick] = useState<{ kind: 'text' | 'overlay'; id: string } | null>(null);
 
@@ -362,6 +385,70 @@ export function VideoEditor({
     set((p) => ({ ...p, assets: p.assets.some((x) => x.id === a.id) ? p.assets : [...p.assets, a], audio: [...p.audio, clip] }));
     setSelection({ kind: 'audio', id: clip.id });
   };
+
+  // ---------- Video templates ----------
+
+  const applyTemplate = async (t: VideoTemplate) => {
+    const busy = project.clips.length + project.texts.length + project.overlays.length > 0;
+    if (busy && !confirm(`Start from the "${t.name}" template? It replaces what is on your timeline (Undo brings it back).`)) return;
+    engineRef.current?.pause();
+    setProgress({ label: 'Building template…', value: 0 });
+    try {
+      const added: MediaAsset[] = [];
+      const clips: Clip[] = [];
+      for (let i = 0; i < t.scenes.length; i++) {
+        const scene = t.scenes[i];
+        const asset = await addAssetFile(await sceneFile(t, i));
+        added.push(asset);
+        clips.push({
+          ...createClip(asset),
+          out: scene.duration,
+          motion: scene.motion,
+          transition: i > 0 && scene.transition ? { type: scene.transition, duration: 0.5 } : undefined,
+        });
+        setProgress({ label: 'Building template…', value: (i + 1) / (t.scenes.length + 1) });
+      }
+      const audio: AudioClip[] = [];
+      for (const s of t.sounds) {
+        const fx = SOUND_EFFECTS.find((f) => f.id === s.id);
+        if (!fx) continue;
+        let asset = [...project.assets, ...added].find((a) => a.sfxId === fx.id);
+        if (!asset) {
+          asset = await addAssetFile(soundEffectFile(fx), { sfxId: fx.id, name: fx.name });
+          added.push(asset);
+        }
+        audio.push({ ...createAudioClip(asset, s.at), volume: 0.8 });
+      }
+      set((p) => ({
+        ...p,
+        name: p.name === 'Untitled video' ? t.name : p.name,
+        width: t.width,
+        height: t.height,
+        fill: 'color',
+        assets: [...p.assets, ...added],
+        clips,
+        overlays: [],
+        texts: t.texts.map((x) => createTextOverlay(x.start, x.patch)),
+        effects: t.effects.map((e) => createEffect(e.type, e.start, e)),
+        audio,
+      }));
+      setSelection(null);
+      seek(0);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not build the template');
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  const templateStarted = useRef(false);
+  useEffect(() => {
+    const t = VIDEO_TEMPLATES.find((x) => x.id === template);
+    if (!t || templateStarted.current) return;
+    templateStarted.current = true;
+    void applyTemplate(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template]);
 
   // ---------- Editing ----------
 
@@ -937,6 +1024,9 @@ export function VideoEditor({
           ))}
         </div>
         {project.assets.some(isLibraryAsset) && <p className="hint">＋ adds to the main track. ⧉ puts it on a video track above (layers, green screen, picture-in-picture).</p>}
+        <h4>Video templates</h4>
+        <p className="hint">Ready-made videos with titles, effects and sound. Swap in your own clips and words.</p>
+        <TemplateGallery onPick={(t) => void applyTemplate(t)} compact />
       </>
     ),
     audio: (
@@ -1285,10 +1375,13 @@ export function VideoEditor({
           <button className="icon-btn" onClick={() => setShowLook(true)} title="Editor look: themes and layout" aria-label="Editor look">
             <Icon name="palette" />
           </button>
-          <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+          <button className="icon-btn" onClick={() => setShowTour(true)} title="Guided tour" aria-label="Guided tour">
             <Icon name="help" />
           </button>
-          <button className="primary" onClick={() => setExportDialog(true)} disabled={duration <= 0 || progress !== null}>
+          <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+            <Icon name="keyboard" />
+          </button>
+          <button className="primary tour-export" onClick={() => setExportDialog(true)} disabled={duration <= 0 || progress !== null}>
             <Icon name="download" /> <span className="label">Export</span>
           </button>
         </div>
@@ -1333,15 +1426,6 @@ export function VideoEditor({
               onPointerUp={() => (dragRef.current = null)}
             />
             {project.clips.length === 0 && project.texts.length === 0 && project.overlays.length === 0 && <div className="preview-empty">Import a video or photo to get started</div>}
-            <FirstRunTips
-              storageKey="bee.tips.video"
-              title="Welcome to the video editor 🎬"
-              tips={[
-                'Import clips: they line up on the timeline automatically.',
-                'Drag clips to reorder, drag their edges to trim, and press Ctrl+B to split.',
-                'Select anything and press ◆ in Details to animate it with keyframes. Press ? for shortcuts.',
-              ]}
-            />
           </div>
           <div className="cc-player-bar">
             <span className="timecode">
@@ -1585,6 +1669,7 @@ export function VideoEditor({
       {showLook && <LookSettings onClose={() => setShowLook(false)} />}
 
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
+      {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
       {exportDialog && (
         <ExportDialog
