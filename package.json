@@ -17,6 +17,8 @@
     "test:e2e:unique": "node e2e/unique.mjs"
   },
   "dependencies": {
+    "jsqr": "^1.4.0",
+    "qrcode-generator": "^2.0.4",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
@@ -24,9 +26,9 @@
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "4.7.0",
+    "playwright": "1.64.1",
     "typescript": "5.6.3",
     "vite": "6.4.4",
-    "vitest": "4.1.11",
-    "playwright": "1.64.1"
+    "vitest": "4.1.11"
   }
 }

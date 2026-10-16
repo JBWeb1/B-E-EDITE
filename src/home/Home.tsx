@@ -4,7 +4,8 @@ import { createDoc } from '../design/model';
 import { toFile } from '../design/pages';
 import { designThumbnail } from '../design/render';
 import { SIZE_PRESETS, TEMPLATES } from '../design/templates';
-import { deleteProject, listProjects, loadDesignProject, loadVideoProject, newProjectId } from '../lib/projects';
+import { deleteProject, listProjects, loadDesignProject, loadVideoProject, newProjectId, putMedia, saveVideoProject } from '../lib/projects';
+import { attachMedia, unpackProject } from '../lib/bundle';
 import type { ProjectSummary } from '../lib/projects';
 import { Icon } from '../ui/Icon';
 import { useInstall } from '../lib/install';
@@ -64,6 +65,18 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
     await refresh();
   };
 
+  const openProjectFile = async (f: File) => {
+    try {
+      const { project, files } = await unpackProject(f);
+      const id = newProjectId();
+      for (const [assetId, blob] of files) await putMedia(assetId, blob);
+      const opened = attachMedia(project, files);
+      await saveVideoProject(id, opened);
+      onOpen({ kind: 'video', width: opened.width, height: opened.height, project: opened, projectId: id });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not open that file');
+    }
+  };
   const categories = ['All', ...new Set(TEMPLATES.map((t) => t.category))];
   const shown = (projects ?? []).filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()));
 
@@ -117,6 +130,20 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
             </span>
           </button>
         </div>
+        <label className="open-file link">
+          <Icon name="folder" size={15} /> Open a project file (.bemotion)
+          <input
+            type="file"
+            accept=".bemotion,application/x-bemotion"
+            hidden
+            aria-label="Open a project file"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              if (f) void openProjectFile(f);
+            }}
+          />
+        </label>
       </header>
 
       {projects && projects.length > 0 && (

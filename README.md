@@ -91,6 +91,12 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - Pick any step to compare it **side by side** with now at any moment of the video, with a list of what changed since. **Go back to this** jumps there, and Redo still brings you forward again
 - **Save a version** by name (up to 20). Saved versions stay with the project after you close it, and can be restored at any time
 
+### 🔗 Share & connect (no server, no account)
+- **Send from your phone**: press **Share → Send from your phone**, scan the QR code with your phone, then hold the phone's code up to the computer's camera (or paste it). Videos and photos go **straight from the phone to the computer**, with no upload and no cable
+- **Edit together, live**: share the invitation link with another computer or phone. They get the whole project with its media, and every change shows on both screens. The badge at the top shows when you are live
+- **Project file**: **Download project file** saves the whole project with its media as one `.bemotion` file. Open it on any device with **Open a project file** on the home screen
+- Devices connect directly with WebRTC. The codes are only swapped by QR code or copy-paste. It works best with both devices on the same Wi-Fi (some strict networks block direct connections)
+
 ### 🎨 Design editor (Canva-style)
 - **Same CapCut-style workspace as the video editor**: library tabs on the left, the canvas in the middle with undo, Present and zoom underneath, details on the right, and the pages along the bottom like a timeline
 - Canvas sizes for Instagram post/story, YouTube thumbnail, presentation, Facebook cover, A4 poster

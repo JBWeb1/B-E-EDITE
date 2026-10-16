@@ -28,6 +28,9 @@ import { PreflightDialog, SafeZoneOverlay } from './PreflightDialog';
 import { RecipesDialog } from './RecipesDialog';
 import { PostKitDialog } from './PostKitDialog';
 import { HistoryDialog } from './HistoryDialog';
+import { ShareDialog } from './ShareDialog';
+import { useLive } from './useLive';
+import type { Peer } from '../lib/p2p';
 import { restoreVersion, saveVersion } from './versions';
 import type { DesignFile } from '../design/types';
 import { applyRecipe } from './recipes';
@@ -221,8 +224,11 @@ export function VideoEditor({
   projectId,
   template,
   onOpenDesign,
+  live,
 }: {
   onExit: () => void;
+  /** Joined someone's live editing session: stay in sync with them. */
+  live?: Peer;
   /** Open a design (made by the post kit) in the design editor. */
   onOpenDesign?: (file: DesignFile, projectId: string) => void;
   aspect?: { width: number; height: number };
@@ -235,6 +241,9 @@ export function VideoEditor({
     initialProject ? normalizeProject(initialProject) : createProject(aspect?.width, aspect?.height),
   );
   const { state: project, set, setTransient, mark } = history;
+  /** Live session this editor started (Share → Edit together). */
+  const [hostedPeer, setHostedPeer] = useState<Peer | null>(null);
+  const liveSession = useLive(live ?? hostedPeer, project, (p) => set(p), !!hostedPeer && !live);
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [selection, setSelection] = useState<Selection>(null);
@@ -251,6 +260,7 @@ export function VideoEditor({
   const [recipesOpen, setRecipesOpen] = useState(false);
   const [postKit, setPostKit] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [platform, setPlatform] = useState<Platform>(() => defaultPlatform(initialProject ?? { width: aspect?.width ?? 16, height: aspect?.height ?? 9 }));
   const [showZones, setShowZones] = useState(false);
   // Follow the video's shape: vertical videos default to TikTok, landscape to YouTube.
@@ -1480,6 +1490,14 @@ export function VideoEditor({
           <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="keyboard" />
           </button>
+          {liveSession.state !== 'off' && (
+            <span className={`live-badge ${liveSession.state}`} title={liveSession.state === 'live' ? 'Live editing: changes show on both screens' : 'The other device left'}>
+              <span className="dot" /> {liveSession.state === 'live' ? (liveSession.receiving !== null ? `Live · ${Math.round(liveSession.receiving * 100)}%` : 'Live') : 'Live ended'}
+            </span>
+          )}
+          <button onClick={() => setShareOpen(true)} title="Send from your phone, edit together live, or download the project file">
+            <Icon name="upload" /> <span className="label">Share</span>
+          </button>
           <button onClick={() => setPostKit(true)} disabled={duration <= 0 || progress !== null} title="Post kit: thumbnail, post, story, caption, hashtags and chapters">
             <Icon name="sparkles" /> <span className="label">Post kit</span>
           </button>
@@ -1790,6 +1808,15 @@ export function VideoEditor({
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
       {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
+      {shareOpen && (
+        <ShareDialog
+          project={project}
+          liveActive={liveSession.state === 'live'}
+          onImport={(files) => void importFiles(files)}
+          onLive={setHostedPeer}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
       {historyOpen && (
         <HistoryDialog
           steps={history.steps}

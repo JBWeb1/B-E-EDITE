@@ -21,7 +21,8 @@ const check = (name, ok, detail = '') => {
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
-  args: ['--autoplay-policy=no-user-gesture-required'],
+  // Plain local addresses for WebRTC, so two pages on this machine can connect directly.
+  args: ['--autoplay-policy=no-user-gesture-required', '--disable-features=WebRtcHideLocalIpsWithMdns'],
 });
 const errors = [];
 const newContext = async (opts = {}) => {
@@ -207,6 +208,91 @@ await page.locator('.clip-item').nth(1).waitFor({ timeout: 10000 }).catch(() => 
 check('saved version survives a reload and restores', (await page.locator('.clip-item').count()) === 2 && (await page.locator('.text-item').count()) === 1);
 const restoredPixel = await page.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(5, 5, 1, 1).data));
 check('restored clips still play their media', restoredPixel[0] > 150 || restoredPixel[2] > 150, restoredPixel.join(','));
+
+// ---------- Phone to computer (direct, no server)
+await page.goto(`${BASE}/?new=video`);
+await page.getByRole('button', { name: 'Share' }).click();
+const share = page.getByRole('dialog', { name: 'Share and connect' });
+await share.getByRole('button', { name: /Send from your phone/ }).click();
+const inviteBox = share.getByRole('textbox', { name: 'Invitation link' });
+await inviteBox.waitFor({ timeout: 15000 });
+const invite = await inviteBox.inputValue();
+check('computer shows a QR code and link for the phone', invite.includes('#pair=') && (await share.locator('.qr svg').count()) === 1, invite.slice(0, 60) + '…');
+const phoneCtx = await newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+const phone = await phoneCtx.newPage();
+watch(phone, 'phone ');
+await phone.goto(invite);
+const answerBox = phone.getByRole('textbox', { name: 'Answer code' });
+await answerBox.waitFor({ timeout: 15000 });
+check('phone answers with its own QR code', (await phone.locator('.qr svg').count()) === 1);
+await share.getByRole('textbox', { name: 'Answer code' }).fill(await answerBox.inputValue());
+await share.getByRole('button', { name: 'Connect' }).click();
+await share.getByText('Phone connected ✓').waitFor({ timeout: 20000 });
+await phone.getByText('Connected ✓').waitFor({ timeout: 20000 });
+check('phone and computer connect directly', true);
+await phone.locator('input[aria-label="Choose files to send"]').setInputFiles(`${FIX}/red.webm`);
+await phone.getByText('Sent ✓').waitFor({ timeout: 20000 });
+await page.locator('.clip-item').first().waitFor({ timeout: 20000 });
+check('clip sent from the phone lands on the timeline', (await page.locator('.clip-item').count()) === 1 && (await page.locator('.asset', { hasText: 'red' }).count()) === 1);
+await share.getByRole('button', { name: 'Disconnect' }).click();
+await phone.getByText('Disconnected').waitFor({ timeout: 10000 }).catch(() => {});
+check('phone sees the computer disconnect', (await phone.getByText('Disconnected').count()) === 1);
+await phoneCtx.close();
+
+// ---------- Live editing between two devices
+await page.getByRole('button', { name: 'Share' }).click();
+await share.getByRole('button', { name: /Edit together, live/ }).click();
+await inviteBox.waitFor({ timeout: 15000 });
+const liveLink = await inviteBox.inputValue();
+check('live invitation link', liveLink.includes('#live='));
+const friendCtx = await newContext();
+const friend = await friendCtx.newPage();
+watch(friend, 'friend ');
+await friend.goto(liveLink);
+const friendAnswer = friend.getByRole('textbox', { name: 'Answer code' });
+await friendAnswer.waitFor({ timeout: 15000 });
+await share.getByRole('textbox', { name: 'Answer code' }).fill(await friendAnswer.inputValue());
+await share.getByRole('button', { name: 'Connect' }).click();
+await page.locator('.live-badge.live').waitFor({ timeout: 20000 });
+await friend.locator('.clip-item').first().waitFor({ timeout: 30000 });
+check('friend receives the project with its media', (await friend.locator('.clip-item').count()) === 1);
+check('both show the live badge', (await friend.locator('.live-badge.live').count()) === 1);
+await settle(friend);
+await libTab('Titles', friend);
+await friend.getByRole('button', { name: 'Title: Name bar' }).click();
+await page.locator('.text-item').first().waitFor({ timeout: 15000 });
+check("friend's title appears on my screen", (await page.locator('.text-item').count()) === 1);
+await page.locator('.panel input[type=file]').first().setInputFiles(`${FIX}/blue.webm`);
+await friend.locator('.clip-item').nth(1).waitFor({ timeout: 30000 });
+await libTab('Media', friend);
+check('my new clip (with its media) appears on theirs', (await friend.locator('.clip-item').count()) === 2 && (await friend.locator('.asset', { hasText: 'blue' }).count()) >= 1, `${await friend.locator('.clip-item').count()} clips, ${await friend.locator('.asset').allInnerTexts()}`);
+const friendPixel = await friend.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(5, 5, 1, 1).data));
+check('their player shows the shared video', friendPixel[0] > 150 || friendPixel[2] > 150, friendPixel.join(','));
+await friendCtx.close();
+await page.locator('.live-badge.ended').waitFor({ timeout: 20000 }).catch(() => {});
+check('my editor notices when they leave', (await page.locator('.live-badge.ended').count()) === 1);
+
+// ---------- Project file
+await page.waitForTimeout(800);
+await page.getByRole('button', { name: 'Share' }).click();
+const bundleDl = page.waitForEvent('download');
+await share.getByRole('button', { name: /Download project file/ }).click();
+const bundle = await bundleDl;
+const bundlePath = path.join(OUT, bundle.suggestedFilename());
+await bundle.saveAs(bundlePath);
+check('project file downloads', bundle.suggestedFilename().endsWith('.bemotion') && fs.statSync(bundlePath).size > 20000, `${fs.statSync(bundlePath).size} bytes`);
+const otherCtx = await newContext();
+const other = await otherCtx.newPage();
+watch(other, 'other ');
+await other.goto(BASE);
+await other.locator('input[aria-label="Open a project file"]').setInputFiles(bundlePath);
+await other.locator('.clip-item').nth(1).waitFor({ timeout: 20000 });
+check('project file opens on another device with everything', (await other.locator('.clip-item').count()) === 2 && (await other.locator('.text-item').count()) === 1);
+await other.waitForTimeout(1500);
+await other.goto(BASE);
+await other.locator('.project-card').first().waitFor({ timeout: 5000 }).catch(() => {});
+check('opened project is saved to My projects', (await other.locator('.project-card').count()) === 1, String(await other.locator('.project-card').count()));
+await otherCtx.close();
 
 // MORE CHECKS BELOW
 
