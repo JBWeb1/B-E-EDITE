@@ -12,7 +12,7 @@ import type { Peer } from './lib/p2p';
 export type Screen =
   | { kind: 'home' }
   | { kind: 'design'; file: DesignFile; projectId: string }
-  | { kind: 'video'; width: number; height: number; projectId: string; project?: VideoProject; template?: string; live?: Peer }
+  | { kind: 'video'; width: number; height: number; projectId: string; project?: VideoProject; template?: string; live?: Peer; autoEdit?: boolean }
   | { kind: 'phone'; code: string }
   | { kind: 'live-join'; code: string };
 
@@ -61,6 +61,7 @@ function Screens({ screen, setScreen }: { screen: Screen; setScreen: (s: Screen)
         projectId={screen.projectId}
         template={screen.template}
         live={screen.live}
+        autoEdit={screen.autoEdit}
         onOpenDesign={(file, projectId) => setScreen({ kind: 'design', file, projectId })}
         onExit={goHome}
       />

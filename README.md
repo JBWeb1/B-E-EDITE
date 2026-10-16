@@ -69,6 +69,15 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - Every design and video is saved automatically in your browser (IndexedDB) and listed on the home screen with a preview
 - Open, search and delete projects; video media files are stored with the project
 
+### ✨ Auto edit with AI
+- **Raw clips in, finished video out.** Start from **Auto edit with AI** on the home screen, **✨ Auto edit my clips** in the Media tab, or the AI tab
+- It **watches every clip** (sharpness, light, movement, sound, speech and shot changes) and keeps the best moments. It never uses blurry or dark parts and never cuts across a shot change
+- It **finds the beat** of your song (tempo and beat times) and cuts on it
+- **Six styles**: Hype / TikTok (best shot first, punch zooms on the beat), Cinematic (long shots, fades, film look, widescreen bars), Vlog and Talking / tutorial (keeps what you say and cuts the pauses, optional captions), Travel montage (golden colours, slides with whooshes, location title), Product promo (sharpest shots, sparkles, call to action)
+- Or **describe it**: “a 30 second energetic travel video for TikTok with warm colours called ‘Lisbon’”. It reads the style, length, shape, colours, pace, title, captions and music from the sentence
+- Shows **why it made each cut**, **Try another** gives a different take, and **Undo** takes it all back. The result is an ordinary timeline you can keep editing
+- Runs entirely on your device
+
 ### 🛫 Pre-flight check (only in B-E Motion)
 - Press **Check** (top bar, or from Export) before posting. It watches your video and tells you whether it will work:
   - **Hook score** (0–100) for the first 3 seconds: movement, a title on screen, sound, pace and the first frame, each with tips and one-click fixes

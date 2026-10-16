@@ -124,9 +124,10 @@ const RecipesDialog = lazy(() => import('./RecipesDialog').then((m) => ({ defaul
 const PostKitDialog = lazy(() => import('./PostKitDialog').then((m) => ({ default: m.PostKitDialog })));
 const HistoryDialog = lazy(() => import('./HistoryDialog').then((m) => ({ default: m.HistoryDialog })));
 const ShareDialog = lazy(() => import('./ShareDialog').then((m) => ({ default: m.ShareDialog })));
+const AutoEditDialog = lazy(() => import('./AutoEditDialog').then((m) => ({ default: m.AutoEditDialog })));
 /** Fetch them in the background once the editor is idle, so they open instantly (and work offline). */
 const prefetchDialogs = () => {
-  for (const load of [() => import('./AIPanel'), () => import('./ExportDialog'), () => import('./PreflightDialog'), () => import('./RecipesDialog'), () => import('./PostKitDialog'), () => import('./HistoryDialog'), () => import('./ShareDialog')]) void load().catch(() => {});
+  for (const load of [() => import('./AIPanel'), () => import('./ExportDialog'), () => import('./PreflightDialog'), () => import('./RecipesDialog'), () => import('./PostKitDialog'), () => import('./HistoryDialog'), () => import('./ShareDialog'), () => import('./AutoEditDialog')]) void load().catch(() => {});
 };
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -233,7 +234,10 @@ export function VideoEditor({
   template,
   onOpenDesign,
   live,
+  autoEdit,
 }: {
+  /** Open Auto edit straight away (from the home screen). */
+  autoEdit?: boolean;
   onExit: () => void;
   /** Joined someone's live editing session: stay in sync with them. */
   live?: Peer;
@@ -269,6 +273,7 @@ export function VideoEditor({
   const [postKit, setPostKit] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [autoEditOpen, setAutoEditOpen] = useState(!!autoEdit);
   const [platform, setPlatform] = useState<Platform>(() => defaultPlatform(initialProject ?? { width: aspect?.width ?? 16, height: aspect?.height ?? 9 }));
   const [showZones, setShowZones] = useState(false);
   // Follow the video's shape: vertical videos default to TikTok, landscape to YouTube.
@@ -1120,6 +1125,9 @@ export function VideoEditor({
             }}
           />
         </label>
+        <button className="block autoedit-media-btn" onClick={() => setAutoEditOpen(true)} title="Raw clips in, finished video out">
+          ✨ Auto edit my clips
+        </button>
         {importing > 0 && <p className="hint">Importing {importing} file(s)…</p>}
         {project.assets.filter(isLibraryAsset).length === 0 && (
           <div className="library-empty">
@@ -1440,6 +1448,7 @@ export function VideoEditor({
     ai: (
       <Suspense fallback={<p className="hint">Loading…</p>}>
       <AIPanel
+        onAutoEdit={() => setAutoEditOpen(true)}
         project={project}
         time={time}
         set={set}
@@ -1825,6 +1834,33 @@ export function VideoEditor({
       {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
       <Suspense fallback={null}>
+      {autoEditOpen && (
+        <AutoEditDialog
+          project={project}
+          onImport={(files) => importFiles(files)}
+          onUndo={history.undo}
+          onClose={() => setAutoEditOpen(false)}
+          onApply={async (built) => {
+            // Sound effects the style asked for (made once, then reused).
+            const added: MediaAsset[] = [];
+            const audio = [...built.project.audio];
+            for (const s of built.sfx) {
+              const fx = SOUND_EFFECTS.find((f) => f.id === s.id);
+              if (!fx) continue;
+              let asset = [...built.project.assets, ...added].find((a) => a.sfxId === fx.id);
+              if (!asset) {
+                asset = await addAssetFile(soundEffectFile(fx), { sfxId: fx.id, name: fx.name });
+                added.push(asset);
+              }
+              audio.push({ ...createAudioClip(asset, s.at), volume: 0.7 });
+            }
+            engineRef.current?.pause();
+            set({ ...built.project, assets: [...built.project.assets, ...added], audio });
+            setSelection(null);
+            seek(0);
+          }}
+        />
+      )}
       {shareOpen && (
         <ShareDialog
           project={project}

@@ -29,7 +29,10 @@ export function AIPanel({
   setProgress,
   addCaptions,
   addAudioFile,
+  onAutoEdit,
 }: {
+  /** Open the Auto edit dialog. */
+  onAutoEdit?: () => void;
   project: VideoProject;
   time: number;
   set: (fn: (p: VideoProject) => VideoProject) => void;
@@ -213,6 +216,13 @@ export function AIPanel({
 
   return (
     <>
+      {onAutoEdit && (
+        <button className="autoedit-card" onClick={onAutoEdit}>
+          <span className="emoji">✨</span>
+          <strong>Auto edit</strong>
+          <small>Raw clips in, finished video out: best moments, cut to the beat, styled for you.</small>
+        </button>
+      )}
       <p className="hint ai-engine">
         <Icon name="wand" size={14} /> {engineNote} ·{' '}
         <button className="link" onClick={() => setShowSettings((s) => !s)} aria-expanded={showSettings}>

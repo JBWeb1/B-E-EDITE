@@ -295,6 +295,59 @@ await other.locator('.project-card').first().waitFor({ timeout: 5000 }).catch(()
 check('opened project is saved to My projects', (await other.locator('.project-card').count()) === 1, String(await other.locator('.project-card').count()));
 await otherCtx.close();
 
+// ---------- Auto edit
+await page.goto(BASE);
+await page.locator('.hero-card.auto').click();
+const ae = page.getByRole('dialog', { name: 'Auto edit' });
+await ae.waitFor({ timeout: 10000 });
+check('home opens auto edit straight away', true);
+await ae.locator('input[aria-label="Add clips"]').setInputFiles([`${FIX}/moving.webm`, `${FIX}/talk.webm`, `${FIX}/red.webm`, `${FIX}/beat120.wav`]);
+await ae.locator('.autoedit-clip.on').nth(2).waitFor({ timeout: 20000 });
+await page.waitForFunction(() => document.querySelector('select[aria-label="Music"]')?.selectedOptions[0]?.textContent?.includes('beat120'), null, { timeout: 10000 });
+check('clips and the song are picked up', (await ae.locator('.autoedit-clip.on').count()) === 3);
+await ae.getByRole('textbox', { name: 'Describe your video' }).fill('a 10 second energetic travel video for TikTok with warm colours called "Summer days"');
+const chips = await ae.locator('.chip').allInnerTexts();
+check('understands the description', ['Travel montage style', '10 seconds long', 'golden hour colours', 'title “Summer days”'].every((w) => chips.some((c) => c.includes(w))), chips.join(' | '));
+check('style follows the description', (await ae.getByRole('radio', { name: /Travel montage/ }).getAttribute('aria-checked')) === 'true');
+await ae.getByRole('button', { name: /Auto edit 3 clips/ }).click();
+const result = page.getByRole('dialog', { name: 'Auto edit result' });
+await result.waitFor({ timeout: 90000 });
+const resultText = await result.innerText();
+const bpm = Number(resultText.match(/(\d+) BPM/)?.[1]);
+check('finds the beat of the song', Math.abs(bpm - 120) <= 3 || Math.abs(bpm - 60) <= 2 || Math.abs(bpm - 240) <= 5, resultText.split('\n').slice(0, 2).join(' '));
+const cuts = await page.locator('.clip-item').count();
+check('builds a multi-cut edit', cuts >= 4, `${cuts} cuts`);
+const tc = (await page.locator('.timecode').innerText()).split('/').pop().trim();
+check('about the asked length', /^0:(09|10|11)\./.test(tc), tc + ' / ' + resultText.replace(/\n/g, ' ').slice(0, 160));
+check('adds the title and the song', (await page.locator('.text-item', { hasText: 'Summer days' }).count()) === 1 && (await page.locator('.audio-item', { hasText: 'beat120' }).count()) === 1);
+check('explains every cut', (await result.locator('.autoedit-cuts li').count()) === cuts);
+const editA = await page.locator('.clip-item').allInnerTexts();
+await result.getByRole('button', { name: 'Try another' }).click();
+await result.waitFor({ timeout: 90000 });
+await settle();
+const editB = await page.locator('.clip-item').allInnerTexts();
+check('try another gives a different edit', editB.length >= 4 && editB.join('|') !== editA.join('|'));
+await result.getByRole('button', { name: 'Keep it' }).click();
+check('keep it closes the panel', (await result.count()) === 0);
+const vertical = await page.locator('canvas.preview').evaluate((c) => c.height / c.width);
+check('vertical for TikTok', Math.abs(vertical - 16 / 9) < 0.02);
+
+// Talking video: keeps speech, cuts the pauses
+await libTab('AI');
+await page.locator('.autoedit-card').click();
+await ae.waitFor();
+for (const name of ['moving.webm', 'red.webm']) await ae.getByRole('checkbox', { name: `Use ${name}` }).uncheck();
+await ae.getByRole('radio', { name: /Talking/ }).click();
+await ae.getByRole('checkbox', { name: /Captions from speech/ }).uncheck();
+await ae.getByRole('button', { name: /Auto edit 1 clip/ }).click();
+await result.waitFor({ timeout: 90000 });
+const talkNotes = await result.locator('.autoedit-notes').innerText();
+check('talking style cuts the pauses', /pauses/.test(talkNotes) && (await page.locator('.clip-item').count()) === 3, `${await page.locator('.clip-item').count()} cuts; ${talkNotes}`);
+await result.getByRole('button', { name: 'Undo' }).click();
+await ae.waitFor();
+check('undo goes back to the settings', (await ae.count()) === 1);
+await ae.getByRole('button', { name: 'Close' }).click();
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

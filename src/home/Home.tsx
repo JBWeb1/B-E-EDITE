@@ -129,6 +129,15 @@ export function Home({ onOpen }: { onOpen: (s: Screen) => void }) {
               <small>Posts, thumbnails, presentations — animate & export as video</small>
             </span>
           </button>
+          <button className="hero-card auto" onClick={() => onOpen({ kind: 'video', width: 720, height: 1280, projectId: newProjectId(), autoEdit: true })}>
+            <span className="hero-icon">
+              <Icon name="wand" size={26} />
+            </span>
+            <span>
+              <strong>Auto edit with AI</strong>
+              <small>Drop in raw clips and a song — get a finished, beat-synced video</small>
+            </span>
+          </button>
         </div>
         <label className="open-file link">
           <Icon name="folder" size={15} /> Open a project file (.bemotion)
