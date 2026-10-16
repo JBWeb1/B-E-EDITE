@@ -1,5 +1,6 @@
 import { rampRate, valueAt } from './anim';
-import { denoiseFilters, watermarkBox } from './export';
+import { denoiseFilters, pickMimeType, watermarkBox } from './export';
+import type { VideoFormat } from './export';
 import { gradeFilterMarkup, gradeId, isNeutral } from './grade';
 import { ChromaKeyer } from './keyer';
 import { blendOp, blurSamples, clipFrame, cropRect, overlayFrame } from './layers';
@@ -34,6 +35,8 @@ export interface RecordOptions {
   fps: number;
   /** Video bits per second. */
   bitrate: number;
+  /** File type to make (falls back to whatever the browser can record). */
+  format?: VideoFormat;
 }
 
 /** Everything `paintLayer` needs to draw one clip or layer. */
@@ -1050,9 +1053,8 @@ export class VideoEngine {
     const dest = audioCtx.createMediaStreamDestination();
     this.master!.connect(dest);
     const stream = new MediaStream([...this.canvas.captureStream(opts.fps).getVideoTracks(), ...dest.stream.getAudioTracks()]);
-    const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((m) =>
-      MediaRecorder.isTypeSupported(m),
-    );
+    const supported = (t: string) => MediaRecorder.isTypeSupported(t);
+    const mimeType = pickMimeType(opts.format ?? 'webm', supported) ?? pickMimeType('webm', supported) ?? pickMimeType('mp4', supported) ?? undefined;
     const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: opts.bitrate });
     const chunks: Blob[] = [];
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);

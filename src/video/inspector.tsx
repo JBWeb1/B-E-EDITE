@@ -564,3 +564,19 @@ export function saveLooks(list: SavedLook[]) {
 }
 
 export { NEUTRAL_WHEEL, ColorField };
+
+/** "Follow something in the video": pick a point on the player and the item follows it. */
+export function MotionTrackSection({ waiting, tracked, onStart, onClear }: { waiting: boolean; tracked: boolean; onStart: () => void; onClear: () => void }) {
+  return (
+    <>
+      <h4>Motion tracking</h4>
+      <p className="hint">Make this follow something that moves in the video: put the playhead where it starts, press the button, then click the thing to follow on the player.</p>
+      <div className="row">
+        <button className={waiting ? 'active' : ''} onClick={onStart} aria-pressed={waiting}>
+          <Icon name="zoomIn" size={15} /> {waiting ? 'Click the player…' : 'Track motion'}
+        </button>
+        {tracked && <button onClick={onClear}>Remove tracking</button>}
+      </div>
+    </>
+  );
+}

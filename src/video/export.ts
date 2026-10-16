@@ -279,3 +279,29 @@ export async function mixSoundtrack(p: VideoProject, onProgress?: (f: number) =>
   onProgress?.(1);
   return new Blob([encodeWavChannels([out.getChannelData(0), out.getChannelData(1)], rate)], { type: 'audio/wav' });
 }
+
+// ---------- Container / codec choice ----------
+
+export type VideoFormat = 'mp4' | 'webm';
+
+const MIME_PREFERENCES: Record<VideoFormat, string[]> = {
+  // H.264 + AAC plays everywhere (phones, Windows, Mac, every social site).
+  mp4: ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a', 'video/mp4;codecs=avc1', 'video/mp4'],
+  webm: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'],
+};
+
+/** The best recording type the browser supports for a format, or null if it can't make that format. */
+export function pickMimeType(format: VideoFormat, isSupported: (type: string) => boolean): string | null {
+  return MIME_PREFERENCES[format].find((t) => isSupported(t)) ?? null;
+}
+
+/** Formats this browser can record, best first (MP4 with H.264 is preferred when available). */
+export function availableFormats(isSupported: (type: string) => boolean): VideoFormat[] {
+  const out: VideoFormat[] = [];
+  if (pickMimeType('mp4', isSupported)) out.push('mp4');
+  if (pickMimeType('webm', isSupported)) out.push('webm');
+  return out;
+}
+
+/** File extension for a recorded blob type. */
+export const extensionFor = (mime: string) => (mime.includes('mp4') ? 'mp4' : 'webm');

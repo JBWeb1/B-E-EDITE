@@ -14,12 +14,12 @@ import { lookAttributes, lookStyle, useLook } from '../lib/look';
 import { Icon } from '../ui/Icon';
 import type { IconName } from '../ui/Icon';
 import { Logo } from '../ui/Logo';
-import { keyAt, setKey, transformAt } from './anim';
+import { keyAt, setKey, sourceTimeAt, transformAt } from './anim';
 import type { Keyframes } from './anim';
 import { loadFont, probeMedia, VideoEngine } from './engine';
 import { ExportDialog } from './ExportDialog';
 import type { VideoExportChoice } from './ExportDialog';
-import { mixSoundtrack } from './export';
+import { extensionFor, mixSoundtrack } from './export';
 import { LOOKS } from './grade';
 import type { ColorGrade, LookId } from './grade';
 import {
@@ -30,6 +30,7 @@ import {
   GreenScreenSection,
   KeyframeTools,
   loadSavedLooks,
+  MotionTrackSection,
   MaskSection,
   saveLooks,
   Section,
@@ -38,7 +39,9 @@ import {
 } from './inspector';
 import type { SavedLook } from './inspector';
 import { DEFAULT_KEY } from './keyer';
-import { clipFrame, hitFrame, overlayFrame } from './layers';
+import { clipFrame, cropRect, hitFrame, overlayFrame } from './layers';
+import { grabGrayFrames } from './grab';
+import { pathToKeys, trackSequence } from './tracker';
 import { SFX_CATEGORIES, SOUND_EFFECTS, soundEffectFile } from './sfx';
 import type { SoundEffect } from './sfx';
 import { ANIMATORS, FONTS, SHAPE_ANIMS, SHAPES, TEMPLATES, textBounds, WORD_MODES } from './textfx';
@@ -220,6 +223,8 @@ export function VideoEditor({
   /** Waiting for a click on the player to pick a green-screen colour for this item. */
   const [picking, setPicking] = useState<{ kind: 'clip' | 'overlay'; id: string } | null>(null);
   const [myLooks, setMyLooks] = useState<SavedLook[]>(loadSavedLooks);
+  /** Waiting for a click on the player: the point this item should follow (motion tracking). */
+  const [trackPick, setTrackPick] = useState<{ kind: 'text' | 'overlay'; id: string } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -619,6 +624,10 @@ export function VideoEditor({
   const keyHandler = useRef<(e: KeyboardEvent) => void>();
   {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && trackPick) {
+        setTrackPick(null);
+        return;
+      }
       if (e.key === 'Escape' && picking) {
         setPicking(null);
         if (engineRef.current) engineRef.current.keyingOff = false;
@@ -682,10 +691,83 @@ export function VideoEditor({
     setPicking(target);
   };
 
+  /**
+   * Motion tracking: follow the point (px, py) (fractions of the frame) through the main
+   * clip from the playhead, and write position keyframes so the item moves with it.
+   */
+  const runTrack = async (target: { kind: 'text' | 'overlay'; id: string }, px: number, py: number) => {
+    const W = project.width;
+    const H = project.height;
+    const t0 = time;
+    const hit = locate(project.clips, t0);
+    const asset = hit && assetOf(hit.clip.assetId);
+    if (!hit || asset?.kind !== 'video' || !asset.width || !asset.height) {
+      alert('Put the playhead over a video clip on the main track, then try again. Tracking follows things that move in that video.');
+      return;
+    }
+    const text = target.kind === 'text' ? project.texts.find((t) => t.id === target.id) : undefined;
+    const layer = target.kind === 'overlay' ? project.overlays.find((o) => o.id === target.id) : undefined;
+    const item = text ?? layer;
+    if (!item) return;
+    const itemEnd = text ? text.start + text.duration : layer!.start + layer!.out - layer!.in;
+    const t1 = Math.min(itemEnd, hit.end);
+    if (t1 - t0 < 0.2) {
+      alert('Move the playhead to where the movement starts (inside this item and the video clip).');
+      return;
+    }
+    const clip = hit.clip;
+    const len = clipDuration(clip);
+    const frameAt = (t: number) => clipFrame(clip, asset, W, H, t - hit.start, (t - hit.start) / len);
+    const src = cropRect(asset.width, asset.height, clip.crop);
+    // Track in a small copy of the video: fast, and plenty for following an object.
+    const gw = 240;
+    const gh = Math.max(2, Math.round((gw * asset.height) / asset.width));
+    const toSource = (x: number, y: number, t: number) => {
+      const f = frameAt(t);
+      let u = (x * W - (f.cx - f.w / 2)) / f.w;
+      const v = (y * H - (f.cy - f.h / 2)) / f.h;
+      if (clip.mirror) u = 1 - u;
+      return { x: ((src.sx + u * src.sw) / asset.width!) * gw, y: ((src.sy + v * src.sh) / asset.height!) * gh };
+    };
+    const fromSource = (sx: number, sy: number, t: number) => {
+      const f = frameAt(t);
+      let u = ((sx / gw) * asset.width! - src.sx) / src.sw;
+      const v = ((sy / gh) * asset.height! - src.sy) / src.sh;
+      if (clip.mirror) u = 1 - u;
+      return { x: (f.cx - f.w / 2 + u * f.w) / W, y: (f.cy - f.h / 2 + v * f.h) / H };
+    };
+    const times: number[] = [];
+    for (let t = t0; t <= t1 + 1e-6; t += 1 / 15) times.push(t);
+    engineRef.current?.pause();
+    setProgress({ label: 'Tracking motion…', value: 0 });
+    try {
+      const frames = await grabGrayFrames(asset.url, times.map((t) => sourceTimeAt(clip, t - hit.start)), gw, gh, (v) => setProgress({ label: 'Tracking motion…', value: v * 0.95 }));
+      const start = toSource(px, py, t0);
+      const path = trackSequence(frames, start.x, start.y, { patch: 7, search: 12 });
+      const points = path.map((q, i) => ({ t: times[i] - item.start, ...fromSource(q.x, q.y, times[i]) }));
+      const now0 = text ? transformAt(text, t0 - text.start, 1, { x: text.x, y: text.y }) : overlayFrame(layer!, assetOf(layer!.assetId)!, W, H, t0 - layer!.start);
+      const at = 'cx' in now0 ? { x: now0.cx / W, y: now0.cy / H } : { x: now0.x, y: now0.y };
+      const keys = pathToKeys(points, { x: at.x - points[0].x, y: at.y - points[0].y });
+      const next = { ...item.keys, x: keys.x, y: keys.y };
+      if (text) updateItem('texts', text.id, { keys: next });
+      else updateItem('overlays', layer!.id, { keys: next });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Tracking failed');
+    } finally {
+      setProgress(null);
+    }
+  };
+
   const onPreviewDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     const p = previewPoint(e);
     const W = project.width;
     const H = project.height;
+    if (trackPick) {
+      const target = trackPick;
+      setTrackPick(null);
+      void runTrack(target, p.x, p.y);
+      return;
+    }
     if (picking) {
       const color = engineRef.current?.sampleColor(p.x, p.y) ?? DEFAULT_KEY.color;
       const fn = (x: LayerProps) => ({ ...x, chroma: { ...(x.chroma ?? DEFAULT_KEY), color } });
@@ -768,7 +850,7 @@ export function VideoEditor({
     setProgress({ label: 'Exporting video…', value: 0 });
     try {
       const blob = await engine.record((v) => setProgress({ label: 'Exporting video…', value: v }), c);
-      downloadBlob(blob, `${project.name || 'video'}.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`);
+      downloadBlob(blob, `${project.name || 'video'}.${extensionFor(blob.type)}`);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Export failed');
     } finally {
@@ -1148,7 +1230,7 @@ export function VideoEditor({
 
   return (
     <div
-      className={`editor video cc ${picking ? 'picking' : ''}`}
+      className={`editor video cc ${picking || trackPick ? 'picking' : ''}`}
       style={lookStyle(look)}
       {...lookAttributes(look)}
       onDragOver={(e) => e.preventDefault()}
@@ -1224,6 +1306,7 @@ export function VideoEditor({
           <div className="cc-panel-head">
             <span>Player</span>
             {picking && <span className="pick-hint">Click the background colour to remove · Esc to cancel</span>}
+            {trackPick && <span className="pick-hint">Click the thing to follow · Esc to cancel</span>}
           </div>
           <div className="preview-frame" ref={frameRef}>
             <canvas
@@ -1315,6 +1398,8 @@ export function VideoEditor({
                 update={updateText}
                 onSeekLocal={(t) => seek(selectedText.start + t)}
                 onUploadFont={(f) => void uploadFont(f)}
+                trackWaiting={trackPick?.id === selectedText.id}
+                onTrackStart={() => setTrackPick(trackPick ? null : { kind: 'text', id: selectedText.id })}
               />
             ) : selectedEffect ? (
               <>
@@ -1349,6 +1434,8 @@ export function VideoEditor({
                 onSeekLocal={(t) => seek(selectedOverlay.start + t)}
                 onPick={() => (picking ? setPicking(null) : startPick({ kind: 'overlay', id: selectedOverlay.id }))}
                 onTrack={(track) => updateOverlay({ track: track === 'new' ? Math.max(1, ...overlayTracks(project.overlays)) + 1 : track })}
+                trackWaiting={trackPick?.id === selectedOverlay.id}
+                onTrackStart={() => setTrackPick(trackPick ? null : { kind: 'overlay', id: selectedOverlay.id })}
               />
             ) : selectedAudio ? (
               <>
@@ -1759,6 +1846,8 @@ function OverlayInspector({
   onSeekLocal,
   onPick,
   onTrack,
+  trackWaiting,
+  onTrackStart,
 }: {
   o: OverlayClip;
   asset: MediaAsset;
@@ -1770,6 +1859,8 @@ function OverlayInspector({
   onSeekLocal: (t: number) => void;
   onPick: () => void;
   onTrack: (t: number | 'new') => void;
+  trackWaiting: boolean;
+  onTrackStart: () => void;
 }) {
   const [tab, setTab] = useState<OverlayTab>('layer');
   const isVideo = asset.kind === 'video';
@@ -1824,6 +1915,7 @@ function OverlayInspector({
         <>
           <TransformFields item={o} base={base} local={local} mark={mark} onBase={(patch, live) => update(patch, live)} update={update} sizeRange={[0.05, 1.5]} />
           <KeyframeTools item={o} local={local} length={len} base={base} mark={mark} onSeekLocal={onSeekLocal} update={update} />
+          <MotionTrackSection waiting={trackWaiting} tracked={(o.keys?.x?.length ?? 0) > 3} onStart={onTrackStart} onClear={() => update({ keys: { ...o.keys, x: undefined, y: undefined } })} />
         </>
       )}
       {current === 'cutout' && (
@@ -1882,6 +1974,8 @@ function TextInspector({
   update,
   onSeekLocal,
   onUploadFont,
+  trackWaiting,
+  onTrackStart,
 }: {
   text: TextOverlay;
   fonts: MediaAsset[];
@@ -1890,6 +1984,8 @@ function TextInspector({
   update: (patch: Partial<TextOverlay>, live?: boolean) => void;
   onSeekLocal: (t: number) => void;
   onUploadFont: (f: File) => void;
+  trackWaiting: boolean;
+  onTrackStart: () => void;
 }) {
   const [tab, setTab] = useState<TextTab>('text');
   const isShape = !!text.shape;
@@ -2048,6 +2144,7 @@ function TextInspector({
         <>
           <TransformFields item={text} base={base} local={local} mark={mark} onBase={(patch, live) => update(patch, live)} update={update} sizeLabel="Scale" sizeRange={[0, 4]} />
           <KeyframeTools item={text} local={local} length={text.duration} base={base} mark={mark} onSeekLocal={onSeekLocal} update={update} />
+          <MotionTrackSection waiting={trackWaiting} tracked={(text.keys?.x?.length ?? 0) > 3} onStart={onTrackStart} onClear={() => update({ keys: { ...text.keys, x: undefined, y: undefined } })} />
         </>
       )}
     </>

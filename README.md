@@ -50,6 +50,7 @@ npm run build      # production build in dist/
 npm run preview    # serve the production build on http://localhost:4173
 npm run test:e2e   # full browser test against the preview (needs `npx playwright install chromium` once)
 npm run test:e2e:pro  # browser test for the pro tools (green screen, keyframes, export…)
+npm run test:e2e:next # browser test for MP4, motion tracking, AI tools, tour, templates, design upgrades
 ```
 
 ## Features
@@ -131,7 +132,8 @@ npm run test:e2e:pro  # browser test for the pro tools (green screen, keyframes,
 - Music track with its own trim, volume and **fade in/out** controls and **waveforms**; overlapping audio and text stack into rows
 - **Voice-over recording** from the microphone while the video plays
 - Undo/redo, keyboard shortcuts (Space, S, Del, ←/→)
-- Export to WebM (MP4 on Safari) with mixed audio; choose quality (small / standard / high) and 30 or 60 fps, with a file-size estimate
+- Export to **MP4** (H.264 in Chrome, Edge and Safari) or WebM with mixed audio; choose quality (small / standard / high) and 30 or 60 fps, with a file-size estimate
+- **Motion tracking**: select a text, sticker, shape or layer, press *Track motion* (Animate tab) and click the thing to follow on the player. It follows that object through the video and writes position keyframes for you. *Remove tracking* undoes it
 
 ## Project layout
 

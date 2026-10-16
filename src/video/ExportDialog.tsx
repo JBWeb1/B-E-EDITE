@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { formatTime } from '../lib/download';
 import { RangeField } from '../ui/fields';
 import { Icon } from '../ui/Icon';
-import { DEFAULT_WATERMARK, estimateMB, EXPORT_PRESETS, FPS_CHOICES, outputSize, presetFits, RESOLUTIONS, suggestedBitrate } from './export';
-import type { ExportPreset, Fps } from './export';
+import { availableFormats, DEFAULT_WATERMARK, estimateMB, EXPORT_PRESETS, FPS_CHOICES, outputSize, pickMimeType, presetFits, RESOLUTIONS, suggestedBitrate } from './export';
+import type { ExportPreset, Fps, VideoFormat } from './export';
 import type { VideoProject, Watermark, WatermarkPosition } from './types';
 
 const QUALITY = [
@@ -25,7 +25,10 @@ export interface VideoExportChoice {
   height: number;
   fps: Fps;
   bitrate: number;
+  format: VideoFormat;
 }
+
+const canRecord = (t: string) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t);
 
 export function ExportDialog({
   project,
@@ -52,6 +55,9 @@ export function ExportDialog({
   const [fps, setFps] = useState<Fps>(30);
   const [quality, setQuality] = useState(1);
   const [presetId, setPresetId] = useState<string | null>(null);
+  const formats = availableFormats(canRecord);
+  const [format, setFormat] = useState<VideoFormat>(formats[0] ?? 'webm');
+  const mp4IsH264 = /avc1/.test(pickMimeType('mp4', canRecord) ?? '');
   const logoInput = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -134,6 +140,24 @@ export function ExportDialog({
         </div>
         {short >= 2160 && <p className="hint">4K takes a powerful computer; if the export stutters, try 1440p.</p>}
 
+        <h4>File type</h4>
+        <div className="segmented" role="group" aria-label="File type">
+          {(['mp4', 'webm'] as const).map((f) => (
+            <button key={f} className={format === f ? 'active' : ''} disabled={!formats.includes(f)} onClick={() => setFormat(f)}>
+              {f === 'mp4' ? 'MP4' : 'WebM'}
+            </button>
+          ))}
+        </div>
+        <p className="hint">
+          {!formats.includes('mp4')
+            ? 'This browser can only make WebM. For MP4, use Chrome, Edge or Safari.'
+            : format === 'mp4'
+              ? mp4IsH264
+                ? 'MP4 (H.264) plays on every phone, computer and social site.'
+                : 'MP4 file. For the widest support (H.264), export from Chrome, Edge or Safari.'
+              : 'WebM: smaller files; YouTube, TikTok and Instagram accept it.'}
+        </p>
+
         <h4>Watermark</h4>
         <div className="row">
           <button className={wm ? 'active' : ''} onClick={() => onWatermark(wm ? null : DEFAULT_WATERMARK)} aria-pressed={!!wm}>
@@ -182,7 +206,7 @@ export function ExportDialog({
         )}
 
         <div className="export-actions">
-          <button className="primary block" onClick={() => onExport({ ...size, fps, bitrate })} disabled={duration <= 0}>
+          <button className="primary block" onClick={() => onExport({ ...size, fps, bitrate, format })} disabled={duration <= 0}>
             <Icon name="film" /> Export video
           </button>
           <div className="row">
