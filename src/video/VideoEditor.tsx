@@ -435,8 +435,10 @@ export function VideoEditor({
             texts: p.texts.map((t) => {
               if (!only.has(t.id)) return t;
               const next = Math.min(starts.find((s) => s > t.start + 0.01) ?? Infinity, footageEnd > t.start ? footageEnd : Infinity);
-              const needed = t.text.replace(/\s+/g, ' ').trim().length / 17;
-              return { ...t, duration: Math.max(t.duration, Math.min(needed, next - t.start)) };
+              const chars = t.text.replace(/\s+/g, ' ').trim().length;
+              const duration = Math.max(t.duration, Math.min(chars / 17, next - t.start));
+              // Still too fast: show it word by word, in time with the speech, instead.
+              return chars / duration > 20 ? { ...t, duration, words: 'highlight' as const, accent: t.accent ?? '#facc15' } : { ...t, duration };
             }),
           };
         });
