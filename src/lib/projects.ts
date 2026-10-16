@@ -164,8 +164,12 @@ export async function loadVideoProject(id: string): Promise<VideoProject | null>
     assets.push({ ...a, url, thumbnail: a.kind === 'image' ? url : a.thumbnail });
   }
   const ids = new Set(assets.map((a) => a.id));
+  // Saved versions point at the same media; give them today's links too.
+  const urls = new Map(assets.map((a) => [a.id, a]));
+  const versions = p.versions?.map((v) => ({ ...v, project: { ...v.project, assets: v.project.assets.map((a) => urls.get(a.id) ?? a) } }));
   return {
     ...p,
+    versions,
     assets,
     clips: p.clips.filter((c) => ids.has(c.assetId)),
     audio: p.audio.filter((c) => ids.has(c.assetId)),
@@ -181,7 +185,14 @@ export async function deleteProject(id: string): Promise<void> {
 /** Delete media files that no saved video project refers to any more. */
 async function removeUnusedMedia() {
   const all = await request<ProjectRecord[]>(PROJECTS, 'readonly', (s) => s.getAll());
-  const used = new Set(all.filter((r) => r.kind === 'video').flatMap((r) => (r.data as VideoProject).assets.map((a) => a.id)));
+  const used = new Set(
+    all
+      .filter((r) => r.kind === 'video')
+      .flatMap((r) => {
+        const p = r.data as VideoProject;
+        return [...p.assets, ...(p.versions ?? []).flatMap((v) => v.project.assets)].map((a) => a.id);
+      }),
+  );
   const keys = await request<IDBValidKey[]>(MEDIA, 'readonly', (s) => s.getAllKeys());
   await Promise.all(keys.filter((k) => !used.has(String(k)) && !String(k).startsWith(RECIPE_MEDIA_PREFIX)).map((k) => request(MEDIA, 'readwrite', (s) => s.delete(k))));
 }

@@ -36,3 +36,17 @@ describe('history', () => {
     expect(h.past).toEqual([7, 8, 9]);
   });
 });
+
+describe('jumpTo', () => {
+  it('moves anywhere in the history without losing steps', async () => {
+    const { createHistory, commit, jumpTo } = await import('./history');
+    let h = createHistory(0);
+    for (const v of [1, 2, 3]) h = commit(h, v);
+    const back = jumpTo(h, 1);
+    expect(back.present).toBe(1);
+    expect(back.past).toEqual([0]);
+    expect(back.future).toEqual([2, 3]);
+    expect(jumpTo(back, 3).present).toBe(3);
+    expect(jumpTo(back, 99).present).toBe(3);
+  });
+});

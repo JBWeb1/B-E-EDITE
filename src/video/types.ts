@@ -280,4 +280,14 @@ export interface VideoProject {
   tracks?: TrackState;
   /** Shown in exports (and the preview) when set. */
   watermark?: Watermark | null;
+  /** Versions saved by name (visual history), newest first. */
+  versions?: SavedVersion[];
+}
+
+export interface SavedVersion {
+  id: string;
+  name: string;
+  /** Time saved (ms since 1970). */
+  at: number;
+  project: Omit<VideoProject, 'versions'>;
 }

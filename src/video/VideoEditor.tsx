@@ -27,6 +27,8 @@ import { ExportDialog } from './ExportDialog';
 import { PreflightDialog, SafeZoneOverlay } from './PreflightDialog';
 import { RecipesDialog } from './RecipesDialog';
 import { PostKitDialog } from './PostKitDialog';
+import { HistoryDialog } from './HistoryDialog';
+import { restoreVersion, saveVersion } from './versions';
 import type { DesignFile } from '../design/types';
 import { applyRecipe } from './recipes';
 import { overlap, SAFE_ZONES, textBox } from './preflight';
@@ -248,6 +250,7 @@ export function VideoEditor({
   const [preflight, setPreflight] = useState(false);
   const [recipesOpen, setRecipesOpen] = useState(false);
   const [postKit, setPostKit] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [platform, setPlatform] = useState<Platform>(() => defaultPlatform(initialProject ?? { width: aspect?.width ?? 16, height: aspect?.height ?? 9 }));
   const [showZones, setShowZones] = useState(false);
   // Follow the video's shape: vertical videos default to TikTok, landscape to YouTube.
@@ -1704,6 +1707,9 @@ export function VideoEditor({
           <button className="icon-btn" onClick={history.redo} disabled={!history.canRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
             <Icon name="redo" />
           </button>
+          <button className="icon-btn" onClick={() => setHistoryOpen(true)} title="History: see every step, compare versions side by side" aria-label="History">
+            <Icon name="layers" />
+          </button>
           <span className="divider" />
           <button className="icon-btn" onClick={split} title="Split (Ctrl+B)" aria-label="Split">
             <Icon name="scissors" />
@@ -1784,6 +1790,17 @@ export function VideoEditor({
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
       {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
+      {historyOpen && (
+        <HistoryDialog
+          steps={history.steps}
+          time={time}
+          onJump={history.jumpTo}
+          onRestore={(v) => set((p) => restoreVersion(p, v))}
+          onSaveVersion={(name) => set((p) => saveVersion(p, name))}
+          onDeleteVersion={(id) => set((p) => ({ ...p, versions: p.versions?.filter((v) => v.id !== id) }))}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
       {postKit && <PostKitDialog project={project} onClose={() => setPostKit(false)} onOpenDesign={onOpenDesign} />}
       {recipesOpen && <RecipesDialog project={project} onClose={() => setRecipesOpen(false)} onApply={(r, assets) => set((p) => applyRecipe(p, r, assets))} />}
       {preflight && (

@@ -161,6 +161,53 @@ await kit.getByRole('button', { name: 'Edit Instagram post' }).click();
 await page.locator('.artboard canvas').waitFor({ timeout: 10000 });
 check('post opens in the design editor', (await page.locator('.layers button').count()) >= 3, `${await page.locator('.layers button').count()} layers`);
 
+// ---------- Visual history
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([`${FIX}/red.webm`, `${FIX}/blue.webm`]);
+await page.locator('.clip-item').nth(1).waitFor();
+await libTab('Titles');
+await page.getByRole('button', { name: 'Title: Name bar' }).click();
+await page.locator('.clip-item').nth(1).click();
+await page.keyboard.press('Delete');
+await settle();
+check('one clip left after deleting', (await page.locator('.clip-item').count()) === 1);
+await page.getByRole('button', { name: 'History', exact: true }).click();
+const hd = page.getByRole('dialog', { name: 'History' });
+const labels = await hd.locator('.history-item .history-label').allInnerTexts();
+check('history names every step', labels.some((l) => l.includes('Added text')) && labels.some((l) => l.includes('Deleted clip')) && labels.some((l) => l.includes('Added clip')), labels.join(' | '));
+await hd.locator('.history-item img').nth(2).waitFor({ timeout: 20000 });
+check('history shows a picture of each step', (await hd.locator('.history-item img').count()) >= 3);
+await hd.locator('.history-item', { hasText: 'Added text' }).click();
+await hd.locator('.history-compare img').nth(1).waitFor({ timeout: 20000 });
+check('compare shows then and now side by side', (await hd.locator('.history-compare img').count()) === 2);
+check('compare lists what changed since', (await hd.locator('.history-diff li').allInnerTexts()).some((t) => t.includes('Deleted clip')), (await hd.locator('.history-diff li').allInnerTexts()).join(' | '));
+await hd.getByRole('button', { name: 'Go back to this' }).click();
+await settle();
+check('go back restores that step', (await page.locator('.clip-item').count()) === 2);
+check('and you can come forward again (redo)', await page.getByRole('button', { name: 'Redo' }).isEnabled());
+await page.getByRole('button', { name: 'History', exact: true }).click();
+await hd.getByRole('textbox', { name: 'Version name' }).fill('First cut');
+await hd.getByRole('button', { name: 'Save version' }).click();
+check('saved version appears with a star', (await hd.locator('.history-item.saved', { hasText: 'First cut' }).count()) === 1);
+await hd.getByRole('button', { name: 'Close' }).click();
+await page.locator('.clip-item').first().click();
+await page.keyboard.press('Delete');
+await page.locator('.clip-item').first().click();
+await page.keyboard.press('Delete');
+await page.waitForTimeout(1500);
+await page.goto(BASE);
+await page.locator('.project-card .home-card').first().click();
+await page.locator('.timeline').waitFor();
+await settle();
+check('project reopened with no clips', (await page.locator('.clip-item').count()) === 0);
+await page.getByRole('button', { name: 'History', exact: true }).click();
+await hd.locator('.history-item.saved', { hasText: 'First cut' }).click();
+await hd.getByRole('button', { name: 'Restore this version' }).click();
+await page.locator('.clip-item').nth(1).waitFor({ timeout: 10000 }).catch(() => {});
+check('saved version survives a reload and restores', (await page.locator('.clip-item').count()) === 2 && (await page.locator('.text-item').count()) === 1);
+const restoredPixel = await page.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(5, 5, 1, 1).data));
+check('restored clips still play their media', restoredPixel[0] > 150 || restoredPixel[2] > 150, restoredPixel.join(','));
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

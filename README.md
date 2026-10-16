@@ -86,6 +86,11 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - Download each as PNG, or press **Edit** to finish it in the design editor
 - Also writes a **caption with hashtags** (from your titles and captions) and **YouTube chapters** that follow YouTube's rules (start at 0:00, at least three, 10 s or longer)
 
+### 🕰️ Visual history
+- Press the **History** button (next to Undo/Redo) to see every step of this session as a picture with a name ("Added text “Hello”", "Trimmed the clip beach.mp4"…)
+- Pick any step to compare it **side by side** with now at any moment of the video, with a list of what changed since. **Go back to this** jumps there, and Redo still brings you forward again
+- **Save a version** by name (up to 20). Saved versions stay with the project after you close it, and can be restored at any time
+
 ### 🎨 Design editor (Canva-style)
 - **Same CapCut-style workspace as the video editor**: library tabs on the left, the canvas in the middle with undo, Present and zoom underneath, details on the right, and the pages along the bottom like a timeline
 - Canvas sizes for Instagram post/story, YouTube thumbnail, presentation, Facebook cover, A4 poster
