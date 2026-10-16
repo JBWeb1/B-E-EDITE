@@ -4075,3 +4075,44 @@ kbd {
 .home[data-light] .logo {
   filter: invert(1);
 }
+
+/* ---------- AI tools ---------- */
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  min-height: 0;
+  color: var(--accent-text);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  box-shadow: none;
+}
+.ai-engine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ai-settings {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 10px);
+  background: var(--panel-2, rgba(255, 255, 255, 0.03));
+}
+.ai-message {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius, 10px);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.cc-library-body textarea {
+  width: 100%;
+  box-sizing: border-box;
+}

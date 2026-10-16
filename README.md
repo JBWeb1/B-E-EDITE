@@ -133,6 +133,7 @@ npm run test:e2e:next # browser test for MP4, motion tracking, AI tools, tour, t
 - **Voice-over recording** from the microphone while the video plays
 - Undo/redo, keyboard shortcuts (Space, S, Del, ←/→)
 - Export to **MP4** (H.264 in Chrome, Edge and Safari) or WebM with mixed audio; choose quality (small / standard / high) and 30 or 60 fps, with a file-size estimate
+- **AI tools** (AI tab): **auto captions from speech**, **translate captions** into 16 languages, **AI voice-overs** from typed text, **remove silences** from talking videos, and **auto Shorts** (picks the loudest, liveliest moments and makes a vertical 9:16 clip). They run **on your device** for free (Whisper and MMS voices through transformers.js, downloaded once and cached; translation uses Chrome's built-in translator). Or open *AI settings* and paste your own OpenAI-compatible API key. The key is stored only in your browser
 - **Motion tracking**: select a text, sticker, shape or layer, press *Track motion* (Animate tab) and click the thing to follow on the player. It follows that object through the video and writes position keyframes for you. *Remove tracking* undoes it
 
 ## Project layout

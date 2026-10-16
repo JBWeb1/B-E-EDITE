@@ -17,6 +17,7 @@ import { Logo } from '../ui/Logo';
 import { keyAt, setKey, sourceTimeAt, transformAt } from './anim';
 import type { Keyframes } from './anim';
 import { loadFont, probeMedia, VideoEngine } from './engine';
+import { AIPanel } from './AIPanel';
 import { ExportDialog } from './ExportDialog';
 import type { VideoExportChoice } from './ExportDialog';
 import { extensionFor, mixSoundtrack } from './export';
@@ -170,7 +171,7 @@ const STICKERS = [
 
 const DEFAULT_TRANSITION: Transition = { type: 'fade', duration: 0.5 };
 
-type LibraryTab = 'media' | 'audio' | 'text' | 'titles' | 'effects' | 'transitions' | 'filters';
+type LibraryTab = 'media' | 'audio' | 'text' | 'titles' | 'effects' | 'transitions' | 'filters' | 'ai';
 const LIBRARY_TABS: { id: LibraryTab; label: string; icon: IconName }[] = [
   { id: 'media', label: 'Media', icon: 'film' },
   { id: 'audio', label: 'Audio', icon: 'music' },
@@ -179,6 +180,7 @@ const LIBRARY_TABS: { id: LibraryTab; label: string; icon: IconName }[] = [
   { id: 'effects', label: 'Effects', icon: 'sparkles' },
   { id: 'transitions', label: 'Transitions', icon: 'shuffle' },
   { id: 'filters', label: 'Filters', icon: 'droplet' },
+  { id: 'ai', label: 'AI', icon: 'wand' },
 ];
 
 /** Files the media library shows (fonts, watermark logos and built-in sounds live elsewhere). */
@@ -1223,6 +1225,19 @@ export function VideoEditor({
           Apply this clip's filter to all clips
         </button>
       </>
+    ),
+    ai: (
+      <AIPanel
+        project={project}
+        time={time}
+        set={set}
+        setProgress={setProgress}
+        addCaptions={addCaptions}
+        addAudioFile={async (file, at) => {
+          const asset = await addAssetFile(file);
+          set((p) => ({ ...p, assets: [...p.assets, asset], audio: [...p.audio, createAudioClip(asset, at)] }));
+        }}
+      />
     ),
   };
 

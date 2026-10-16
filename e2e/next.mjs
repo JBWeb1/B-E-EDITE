@@ -28,6 +28,36 @@ await ctx.addInitScript(() => {
   localStorage.setItem('bee.tour.video', '1');
   localStorage.setItem('bee.tour.design', '1');
 });
+// Stand-in AI engine, so the AI tools can be tested without downloading models.
+await ctx.addInitScript(() => {
+  window.__beeAI = {
+    async transcribe(samples, _lang, onProgress) {
+      onProgress?.(1);
+      window.__heard = samples.length / 16000;
+      return [
+        { start: 0.1, end: 0.9, text: 'Hello and welcome' },
+        { start: 2.6, end: 3.4, text: 'to my channel' },
+      ];
+    },
+    async translate(texts, _from, to) {
+      return texts.map((t) => `[${to}] ${t}`);
+    },
+    async speak(text) {
+      const rate = 16000;
+      const n = rate * 1.5;
+      const buf = new ArrayBuffer(44 + n * 2);
+      const v = new DataView(buf);
+      const str = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+      str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+      v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+      str(36, 'data'); v.setUint32(40, n * 2, true);
+      for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(i / 8) * 8000, true);
+      window.__spoken = text;
+      return new Blob([buf], { type: 'audio/wav' });
+    },
+  };
+});
 const page = await ctx.newPage();
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 page.on('console', (m) => m.type() === 'error' && errors.push('console: ' + m.text()));
@@ -90,6 +120,44 @@ await modal.getByRole('button', { name: 'Export video' }).click();
 const mp4 = await mp4Dl;
 const mp4Bytes = fs.readFileSync(await mp4.path());
 check('MP4 export downloads an .mp4 file', mp4.suggestedFilename().endsWith('.mp4') && mp4Bytes.toString('ascii', 4, 8) === 'ftyp', `${mp4.suggestedFilename()} ${mp4Bytes.length} bytes`);
+
+await page.keyboard.press('Escape');
+
+// ---------- AI tools
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([`${FIX}/talk.webm`]);
+await page.locator('.clip-item').first().waitFor();
+await libTab('AI');
+const lib = page.locator('.cc-library-body');
+const aiStatus = lib.locator('.ai-message');
+await lib.getByRole('button', { name: 'Auto captions from speech' }).click();
+await aiStatus.waitFor({ timeout: 30000 });
+check('auto captions from speech', (await page.locator('.text-item').count()) === 2, await aiStatus.innerText());
+check('speech engine gets the clip sound', Math.abs((await page.evaluate(() => window.__heard)) - 8) < 0.6, String(await page.evaluate(() => window.__heard)));
+await lib.getByRole('combobox', { name: 'Translate to' }).selectOption('fr');
+await lib.getByRole('button', { name: /^Translate/ }).click();
+await page.waitForFunction(() => document.querySelector('.ai-message')?.textContent?.includes('Translated'));
+await page.locator('.text-item').first().click();
+const translated = await details.locator('textarea').first().inputValue();
+check('captions translated', translated === '[fr] Hello and welcome', translated);
+await lib.getByRole('textbox', { name: 'Voice-over text' }).fill('Welcome to the show');
+await lib.getByRole('button', { name: 'Create voice-over' }).click();
+await page.waitForFunction(() => document.querySelector('.ai-message')?.textContent?.includes('Voice-over added'), null, { timeout: 30000 });
+check('AI voice-over added to the audio track', (await page.locator('.audio-item').count()) === 1 && (await page.evaluate(() => window.__spoken)) === 'Welcome to the show');
+const timeText = async () => (await page.locator('.timecode').innerText()).split('/').pop().trim();
+const lenBefore = await timeText();
+await lib.getByRole('button', { name: 'Remove silences' }).click();
+await page.waitForFunction(() => /Removed|No pauses/.test(document.querySelector('.ai-message')?.textContent ?? ''), null, { timeout: 30000 });
+const clipsAfter = await page.locator('.clip-item').count();
+check('remove silences cuts the pauses', clipsAfter === 3, `${clipsAfter} clips; ${lenBefore} → ${await timeText()}; ${await aiStatus.innerText()}`);
+await page.keyboard.press('Control+z');
+await settle();
+check('undo puts the pauses back', (await page.locator('.clip-item').count()) === 1);
+await lib.getByRole('group', { name: 'Short length' }).getByRole('button', { name: '15s' }).click();
+await lib.getByRole('button', { name: 'Make a Short' }).click();
+await page.waitForFunction(() => /Made a/.test(document.querySelector('.ai-message')?.textContent ?? ''), null, { timeout: 60000 }).catch(() => {});
+const shortRatio = await page.locator('canvas.preview').evaluate((c) => c.height / c.width);
+check('auto Short is vertical', Math.abs(shortRatio - 16 / 9) < 0.02, `${shortRatio.toFixed(3)}; ${await aiStatus.innerText().catch(() => '')}`);
 
 // MORE CHECKS BELOW
 
