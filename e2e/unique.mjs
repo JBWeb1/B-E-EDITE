@@ -87,6 +87,40 @@ await page.getByRole('button', { name: 'Export', exact: true }).click();
 check('export offers the pre-flight check', (await page.getByRole('button', { name: /Run the pre-flight check/ }).count()) === 1);
 await page.keyboard.press('Escape');
 
+// ---------- Edit recipes
+await page.goto(BASE);
+await page.getByRole('button', { name: 'Video template: Vlog intro' }).click();
+await page.locator('.clip-item').nth(1).waitFor({ timeout: 20000 });
+await settle();
+await page.getByRole('button', { name: 'Recipes' }).click();
+const rd = page.getByRole('dialog', { name: 'Edit recipes' });
+const partLabels = await rd.locator('.recipe-parts .check').allInnerTexts();
+check('recipe finds intro, effects and transitions', ['Intro', 'Effects', 'Transitions'].every((w) => partLabels.some((l) => l.includes(w))), partLabels.join(' | ').replace(/\n/g, ' '));
+await rd.getByRole('textbox', { name: 'Recipe name' }).fill('Vlog style');
+await rd.getByRole('button', { name: 'Save recipe' }).click();
+await rd.locator('.recipe-card', { hasText: 'Vlog style' }).waitFor();
+check('recipe saved', (await rd.locator('.recipe-card').count()) === 1, await rd.locator('.recipe-card').innerText());
+await rd.getByRole('button', { name: 'Close' }).click();
+
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([`${FIX}/red.webm`, `${FIX}/blue.webm`]);
+await page.locator('.clip-item').nth(1).waitFor();
+await page.getByRole('button', { name: 'Recipes' }).click();
+await rd.getByRole('button', { name: 'Apply Vlog style' }).click();
+await settle();
+const after = { texts: await page.locator('.text-item').count(), sounds: await page.locator('.audio-item').count(), effects: await page.locator('.effect-item').count() };
+check('recipe replays titles, sounds and effects on a new video', after.texts === 3 && after.sounds === 2 && after.effects === 1, JSON.stringify(after));
+await page.keyboard.press('Control+z');
+await settle();
+check('undo removes the whole recipe in one step', (await page.locator('.text-item').count()) === 0 && (await page.locator('.effect-item').count()) === 0);
+await page.keyboard.press('Control+Shift+z');
+await page.waitForTimeout(1500);
+await page.goto(BASE);
+await page.locator('.project-card .home-card').first().click();
+await page.locator('.clip-item').first().waitFor();
+await settle();
+check('recipe sounds are saved with the project (own media copy)', (await page.locator('.audio-item').count()) === 2, String(await page.locator('.audio-item').count()));
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

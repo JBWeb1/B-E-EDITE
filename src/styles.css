@@ -4463,3 +4463,66 @@ button.link {
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
 }
+
+/* ---------- Edit recipes ---------- */
+.recipes-modal {
+  width: min(540px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+.recipe-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.recipe-card {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.recipe-card strong {
+  display: block;
+  font-size: 14px;
+}
+.recipe-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.recipe-parts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-bottom: 10px;
+}
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.check input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+.check small {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+@media (max-width: 520px) {
+  .recipe-parts {
+    grid-template-columns: 1fr;
+  }
+}
+.row > .grow {
+  flex: 1;
+  min-width: 0;
+}

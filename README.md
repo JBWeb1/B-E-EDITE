@@ -76,6 +76,11 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
   - **Accessibility & safety**: flashing that can trigger seizures (WCAG's three-flashes rule), captions too fast to read, text too small or low-contrast, and missing captions
 - Everything runs on your device
 
+### 🧪 Edit recipes
+- Press **Recipes**, tick what to keep: video shape, intro titles & sounds, outro, caption style, colour look, music, effects, transitions, watermark. Save it with a name
+- On your next video, press **Apply** and it is all done in one step (one Undo takes it back). The outro stays the same distance from the end, music is trimmed to fit, captions take the saved style
+- Recipes keep their own copy of music and logos, so they still work after the original project is deleted
+
 ### 🎨 Design editor (Canva-style)
 - **Same CapCut-style workspace as the video editor**: library tabs on the left, the canvas in the middle with undo, Present and zoom underneath, details on the right, and the pages along the bottom like a timeline
 - Canvas sizes for Instagram post/story, YouTube thumbnail, presentation, Facebook cover, A4 poster

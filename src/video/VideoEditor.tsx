@@ -25,6 +25,8 @@ import { sceneFile, VIDEO_TEMPLATES } from './videoTemplates';
 import type { VideoTemplate } from './videoTemplates';
 import { ExportDialog } from './ExportDialog';
 import { PreflightDialog, SafeZoneOverlay } from './PreflightDialog';
+import { RecipesDialog } from './RecipesDialog';
+import { applyRecipe } from './recipes';
 import { overlap, SAFE_ZONES, textBox } from './preflight';
 import type { FixId, Platform } from './preflight';
 import { defaultPlatform } from './preflightRun';
@@ -239,6 +241,7 @@ export function VideoEditor({
   const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
   const [exportDialog, setExportDialog] = useState(false);
   const [preflight, setPreflight] = useState(false);
+  const [recipesOpen, setRecipesOpen] = useState(false);
   const [platform, setPlatform] = useState<Platform>(() => defaultPlatform(initialProject ?? { width: aspect?.width ?? 16, height: aspect?.height ?? 9 }));
   const [showZones, setShowZones] = useState(false);
   // Follow the video's shape: vertical videos default to TikTok, landscape to YouTube.
@@ -1468,6 +1471,9 @@ export function VideoEditor({
           <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="keyboard" />
           </button>
+          <button onClick={() => setRecipesOpen(true)} title="Edit recipes: save how this video is edited and replay it on another">
+            <Icon name="wand" /> <span className="label">Recipes</span>
+          </button>
           <button className="tour-preflight" onClick={() => setPreflight(true)} disabled={duration <= 0 || progress !== null} title="Pre-flight check: hook score, safe zones and accessibility">
             <Icon name="check" /> <span className="label">Check</span>
           </button>
@@ -1769,6 +1775,7 @@ export function VideoEditor({
       {showHelp && <ShortcutsDialog shortcuts={SHORTCUTS} onClose={() => setShowHelp(false)} />}
       {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
+      {recipesOpen && <RecipesDialog project={project} onClose={() => setRecipesOpen(false)} onApply={(r, assets) => set((p) => applyRecipe(p, r, assets))} />}
       {preflight && (
         <PreflightDialog
           project={project}

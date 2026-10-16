@@ -69,6 +69,13 @@ export function putMedia(id: string, blob: Blob): Promise<void> {
   return request(MEDIA, 'readwrite', (s) => s.put(blob, id));
 }
 
+export function getMedia(id: string): Promise<Blob | undefined> {
+  return request<Blob | undefined>(MEDIA, 'readonly', (s) => s.get(id));
+}
+
+/** Media kept by edit recipes (music, logos) uses this id prefix and is never cleaned up. */
+export const RECIPE_MEDIA_PREFIX = 'recipe-';
+
 export function saveDesignProject(id: string, file: DesignFile, thumbnail?: string): Promise<void> {
   const rec: ProjectRecord<DesignFile> = { id, kind: 'design', name: file.name, updatedAt: Date.now(), thumbnail, data: file };
   return request(PROJECTS, 'readwrite', (s) => s.put(rec, id));
@@ -176,5 +183,5 @@ async function removeUnusedMedia() {
   const all = await request<ProjectRecord[]>(PROJECTS, 'readonly', (s) => s.getAll());
   const used = new Set(all.filter((r) => r.kind === 'video').flatMap((r) => (r.data as VideoProject).assets.map((a) => a.id)));
   const keys = await request<IDBValidKey[]>(MEDIA, 'readonly', (s) => s.getAllKeys());
-  await Promise.all(keys.filter((k) => !used.has(String(k))).map((k) => request(MEDIA, 'readwrite', (s) => s.delete(k))));
+  await Promise.all(keys.filter((k) => !used.has(String(k)) && !String(k).startsWith(RECIPE_MEDIA_PREFIX)).map((k) => request(MEDIA, 'readwrite', (s) => s.delete(k))));
 }
