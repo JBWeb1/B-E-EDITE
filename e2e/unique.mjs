@@ -348,6 +348,52 @@ await ae.waitFor();
 check('undo goes back to the settings', (await ae.count()) === 1);
 await ae.getByRole('button', { name: 'Close' }).click();
 
+// ---------- Phones: the player, details and top bar
+for (const [w, h] of [[390, 844], [360, 740]]) {
+  const mctx = await newContext({ viewport: { width: w, height: h }, isMobile: true, hasTouch: true });
+  const m = await mctx.newPage();
+  watch(m, `phone ${w} `);
+  await m.goto(`${BASE}/?new=video`);
+  await m.locator('canvas.preview').waitFor();
+  await m.locator('.cc-tabs').getByRole('button', { name: 'Media', exact: true }).tap();
+  await m.locator('input[type=file][accept="video/*,image/*,audio/*"]').first().setInputFiles([`${FIX}/red.webm`, `${FIX}/blue.webm`]);
+  await m.locator('.clip-item').nth(1).waitFor({ timeout: 20000 });
+  await m.waitForTimeout(500);
+  const view = async () =>
+    m.evaluate(() => {
+      const c = document.querySelector('canvas.preview').getBoundingClientRect();
+      const t = document.querySelector('.timeline').getBoundingClientRect();
+      const top = document.querySelector('.topbar').getBoundingClientRect();
+      return { canvasTop: c.top, canvasBottom: c.bottom, canvasH: c.height, timelineTop: t.top, topbarBottom: top.bottom };
+    });
+  const v = await view();
+  check(`phone ${w}: video shows with the library open`, v.canvasH > 120 && v.canvasTop >= v.topbarBottom - 1 && v.canvasBottom <= v.timelineTop + 1, JSON.stringify(v));
+  const px = await m.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data));
+  check(`phone ${w}: the clip is drawn`, px[0] > 150, px.join(','));
+  await m.locator('.clip-item').first().tap();
+  await m.waitForTimeout(900);
+  const d = await m.evaluate(() => {
+    const r = document.querySelector('.cc-details-body').getBoundingClientRect();
+    const t = document.querySelector('.timeline').getBoundingClientRect();
+    return { detailsTop: r.top, timelineTop: t.top };
+  });
+  check(`phone ${w}: selecting a clip brings up its details`, d.detailsTop < d.timelineTop - 60, JSON.stringify(d));
+  const v2 = await view();
+  check(`phone ${w}: the video stays in view while editing`, v2.canvasH > 120 && v2.canvasTop >= v2.topbarBottom - 1, JSON.stringify(v2));
+  const bar = await m.evaluate(() => {
+    const vis = [...document.querySelectorAll('.topbar button')].filter((b) => b.offsetParent);
+    const rects = vis.map((b) => b.getBoundingClientRect());
+    const home = rects[0];
+    const overlap = rects.slice(1).some((r) => r.left < home.right - 1 && r.right > home.left);
+    const exp = document.querySelector('.tour-export').getBoundingClientRect();
+    return { overlap, exportRight: exp.right, W: innerWidth };
+  });
+  check(`phone ${w}: top bar buttons don't cover the logo`, !bar.overlap);
+  check(`phone ${w}: Export is fully on screen`, bar.exportRight <= bar.W + 0.5, JSON.stringify(bar));
+  check(`phone ${w}: no sideways scrolling`, !(await m.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)));
+  await mctx.close();
+}
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

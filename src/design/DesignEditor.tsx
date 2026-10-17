@@ -177,6 +177,14 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const shownTime = previewTime ?? motionTime;
   const [videoProgress, setVideoProgress] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  /** On phones the details sit below the library: bring them into view when something is picked. */
+  const detailsRef = useRef<HTMLElement>(null);
+  const libraryRef = useRef<HTMLElement>(null);
+  const firstSelected = selectedIds[0];
+  useEffect(() => {
+    if (!firstSelected || !window.matchMedia?.('(max-width: 760px)').matches) return;
+    detailsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [firstSelected]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [marquee, setMarquee] = useState<Rect | null>(null);
@@ -783,7 +791,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
           <button className="icon-btn" onClick={() => setShowTour(true)} title="Guided tour" aria-label="Guided tour">
             <Icon name="help" />
           </button>
-          <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+          <button className="icon-btn keyboard-only" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="keyboard" />
           </button>
           <Menu
@@ -818,7 +826,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       </header>
 
       <div className="workspace">
-        <aside className={`panel cc-library ${panelOpen ? '' : 'collapsed'}`}>
+        <aside className={`panel cc-library ${panelOpen ? '' : 'collapsed'}`} ref={libraryRef}>
           <nav className="cc-tabs" aria-label="Library">
           {(['templates', 'text', 'elements', 'uploads', 'background'] as Tab[]).map((t) => (
             <button
@@ -831,6 +839,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                   setTab(t);
                   setPanelOpen(true);
                 }
+                if (window.matchMedia?.('(max-width: 760px)').matches) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
               }}
             >
               <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', uploads: 'upload', background: 'droplet' } as const)[t]} size={18} />
@@ -1079,7 +1088,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
         </div>
         </div>
 
-        <aside className="panel right cc-details">
+        <aside className="panel right cc-details" ref={detailsRef}>
           <div className="cc-panel-head">
             <span>Details</span>
           </div>

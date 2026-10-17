@@ -5078,3 +5078,94 @@ button.link {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* ---------- Phone: the player always stays in view ----------
+   The editor stacks library, player and details in one scrolling column on phones.
+   The player goes first and stays pinned at the top, the others scroll under it,
+   and nothing is squashed to make room. */
+@media (max-width: 760px) {
+  .editor.video .workspace > * {
+    flex-shrink: 0;
+  }
+  .editor.video .workspace > .cc-player {
+    order: -1;
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    height: 36vh;
+    min-height: 220px;
+    flex: none;
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
+  }
+  .editor.video .cc-player .preview-frame {
+    padding: 8px;
+  }
+  .editor.video .cc-details {
+    min-height: 60vh;
+  }
+}
+
+/* Phone top bar: never let the buttons slide over the logo. */
+@media (max-width: 760px) {
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .topbar-group.end {
+    overflow-x: auto;
+    scrollbar-width: none;
+    justify-content: flex-start;
+  }
+  /* Pushed to the right when they fit; scrollable from the first one when they don't. */
+  .topbar-group.end > :first-child {
+    margin-left: auto;
+  }
+  .topbar-group.end::-webkit-scrollbar {
+    display: none;
+  }
+  .topbar-group.end > * {
+    flex: none;
+  }
+}
+/* Phones and tablets without a keyboard don't need the shortcuts button. */
+@media (hover: none) and (pointer: coarse) {
+  .keyboard-only {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  /* Scrolled-to panels stop just below the pinned player. */
+  .editor.video .cc-details,
+  .editor.video .cc-library {
+    scroll-margin-top: max(36vh, 220px);
+  }
+}
+@media (max-width: 760px) {
+  /* The main action stays visible at the right even when the row scrolls. */
+  .topbar-group.end > .primary:last-child {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    box-shadow: -10px 0 12px var(--bg);
+  }
+}
+
+/* Phone: the design canvas stays in view too. */
+@media (max-width: 760px) {
+  .editor.design .workspace > * {
+    flex-shrink: 0;
+  }
+  .editor.design .workspace > .cc-player {
+    order: -1;
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    height: 40vh;
+    min-height: 240px;
+    flex: none;
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
+  }
+  .editor.design .cc-details,
+  .editor.design .cc-library {
+    scroll-margin-top: max(40vh, 240px);
+  }
+}

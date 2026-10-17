@@ -259,6 +259,13 @@ export function VideoEditor({
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [selection, setSelection] = useState<Selection>(null);
+  /** On phones the details sit below the library: bring them into view when something is picked. */
+  const detailsRef = useRef<HTMLElement>(null);
+  const libraryRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!selection || !window.matchMedia?.('(max-width: 760px)').matches) return;
+    detailsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [selection?.id]);
   const [pps, setPps] = useState(60);
   const [tab, setTab] = useState<LibraryTab>('media');
   const [importing, setImporting] = useState(0);
@@ -1510,7 +1517,7 @@ export function VideoEditor({
           <button className="icon-btn" onClick={() => setShowTour(true)} title="Guided tour" aria-label="Guided tour">
             <Icon name="help" />
           </button>
-          <button className="icon-btn" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+          <button className="icon-btn keyboard-only" onClick={() => setShowHelp(true)} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
             <Icon name="keyboard" />
           </button>
           {liveSession.state !== 'off' && (
@@ -1537,7 +1544,7 @@ export function VideoEditor({
       </header>
 
       <div className="workspace">
-        <aside className={`panel cc-library ${panelOpen ? '' : 'collapsed-body'}`}>
+        <aside className={`panel cc-library ${panelOpen ? '' : 'collapsed-body'}`} ref={libraryRef}>
           <nav className="cc-tabs" aria-label="Library">
             {LIBRARY_TABS.map((t) => (
               <button
@@ -1549,6 +1556,7 @@ export function VideoEditor({
                     setTab(t.id);
                     setPanelOpen(true);
                   }
+                  if (window.matchMedia?.('(max-width: 760px)').matches) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
                 }}
               >
                 <Icon name={t.icon} size={18} />
@@ -1625,7 +1633,7 @@ export function VideoEditor({
           </div>
         </main>
 
-        <aside className="panel right cc-details">
+        <aside className="panel right cc-details" ref={detailsRef}>
           <div className="cc-panel-head">
             <span>Details</span>
           </div>
