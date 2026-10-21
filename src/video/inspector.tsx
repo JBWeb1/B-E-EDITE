@@ -3,7 +3,7 @@
  * presets, crop, green screen, masks, blend modes, colour wheels and looks,
  * speed ramps and volume keyframes. Shared by clips, layers and text.
  */
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import type { Filters } from '../lib/filters';
 import { ColorField, RangeField } from '../ui/fields';
@@ -43,8 +43,13 @@ type Update<T> = (patch: Partial<T>, live?: boolean) => void;
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 export function Section({ title, children, defaultOpen = false }: { title: string; children: ReactNode; defaultOpen?: boolean }) {
+  // Opens when it gains a setting, but never snaps shut under the user (e.g. when turning a tool off).
+  const ref = useRef<HTMLDetailsElement>(null);
+  useLayoutEffect(() => {
+    if (defaultOpen && ref.current) ref.current.open = true;
+  }, [defaultOpen]);
   return (
-    <details className="insp-section" open={defaultOpen}>
+    <details className="insp-section" ref={ref}>
       <summary>{title}</summary>
       <div className="insp-body">{children}</div>
     </details>

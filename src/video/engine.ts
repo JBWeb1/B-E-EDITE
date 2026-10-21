@@ -1,8 +1,11 @@
-import { rampRate, valueAt } from './anim';
-import { denoiseFilters, pickMimeType, watermarkBox } from './export';
+import { rampRate, sourceTimeAt, valueAt } from './anim';
+import { denoiseFilters, pickMimeType, studioChain, watermarkBox } from './export';
 import type { VideoFormat } from './export';
 import { gradeFilterMarkup, gradeId, isNeutral } from './grade';
 import { ChromaKeyer } from './keyer';
+import { blendMasks, cutoutKey, decompress, maskIndexAt, unpackMasks } from './cutout';
+import { stabilizedRect } from './stabilize';
+import { getMedia } from '../lib/projects';
 import { blendOp, blurSamples, clipFrame, cropRect, overlayFrame } from './layers';
 import type { LayerFrame } from './layers';
 import { drawParticles, heartPath, particlesAt, starPath } from './particles';
@@ -23,7 +26,7 @@ import {
   transitionAt,
 } from './timeline';
 import type { EffectFrame } from './timeline';
-import type { Clip, LayerProps, MediaAsset, OverlayClip, TextOverlay, VideoProject } from './types';
+import type { Clip, Cutout, LayerProps, MediaAsset, OverlayClip, TextOverlay, VideoProject } from './types';
 
 /** Seconds of drift allowed between the clock and a playing media element before re-seeking. */
 const DRIFT_TOLERANCE = 0.3;
@@ -52,6 +55,9 @@ interface PaintJob {
   shadow?: boolean;
   /** Flip the picture left-to-right (in place). */
   mirror?: boolean;
+  /** Size of the whole source picture, and the source second being shown (for cut-outs). */
+  full?: { w: number; h: number };
+  sourceTime?: number;
 }
 
 /**
@@ -69,6 +75,7 @@ export class VideoEngine {
   private blurCanvas = document.createElement('canvas');
   private gains = new Map<HTMLMediaElement, GainNode>();
   private denoisers = new Map<HTMLMediaElement, { hp: BiquadFilterNode; lp: BiquadFilterNode }>();
+  private studios = new Map<HTMLMediaElement, ReturnType<typeof studioChain>>();
   private audioCtx: AudioContext | null = null;
   private master: GainNode | null = null;
   private raf = 0;
@@ -192,9 +199,12 @@ export class VideoEngine {
     lp.type = 'lowpass';
     lp.frequency.value = 22000;
     const gain = this.audioCtx.createGain();
-    source.connect(hp).connect(lp).connect(gain).connect(this.master);
+    const studio = studioChain(this.audioCtx);
+    source.connect(hp).connect(lp).connect(studio.input);
+    studio.output.connect(gain).connect(this.master);
     this.gains.set(el, gain);
     this.denoisers.set(el, { hp, lp });
+    this.studios.set(el, studio);
   }
 
   /** Must be called from a user gesture the first time (browser autoplay rules). */
@@ -277,6 +287,7 @@ export class VideoEngine {
         const muted = p.tracks?.mainMuted || clip.reverse ? 0 : 1;
         this.setVolume(v, muted * clip.volume * fadeOpacity(clip, local) * valueAt(clip.keys?.volume, local, 1));
         this.setDenoise(v, clip.denoise);
+        this.setStudio(v, clip);
         if (clip.reverse) {
           // Browsers can't play video backwards, so step through it frame by frame.
           if (!v.paused) v.pause();
@@ -296,6 +307,7 @@ export class VideoEngine {
       if (local >= 0 && local < clip.out - clip.in) {
         this.setVolume(el, (p.tracks?.audioMuted ? 0 : 1) * clip.volume * audioFade(clip, local) * valueAt(clip.keys?.volume, local, 1));
         this.setDenoise(el, clip.denoise);
+        this.setStudio(el, clip);
         this.align(el, clip.in + local);
       } else if (!el.paused) {
         el.pause();
@@ -309,6 +321,7 @@ export class VideoEngine {
         const local = this.time - o.start;
         this.setVolume(v, p.tracks?.overlayHidden ? 0 : o.volume * valueAt(o.keys?.volume, local, 1));
         this.setDenoise(v, o.denoise);
+        this.setStudio(v, o);
         if (o.reverse) {
           if (!v.paused) v.pause();
           const target = o.out - local;
@@ -340,6 +353,10 @@ export class VideoEngine {
     const gain = this.gains.get(el);
     if (gain) gain.gain.value = volume;
     else el.volume = Math.max(0, Math.min(1, volume));
+  }
+
+  private setStudio(el: HTMLMediaElement, item: { studio?: boolean; boost?: number }) {
+    this.studios.get(el)?.set(!!item.studio, item.boost ?? 0);
   }
 
   private setDenoise(el: HTMLMediaElement, level = 0) {
@@ -538,6 +555,51 @@ export class VideoEngine {
     return `url(#${id})`;
   }
 
+  private cutouts = new Map<string, { frames: Uint8Array[]; w: number; h: number; blend: Uint8Array; img: ImageData; canvas: HTMLCanvasElement; shown: string } | 'loading' | 'missing'>();
+
+  /** Masks just made (so they show at once, before the saved copy is read back). */
+  addCutout(c: Cutout, data: Uint8Array) {
+    this.cutouts.set(c.id, this.cutoutEntry(c, unpackMasks(data, c.w, c.h)));
+    if (!this.playing) this.draw();
+  }
+
+  private cutoutEntry(c: Cutout, frames: Uint8Array[]) {
+    const canvas = document.createElement('canvas');
+    canvas.width = c.w;
+    canvas.height = c.h;
+    const img = new ImageData(c.w, c.h);
+    // White everywhere; the mask goes in the alpha channel.
+    for (let i = 0; i < img.data.length; i += 4) img.data[i] = img.data[i + 1] = img.data[i + 2] = 255;
+    return { frames, w: c.w, h: c.h, blend: new Uint8Array(c.w * c.h), img, canvas, shown: '' };
+  }
+
+  /** The cut-out mask at source time `t` (as a canvas with the mask in its alpha), or null while it loads. */
+  private cutoutCanvas(c: Cutout, t: number): HTMLCanvasElement | null {
+    const entry = this.cutouts.get(c.id);
+    if (!entry) {
+      this.cutouts.set(c.id, 'loading');
+      void getMedia(cutoutKey(c.id))
+        .then(async (blob) => {
+          if (!blob) throw new Error('missing');
+          this.cutouts.set(c.id, this.cutoutEntry(c, unpackMasks(await decompress(blob, c.gzip), c.w, c.h)));
+          if (!this.playing) this.draw();
+        })
+        .catch(() => this.cutouts.set(c.id, 'missing'));
+      return null;
+    }
+    if (entry === 'loading' || entry === 'missing' || !entry.frames.length) return null;
+    const { a, b, f } = maskIndexAt(c, t);
+    const key = `${a}:${b}:${f.toFixed(2)}`;
+    if (entry.shown !== key) {
+      const mask = blendMasks(entry.frames[a], entry.frames[b] ?? entry.frames[a], f, entry.blend);
+      const d = entry.img.data;
+      for (let i = 0; i < mask.length; i++) d[i * 4 + 3] = mask[i];
+      entry.canvas.getContext('2d')!.putImageData(entry.img, 0, 0);
+      entry.shown = key;
+    }
+    return entry.canvas;
+  }
+
   /**
    * Draw one clip/layer: crop → colour → green screen → mask, then place it with
    * its position, angle, opacity, blend mode and (optionally) motion blur.
@@ -548,11 +610,12 @@ export class VideoEngine {
     const filter = [this.gradeFilter(layer), cssFilter(layer.filters)].filter((f) => f && f !== 'none').join(' ') || 'none';
     const keyed = !!layer.chroma && !this.keyingOff;
     const masked = !!layer.mask && layer.mask.shape !== 'none';
+    const cut = layer.cutout && job.full ? this.cutoutCanvas(layer.cutout, job.sourceTime ?? 0) : null;
     const f0 = job.frameAt(job.local);
 
     let image: CanvasImageSource = job.source;
     let rect = src;
-    if (keyed || masked) {
+    if (keyed || masked || cut) {
       // Work at the size the layer is drawn (capped), so keying stays fast.
       const px = Math.min(1, 2560 / Math.max(f0.w * this.scale, f0.h * this.scale, 1));
       const bw = Math.max(2, Math.round(f0.w * this.scale * px));
@@ -574,6 +637,15 @@ export class VideoEngine {
         }
         out = buf;
       }
+      if (cut && job.full) {
+        // Keep only the person: the mask covers the whole source picture.
+        const kx = cut.width / job.full.w;
+        const ky = cut.height / job.full.h;
+        b.globalCompositeOperation = 'destination-in';
+        b.imageSmoothingQuality = 'high';
+        b.drawImage(cut, src.sx * kx, src.sy * ky, src.sw * kx, src.sh * ky, 0, 0, bw, bh);
+        b.globalCompositeOperation = 'source-over';
+      }
       if (masked) {
         const m = layer.mask!;
         const k = layer.keys;
@@ -592,7 +664,7 @@ export class VideoEngine {
       if (job.mirror) c.scale(-1, 1);
       const x = -f.w / 2;
       const y = -f.h / 2;
-      if (job.shadow && !keyed && !masked) {
+      if (job.shadow && !keyed && !masked && !cut) {
         c.save();
         c.shadowColor = 'rgba(0,0,0,0.4)';
         c.shadowBlur = 20;
@@ -602,7 +674,7 @@ export class VideoEngine {
         c.fill();
         c.restore();
       }
-      if (job.rounded && !keyed && !masked) {
+      if (job.rounded && !keyed && !masked && !cut) {
         c.beginPath();
         c.roundRect(x, y, f.w, f.h, job.rounded * Math.min(f.w, f.h));
         c.clip();
@@ -1055,14 +1127,18 @@ export class VideoEngine {
       this.drawBlurredFill(source, sw, sh, W, H);
       ctx.restore();
     }
+    const sourceTime = asset.kind === 'video' ? sourceTimeAt(clip, local) : 0;
+    const crop = cropRect(sw, sh, clip.crop);
     this.paintLayer({
       source,
-      src: cropRect(sw, sh, clip.crop),
+      src: clip.stabilize ? stabilizedRect(crop, clip.stabilize, sourceTime) : crop,
       layer: clip,
       frameAt: (t) => clipFrame(clip, asset, W, H, t, len > 0 ? t / len : 0),
       local,
       alpha,
       mirror: clip.mirror,
+      full: { w: sw, h: sh },
+      sourceTime,
     });
   }
 
@@ -1095,12 +1171,17 @@ export class VideoEngine {
     if (!source) return;
     const sw = asset.width ?? p.width;
     const sh = asset.height ?? p.height;
+    const local = this.time - o.start;
+    const sourceTime = asset.kind === 'video' ? (o.reverse ? o.out - local : o.in + local) : 0;
+    const crop = cropRect(sw, sh, o.crop);
     this.paintLayer({
       source,
-      src: cropRect(sw, sh, o.crop),
+      src: o.stabilize ? stabilizedRect(crop, o.stabilize, sourceTime) : crop,
+      full: { w: sw, h: sh },
+      sourceTime,
       layer: o,
       frameAt: (t) => overlayFrame(o, asset, p.width, p.height, t),
-      local: this.time - o.start,
+      local,
       alpha: 1,
       rounded: o.rounded,
       shadow: o.shadow ?? true,

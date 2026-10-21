@@ -110,6 +110,9 @@ export interface AudioSegment {
   /** Playback rate over time, [project time, rate]. */
   rate: [number, number][];
   denoise: number;
+  /** Studio sound, and the loudness boost found for it (dB). */
+  studio?: boolean;
+  boost?: number;
 }
 
 const STEP = 0.05;
@@ -142,6 +145,8 @@ export function audioPlan(p: VideoProject): AudioSegment[] {
         gain: samples(start, len, (l) => clip.volume * fadeOpacity(clip, l) * valueAt(clip.keys?.volume, l, 1)),
         rate: samples(start, len, (l) => clip.speed * rampRate(clip.ramp, len > 0 ? l / len : 0, clip.curve)),
         denoise: clip.denoise ?? 0,
+        studio: clip.studio,
+        boost: clip.boost,
       });
     }
   }
@@ -157,6 +162,8 @@ export function audioPlan(p: VideoProject): AudioSegment[] {
         gain: samples(a.start, len, (l) => a.volume * audioFade(a, l) * valueAt(a.keys?.volume, l, 1)),
         rate: [[a.start, 1]],
         denoise: a.denoise ?? 0,
+        studio: a.studio,
+        boost: a.boost,
       });
     }
   }
@@ -173,6 +180,8 @@ export function audioPlan(p: VideoProject): AudioSegment[] {
         gain: samples(o.start, len, (l) => o.volume * valueAt(o.keys?.volume, l, 1)),
         rate: [[o.start, 1]],
         denoise: o.denoise ?? 0,
+        studio: o.studio,
+        boost: o.boost,
       });
     }
   }
@@ -188,6 +197,75 @@ export function denoiseFilters(level: number): { highpass: number; lowpass: numb
     { highpass: 120, lowpass: 7500 },
     { highpass: 170, lowpass: 5500 },
   ][l];
+}
+
+// ---------- Studio sound ----------
+
+/** The voice chain: rumble cut, less mud, more presence and air, then even loudness. */
+export function studioSettings(on: boolean, boostDb = 0) {
+  return on
+    ? { highpass: 90, mud: -3, presence: 4, air: 2.5, threshold: -26, ratio: 4, makeup: 4 + boostDb }
+    : { highpass: 10, mud: 0, presence: 0, air: 0, threshold: 0, ratio: 1, makeup: 0 };
+}
+
+/**
+ * How many dB to raise (or lower) a voice so its speaking level reaches about -20 dBFS.
+ * Only the louder half of the 50 ms slices count, so pauses don't drag the level down.
+ */
+export function loudnessBoost(samples: Float32Array, rate: number, target = -20): number {
+  const size = Math.max(1, Math.round(rate * 0.05));
+  const levels: number[] = [];
+  for (let i = 0; i + size <= samples.length; i += size) {
+    let sum = 0;
+    for (let j = i; j < i + size; j++) sum += samples[j] * samples[j];
+    levels.push(sum / size);
+  }
+  if (!levels.length) return 0;
+  levels.sort((a, b) => b - a);
+  const loud = levels.slice(0, Math.max(1, Math.ceil(levels.length / 2)));
+  const rms = Math.sqrt(loud.reduce((a, b) => a + b, 0) / loud.length);
+  if (rms < 1e-5) return 0;
+  const db = 20 * Math.log10(rms);
+  return Math.round(Math.max(-6, Math.min(12, target - db)) * 10) / 10;
+}
+
+/** Web Audio nodes for studio sound, in and out (works in live and offline contexts). */
+export function studioChain(ctx: BaseAudioContext) {
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  const mud = ctx.createBiquadFilter();
+  mud.type = 'peaking';
+  mud.frequency.value = 300;
+  mud.Q.value = 1;
+  const presence = ctx.createBiquadFilter();
+  presence.type = 'peaking';
+  presence.frequency.value = 3200;
+  presence.Q.value = 0.8;
+  const air = ctx.createBiquadFilter();
+  air.type = 'highshelf';
+  air.frequency.value = 10000;
+  const comp = ctx.createDynamicsCompressor();
+  comp.knee.value = 6;
+  comp.attack.value = 0.004;
+  comp.release.value = 0.2;
+  const makeup = ctx.createGain();
+  hp.connect(mud).connect(presence).connect(air).connect(comp).connect(makeup);
+  let last = '';
+  const set = (on: boolean, boostDb = 0) => {
+    const key = `${on}:${boostDb}`;
+    if (key === last) return;
+    last = key;
+    const s = studioSettings(on, boostDb);
+    hp.frequency.value = s.highpass;
+    mud.gain.value = s.mud;
+    presence.gain.value = s.presence;
+    air.gain.value = s.air;
+    comp.threshold.value = s.threshold;
+    comp.ratio.value = s.ratio;
+    makeup.gain.value = Math.pow(10, s.makeup / 20);
+  };
+  set(false);
+  return { input: hp as AudioNode, output: makeup as AudioNode, set };
 }
 
 /** 16-bit PCM WAV with any number of channels. */
@@ -272,7 +350,14 @@ export async function mixSoundtrackBuffer(p: VideoProject, rate = 44100, onProgr
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = f.lowpass;
-    src.connect(hp).connect(lp).connect(gain).connect(ctx.destination);
+    if (seg.studio) {
+      const studio = studioChain(ctx);
+      studio.set(true, seg.boost ?? 0);
+      src.connect(hp).connect(lp).connect(studio.input);
+      studio.output.connect(gain).connect(ctx.destination);
+    } else {
+      src.connect(hp).connect(lp).connect(gain).connect(ctx.destination);
+    }
     gain.gain.setValueAtTime(seg.gain[0][1], seg.at);
     for (const [t, g] of seg.gain.slice(1)) gain.gain.linearRampToValueAtTime(g, t);
     src.playbackRate.setValueAtTime(seg.rate[0][1], seg.at);

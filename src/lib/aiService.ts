@@ -29,6 +29,8 @@ export interface AIProvider {
   translate(texts: string[], from: string, to: string, onProgress?: (f: number) => void): Promise<string[]>;
   /** Spoken audio file for `text`. */
   speak(text: string, language: string, onProgress?: (f: number) => void): Promise<Blob>;
+  /** How much each pixel belongs to a person in the picture (0..255, one byte per pixel). */
+  segment(image: ImageData, onProgress?: (f: number) => void): Promise<Uint8Array>;
 }
 
 const KEY = 'bee.ai';
@@ -54,7 +56,7 @@ export const API_VOICES = ['nova', 'alloy', 'echo', 'fable', 'onyx', 'shimmer'];
 
 // ---------- On-device models (transformers.js) ----------
 
-const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
+export const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Pipeline = (input: any, opts?: any) => Promise<any>;
 const pipelines = new Map<string, Promise<Pipeline>>();
@@ -99,6 +101,36 @@ const browserTranslator = (): TranslatorFactory | undefined => (globalThis as { 
 
 export const hasBrowserTranslator = () => !!browserTranslator();
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let matting: Promise<{ lib: any; model: any; processor: any }> | null = null;
+
+/** MODNet portrait matting (about 25 MB, cached by the browser): cuts people out of any background. */
+async function deviceSegment(image: ImageData, onProgress?: (f: number) => void): Promise<Uint8Array> {
+  if (!matting) {
+    matting = (async () => {
+      const lib = await import(/* @vite-ignore */ TRANSFORMERS_URL);
+      const files = new Map<string, number>();
+      const progress_callback = (p: { status: string; file?: string; progress?: number }) => {
+        if (p.status === 'progress' && p.file) {
+          files.set(p.file, (p.progress ?? 0) / 100);
+          onProgress?.(([...files.values()].reduce((a, b) => a + b, 0) / files.size) * 0.9);
+        }
+      };
+      const model = await lib.AutoModel.from_pretrained('Xenova/modnet', { dtype: 'fp32', progress_callback });
+      const processor = await lib.AutoProcessor.from_pretrained('Xenova/modnet');
+      return { lib, model, processor };
+    })();
+    matting.catch(() => (matting = null));
+  }
+  const { lib, model, processor } = await matting;
+  const raw = new lib.RawImage(new Uint8ClampedArray(image.data), image.width, image.height, 4);
+  const { pixel_values } = await processor(raw);
+  const { output } = await model({ input: pixel_values });
+  const mask = await lib.RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(image.width, image.height);
+  onProgress?.(1);
+  return new Uint8Array(mask.data);
+}
+
 const deviceProvider: AIProvider = {
   async transcribe(samples, language, onProgress) {
     // Multilingual tiny Whisper: about 40 MB, cached by the browser after the first use.
@@ -135,6 +167,7 @@ const deviceProvider: AIProvider = {
     onProgress?.(1);
     return new Blob([floatToWav(out.audio as Float32Array, out.sampling_rate as number)], { type: 'audio/wav' });
   },
+  segment: deviceSegment,
 };
 
 // ---------- API (OpenAI-compatible) ----------
@@ -205,6 +238,8 @@ function apiProvider(s: AISettings): AIProvider {
       onProgress?.(1);
       return new Blob([await r.arrayBuffer()], { type: 'audio/mpeg' });
     },
+    // Cut-outs always run on this device (there is no standard API for them).
+    segment: deviceSegment,
   };
 }
 

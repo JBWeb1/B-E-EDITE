@@ -8,6 +8,7 @@ import { saveDesignProject } from '../lib/projects';
 import { uid } from '../lib/id';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { removeBackgroundFromImage } from '../lib/bgremove';
+import { smartRemoveBackground } from '../video/cutout';
 import { FilterSliders } from '../ui/FilterSliders';
 import { keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import { Tour, tourSeen } from '../ui/Tour';
@@ -1529,37 +1530,55 @@ function PageStrip({
   );
 }
 
-/** Remove a plain background from a photo, with a strength slider and a way back. */
+/** Remove the background from a photo: smart (AI, cuts out people) or plain colour, with a way back. */
 function BackgroundRemover({ el, onApply }: { el: ImageElement; onApply: (patch: Partial<ImageElement>) => void }) {
+  const [mode, setMode] = useState<'smart' | 'plain'>('smart');
   const [tolerance, setTolerance] = useState(18);
-  const [working, setWorking] = useState(false);
+  const [working, setWorking] = useState<number | null>(null);
   const run = async () => {
-    setWorking(true);
+    setWorking(0);
     try {
       const original = el.originalSrc ?? el.src;
+      if (mode === 'smart') {
+        const out = await smartRemoveBackground(original, 2048, (f) => setWorking(f));
+        onApply({ src: out.src, originalSrc: original, naturalWidth: out.width, naturalHeight: out.height });
+        return;
+      }
       const out = await removeBackgroundFromImage(original, tolerance);
       if (out.removed === 0) {
-        alert('No plain background found at the edges. Try a higher strength.');
+        alert('No plain background found at the edges. Try a higher strength, or Smart.');
         return;
       }
       onApply({ src: out.src, originalSrc: original, naturalWidth: out.width, naturalHeight: out.height });
-    } catch {
-      alert('Could not process this photo.');
+    } catch (err) {
+      alert(mode === 'smart' ? `Smart removal didn't work${err instanceof Error ? `: ${err.message}` : ''}. Try Plain background.` : 'Could not process this photo.');
     } finally {
-      setWorking(false);
+      setWorking(null);
     }
   };
   return (
     <>
       <h4>Background</h4>
-      <RangeField label="Strength" value={tolerance} min={2} max={60} step={1} onChange={setTolerance} format={(v) => `${v}%`} />
+      <div className="segmented" role="group" aria-label="Background removal">
+        <button className={mode === 'smart' ? 'active' : ''} onClick={() => setMode('smart')}>
+          ✨ Smart (AI)
+        </button>
+        <button className={mode === 'plain' ? 'active' : ''} onClick={() => setMode('plain')}>
+          Plain background
+        </button>
+      </div>
+      {mode === 'plain' && <RangeField label="Strength" value={tolerance} min={2} max={60} step={1} onChange={setTolerance} format={(v) => `${v}%`} />}
       <div className="row">
-        <button className="primary" onClick={run} disabled={working}>
-          {working ? 'Working…' : el.originalSrc ? 'Redo removal' : '✂ Remove background'}
+        <button className="primary" onClick={run} disabled={working !== null}>
+          {working !== null ? `Working… ${Math.round(working * 100)}%` : el.originalSrc ? 'Redo removal' : '✂ Remove background'}
         </button>
         {el.originalSrc && <button onClick={() => onApply({ src: el.originalSrc, originalSrc: undefined })}>Restore</button>}
       </div>
-      <p className="hint">Works best on photos with a plain, even background (white, green screen, studio wall).</p>
+      <p className="hint">
+        {mode === 'smart'
+          ? 'Cuts people out of any background, on this device (the model downloads once, about 25 MB).'
+          : 'Works best on photos with a plain, even background (white, green screen, studio wall).'}
+      </p>
     </>
   );
 }

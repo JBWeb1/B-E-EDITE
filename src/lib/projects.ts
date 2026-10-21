@@ -190,7 +190,9 @@ async function removeUnusedMedia() {
       .filter((r) => r.kind === 'video')
       .flatMap((r) => {
         const p = r.data as VideoProject;
-        return [...p.assets, ...(p.versions ?? []).flatMap((v) => v.project.assets)].map((a) => a.id);
+        const all = [p, ...(p.versions ?? []).map((v) => v.project)];
+        const cutouts = all.flatMap((q) => [...q.clips, ...q.overlays]).flatMap((c) => (c.cutout ? [`cutout-${c.cutout.id}`] : []));
+        return [...all.flatMap((q) => q.assets.map((a) => a.id)), ...cutouts];
       }),
   );
   const keys = await request<IDBValidKey[]>(MEDIA, 'readonly', (s) => s.getAllKeys());

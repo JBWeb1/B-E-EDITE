@@ -33,6 +33,8 @@ import { defaultPlatform } from './preflightRun';
 import type { VideoExportChoice } from './ExportDialog';
 import { extensionFor, mixSoundtrack } from './export';
 import { fastExport } from './fastExport';
+import { SmartCutoutSection, StabilizeSection, StudioSoundSection } from './SmartTools';
+import type { Cutout } from './types';
 import { detectBeats } from './beats';
 import { decodeMono } from '../lib/aiService';
 import { LOOKS } from './grade';
@@ -1695,6 +1697,7 @@ export function VideoEditor({
                 onSeekLocal={(t) => seek(clipStart(selectedClip.id) + t)}
                 onPick={() => (picking ? setPicking(null) : startPick({ kind: 'clip', id: selectedClip.id }))}
                 onSaveLook={saveCurrentLook}
+                onCutoutReady={(c, data) => engineRef.current?.addCutout(c, data)}
               />
             ) : selectedText ? (
               <TextInspector
@@ -1744,6 +1747,7 @@ export function VideoEditor({
                 onTrack={(track) => updateOverlay({ track: track === 'new' ? Math.max(1, ...overlayTracks(project.overlays)) + 1 : track })}
                 trackWaiting={trackPick?.id === selectedOverlay.id}
                 onTrackStart={() => setTrackPick(trackPick ? null : { kind: 'overlay', id: selectedOverlay.id })}
+                onCutoutReady={(c, data) => engineRef.current?.addCutout(c, data)}
               />
             ) : selectedAudio ? (
               <>
@@ -1759,6 +1763,7 @@ export function VideoEditor({
                   onKeys={(keys, live) => updateAudio({ keys }, live)}
                   onDenoise={(v) => updateAudio({ denoise: v })}
                 />
+                {assetOf(selectedAudio.assetId) && <StudioSoundSection item={selectedAudio} asset={assetOf(selectedAudio.assetId)!} update={(patch) => updateAudio(patch)} />}
                 <RangeField label="Fade in" value={selectedAudio.fadeIn ?? 0} min={0} max={Math.min(5, (selectedAudio.out - selectedAudio.in) / 2)} step={0.1} onStart={mark} onChange={(v) => updateAudio({ fadeIn: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
                 <RangeField label="Fade out" value={selectedAudio.fadeOut ?? 0} min={0} max={Math.min(5, (selectedAudio.out - selectedAudio.in) / 2)} step={0.1} onStart={mark} onChange={(v) => updateAudio({ fadeOut: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
                 <NumberField label="Start (s)" value={selectedAudio.start} min={0} step={0.1} onChange={(v) => updateAudio({ start: v })} />
@@ -2063,6 +2068,7 @@ function ClipInspector({
   onSeekLocal,
   onPick,
   onSaveLook,
+  onCutoutReady,
 }: {
   clip: Clip;
   asset: MediaAsset | undefined;
@@ -2076,6 +2082,7 @@ function ClipInspector({
   onSeekLocal: (t: number) => void;
   onPick: () => void;
   onSaveLook: () => void;
+  onCutoutReady: (c: Cutout, data: Uint8Array) => void;
 }) {
   const [tab, setTab] = useState<ClipTab>('basic');
   const isVideo = asset?.kind === 'video';
@@ -2118,6 +2125,11 @@ function ClipInspector({
           </label>
           <RangeField label="Fade in" value={clip.fadeIn} min={0} max={maxFade} step={0.1} onStart={mark} onChange={(v) => update({ fadeIn: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
           <RangeField label="Fade out" value={clip.fadeOut} min={0} max={maxFade} step={0.1} onStart={mark} onChange={(v) => update({ fadeOut: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
+          {isVideo && asset && (
+            <Section title="Stabilise" defaultOpen={!!clip.stabilize}>
+              <StabilizeSection layer={clip} asset={asset} update={update} />
+            </Section>
+          )}
           {!isFirst && (
             <>
               <h4>Transition in</h4>
@@ -2162,6 +2174,11 @@ function ClipInspector({
 
       {current === 'cutout' && (
         <>
+          {asset && (
+            <Section title="Remove background (AI)" defaultOpen>
+              <SmartCutoutSection layer={clip} asset={asset} update={update} onReady={onCutoutReady} />
+            </Section>
+          )}
           <Section title="Crop" defaultOpen>
             <CropSection crop={clip.crop} size={{ w: asset?.width ?? 16, h: asset?.height ?? 9 }} mark={mark} update={update} />
           </Section>
@@ -2211,6 +2228,7 @@ function ClipInspector({
             onKeys={(keys, live) => update({ keys }, live)}
             onDenoise={(v) => update({ denoise: v })}
           />
+          {asset && <StudioSoundSection item={clip} asset={asset} update={update} />}
           <div className="row">
             <button className={clip.volume === 0 ? 'active' : ''} onClick={() => update({ volume: clip.volume === 0 ? 1 : 0 })}>
               <Icon name={clip.volume === 0 ? 'volumeOff' : 'volume'} size={16} /> {clip.volume === 0 ? 'Unmute clip' : 'Mute clip'}
@@ -2259,6 +2277,7 @@ function OverlayInspector({
   onTrack,
   trackWaiting,
   onTrackStart,
+  onCutoutReady,
 }: {
   o: OverlayClip;
   asset: MediaAsset;
@@ -2272,6 +2291,7 @@ function OverlayInspector({
   onTrack: (t: number | 'new') => void;
   trackWaiting: boolean;
   onTrackStart: () => void;
+  onCutoutReady: (c: Cutout, data: Uint8Array) => void;
 }) {
   const [tab, setTab] = useState<OverlayTab>('layer');
   const isVideo = asset.kind === 'video';
@@ -2331,6 +2351,14 @@ function OverlayInspector({
       )}
       {current === 'cutout' && (
         <>
+          <Section title="Remove background (AI)" defaultOpen>
+            <SmartCutoutSection layer={o} asset={asset} update={update} onReady={onCutoutReady} />
+          </Section>
+          {isVideo && (
+            <Section title="Stabilise" defaultOpen={!!o.stabilize}>
+              <StabilizeSection layer={o} asset={asset} update={update} />
+            </Section>
+          )}
           <Section title="Green screen" defaultOpen>
             <GreenScreenSection layer={o} picking={picking} mark={mark} update={update} onPick={onPick} />
           </Section>
@@ -2360,16 +2388,19 @@ function OverlayInspector({
         </>
       )}
       {current === 'audio' && isVideo && (
-        <AudioTools
-          volume={o.volume}
-          keys={o.keys}
-          local={local}
-          denoise={o.denoise}
-          mark={mark}
-          onVolume={(v, live) => update({ volume: v }, live)}
-          onKeys={(keys, live) => update({ keys }, live)}
-          onDenoise={(v) => update({ denoise: v })}
-        />
+        <>
+          <AudioTools
+            volume={o.volume}
+            keys={o.keys}
+            local={local}
+            denoise={o.denoise}
+            mark={mark}
+            onVolume={(v, live) => update({ volume: v }, live)}
+            onKeys={(keys, live) => update({ keys }, live)}
+            onDenoise={(v) => update({ denoise: v })}
+          />
+          <StudioSoundSection item={o} asset={asset} update={update} />
+        </>
       )}
     </>
   );

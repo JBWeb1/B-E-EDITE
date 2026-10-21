@@ -86,6 +86,42 @@ export interface LayerProps {
   curve?: number[];
   /** Audio noise reduction, 0 (off) to 3 (strong). */
   denoise?: number;
+  /** Studio sound (clear, even voice) and the loudness boost measured for it, in dB. */
+  studio?: boolean;
+  boost?: number;
+  /** Smart cut-out: AI masks that keep only the person (background removed). */
+  cutout?: Cutout | null;
+  /** Steadied camera: small moves that cancel the shake (see stabilize.ts). */
+  stabilize?: Stabilize | null;
+}
+
+/** Masks stored with the project (key `cutout-<id>` in the media store). */
+export interface Cutout {
+  id: string;
+  /** Source second of the first mask. */
+  from: number;
+  /** Masks per second (ignored for photos, which have one mask). */
+  fps: number;
+  count: number;
+  /** Mask size in pixels. */
+  w: number;
+  h: number;
+  /** Stored gzipped. */
+  gzip: boolean;
+}
+
+/** Per-frame corrections that steady a shaky clip. */
+export interface Stabilize {
+  /** Source second of the first sample, and samples per second. */
+  from: number;
+  rate: number;
+  /** Shift (fractions of the frame) to apply at each sample. */
+  dx: number[];
+  dy: number[];
+  /** Zoom that hides the moving edges. */
+  zoom: number;
+  /** 0..1: how much of the shake is removed. */
+  strength: number;
 }
 
 /** A clip on the main (magnetic) track. Clips play back to back. */
@@ -250,6 +286,9 @@ export interface AudioClip {
   keys?: Keyframes;
   /** Noise reduction, 0 (off) to 3 (strong). */
   denoise?: number;
+  /** Studio sound (clear, even voice) and its loudness boost in dB. */
+  studio?: boolean;
+  boost?: number;
   /** Beat times found in the song (seconds in the source file), and its tempo. */
   beats?: number[];
   bpm?: number;

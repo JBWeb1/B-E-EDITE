@@ -39,6 +39,17 @@ await ctx.addInitScript(() => {
         { start: 2.6, end: 3.4, text: 'to my channel', words: [{ text: 'to', start: 2.6, end: 2.8 }, { text: 'my', start: 2.8, end: 3 }, { text: 'channel', start: 3, end: 3.4 }] },
       ];
     },
+    // Stand-in cut-out model: bright pixels are "the person".
+    async segment(image, onProgress) {
+      onProgress?.(1);
+      window.__segmented = (window.__segmented ?? 0) + 1;
+      const out = new Uint8Array(image.width * image.height);
+      for (let i = 0; i < out.length; i++) {
+        const d = image.data;
+        out[i] = d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2] > 450 ? 255 : 0;
+      }
+      return out;
+    },
     async translate(texts, _from, to) {
       return texts.map((t) => `[${to}] ${t}`);
     },
@@ -163,6 +174,68 @@ const v3 = Number(await point.getAttribute('aria-valuenow'));
 const v1 = Number(await details.getByRole('slider', { name: 'Speed point 1' }).getAttribute('aria-valuenow'));
 check('dragging a curve point speeds that part up', v3 > 1.5 && v1 < 1, `${v1}× → ${v3}×`);
 check('the clip shows its speed ramp', (await page.locator('.main-track .clip-item').first().innerText()).includes('⤳'));
+
+// ---------- Smart cut-out, stabiliser, studio sound ----------
+const px = (fx, fy) => page.locator('canvas.preview').evaluate((c, [x, y]) => Array.from(c.getContext('2d').getImageData(Math.round(x * (c.width - 1)), Math.round(y * (c.height - 1)), 1, 1).data), [fx, fy]);
+await subTab('Video');
+await seekTo(1);
+await settle();
+const bgBefore = await px(0.05, 0.5);
+await page.locator('.main-track .clip-item').first().click();
+await subTab('Cutout');
+await details.getByRole('button', { name: '✨ Remove background (AI)' }).click();
+await details.getByText('Background removed').waitFor({ timeout: 60000 });
+await settle();
+const bgAfter = await px(0.05, 0.5);
+const segmented = await page.evaluate(() => window.__segmented);
+check('smart cut-out runs on every frame of the clip', segmented >= 100, `${segmented} frames`);
+check('smart cut-out removes the background', bgBefore.slice(0, 3).reduce((a, b) => a + b) > 60 && bgAfter.slice(0, 3).reduce((a, b) => a + b) < 15, `${bgBefore.join(',')} → ${bgAfter.join(',')}`);
+const subject = await page.locator('canvas.preview').evaluate((c) => {
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let bright = 0;
+  for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] > 200) bright++;
+  return bright;
+});
+check('the person stays in the picture', subject > 200, `${subject} bright pixels`);
+await details.getByRole('button', { name: 'Restore background' }).click();
+await settle();
+check('restore brings the background back', (await px(0.05, 0.5)).slice(0, 3).reduce((a, b) => a + b) > 60);
+await page.keyboard.press('Control+z');
+await settle();
+check('undo puts the cut-out back (masks are kept)', (await px(0.05, 0.5)).slice(0, 3).reduce((a, b) => a + b) < 15);
+
+// Stabiliser on the moving clip.
+await page.locator('.main-track .clip-item').nth(1).click();
+await subTab('Video');
+await details.locator('summary', { hasText: 'Stabilise' }).click();
+await details.getByRole('group', { name: 'Stabilise' }).getByRole('button', { name: 'Medium' }).click();
+await details.getByText(/Steadied\. Zoomed in/).waitFor({ timeout: 30000 });
+check('stabilise measures the shake and zooms to hide the edges', /Zoomed in \d+%/.test(await details.locator('.stabilize').innerText()));
+await details.getByRole('group', { name: 'Stabilise' }).getByRole('button', { name: 'Off' }).click();
+check('stabilise can be turned off', /Smooths out/.test(await details.locator('.stabilize').innerText()));
+
+// Studio sound on the song, then the soundtrack still exports.
+await page.locator('.audio-item').first().click();
+await details.getByRole('button', { name: 'Studio sound' }).click();
+await details.getByRole('button', { name: 'Studio sound on' }).waitFor({ timeout: 20000 });
+check('studio sound measures the level', /dB to reach a steady level|evened out/.test(await details.locator('.studio-sound').innerText()), await details.locator('.studio-sound').innerText());
+await page.getByRole('button', { name: 'Export', exact: true }).click();
+dl = page.waitForEvent('download', { timeout: 60000 });
+await page.locator('.export-modal').getByRole('button', { name: /Audio WAV/ }).click();
+d = await dl;
+check('soundtrack with studio sound exports', fs.statSync(await d.path()).size > 100000);
+
+// Smart background removal for photos in the design editor.
+await page.goto(`${BASE}/?new=design`);
+await page.getByRole('button', { name: /Uploads/ }).click();
+await page.locator('.panel input[type=file][accept="image/*"]').first().setInputFiles(path.join(FIX, 'greenscreen.png'));
+const right = page.locator('.cc-details, .design-details, aside').filter({ hasText: 'Background' }).last();
+await page.getByRole('button', { name: '✂ Remove background' }).waitFor({ timeout: 10000 });
+check('smart removal is the default for photos', await page.getByRole('button', { name: '✨ Smart (AI)' }).evaluate((b) => b.classList.contains('active')));
+await page.getByRole('button', { name: '✂ Remove background' }).click();
+await page.getByRole('button', { name: 'Restore' }).waitFor({ timeout: 20000 });
+check('smart removal cuts out the photo', (await page.evaluate(() => window.__segmented)) >= 1 && (await page.getByRole('button', { name: 'Redo removal' }).count()) === 1);
+void right;
 
 // MORE CHECKS BELOW
 

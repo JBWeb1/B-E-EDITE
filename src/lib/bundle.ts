@@ -4,6 +4,7 @@
  * Layout: "BEMOTION1" · 4-byte header length · JSON header · the files back to back.
  */
 import type { MediaAsset, VideoProject } from '../video/types';
+import { getMedia } from './projects';
 
 const MAGIC = 'BEMOTION1';
 
@@ -24,6 +25,19 @@ export async function packProject(p: VideoProject): Promise<Blob> {
       blobs.push({ id: a.id, blob: await (await fetch(a.url)).blob() });
     } catch {
       /* missing media: the project opens without it */
+    }
+  }
+  // Smart cut-out masks live in the media store under their own keys.
+  const layers = [p, ...(p.versions ?? []).map((v) => v.project)].flatMap((q) => [...q.clips, ...q.overlays]);
+  for (const c of layers) {
+    const key = c.cutout ? `cutout-${c.cutout.id}` : null;
+    if (!key || ids.has(key)) continue;
+    ids.add(key);
+    try {
+      const blob = await getMedia(key);
+      if (blob) blobs.push({ id: key, blob });
+    } catch {
+      /* no media store here: the cut-out is left out */
     }
   }
   const strip = (list: MediaAsset[]) => list.map((a) => ({ ...a, url: '', thumbnail: a.thumbnail?.startsWith('blob:') ? undefined : a.thumbnail }));

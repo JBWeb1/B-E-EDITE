@@ -134,7 +134,7 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - Double-click text to edit it in place
 - Fonts, size, bold/italic, alignment, colors, line height, letter spacing, borders, corner radius, transparency
 - Text effects: shadow and outline
-- **Background remover** for photos with a plain background (white, green screen, studio wall), with a strength slider and Restore
+- **Background remover** for photos: **Smart (AI)** cuts people out of any background; **Plain background** handles white, green-screen or studio-wall shots with a strength slider. Restore any time
 - Photo editing: **crop** (Original, 1:1, 4:5, 3:2, 16:9, 9:16 with zoom and position), flip, filter presets, brightness/contrast/saturation/blur/B&W
 - **Photo tools**: exposure, temperature, tint, highlights, shadows, sharpen and vignette, plus one-click looks (Auto enhance, Golden hour, Cool blue, Portrait, Crisp, Moody)
 - One-click swatches of colors already used in the design
@@ -161,6 +161,9 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - **Titles**: animated name captions (lower thirds), subscribe button, countdown, title reveal, breaking news, location, quote, social handle, chapter — just type your words and pick colours
 - **Shapes**: animated boxes, circles, rings, lines, arrows, stars, hearts, bursts, ticks — they draw on, pop, spin or pulse
 - **More effects**: glitch, chromatic aberration, blur, light leak, lens flare, and particles (confetti, sparkles, snow, hearts, bubbles, dust) with a speed control
+- **✨ Remove background (AI)**: cuts the person out of any video or photo, no green screen needed (Cutout tab). Runs on your device with a small person-matting model (MODNet, downloaded once); video masks are made 15 times a second, smoothed so the edge doesn't flicker, and saved with the project
+- **Stabilise** shaky handheld clips (Light, Medium or Locked): it measures the shake, keeps your intended camera move and zooms in just enough to hide the edges
+- **Studio sound**: one tap makes a voice clearer and more even (rumble and mud removed, presence added, loudness evened out to a steady level), on clips, layers and audio
 - **⚡ Fast export**: decodes your videos and draws every frame on its own with the browser's video encoder (WebCodecs), so it is usually several times faster than real time, never drops a frame and keeps going in a background tab. Cancel any time. Older browsers record in real time instead
 - **Beat markers**: select a song and press **Find beats**; the beats show on the timeline and clip edges snap to them. **Fit clips to the beat** trims or stretches every clip so each cut lands on a beat. Drop your own **markers** with **M** (double-click one to remove it)
 - **Custom speed curve**: besides the speed ramp presets, draw your own curve: drag points up to speed up, down for slow motion
@@ -223,7 +226,7 @@ Design
 - [x] Image filters and flip
 - [x] Image crop
 - [x] Background remover (plain backgrounds)
-- [ ] AI background remover for busy backgrounds
+- [x] AI background remover for busy backgrounds (people)
 - [x] PDF export
 - [x] Multiple pages, present mode, animations
 - [x] Quick reuse of colors already in the design
@@ -247,6 +250,7 @@ Video
 - [x] Beat markers, user markers and fit-to-beat
 - [x] Faster-than-realtime MP4/WebM export (WebCodecs)
 - [x] Custom speed curves
+- [x] AI background removal for video, stabiliser, studio sound
 - [x] Save video projects (media stored in IndexedDB)
 - [x] Several saved projects with a project list
 
