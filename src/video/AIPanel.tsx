@@ -6,12 +6,19 @@ import { Icon } from '../ui/Icon';
 import { cutClip, findSilences, LANGUAGES, loudness, motionScore, normalise, pickHighlights, segmentsToCaptions, toProjectTime, totalLength } from './ai';
 import type { Range } from './ai';
 import { grabGrayFrames } from './grab';
+import { autoDuck, smartReframe } from './aiTools';
+import { TranscriptPanel } from './TranscriptPanel';
 import { clipDuration, layoutClips } from './timeline';
 import type { Caption } from './timeline';
 import type { Clip, VideoProject } from './types';
 
 const RATE = 16000;
 const SHORT_LENGTHS = [15, 30, 60];
+const REFRAME = {
+  '9:16': { width: 720, height: 1280, label: 'Vertical 9:16 (TikTok, Reels, Shorts)' },
+  '1:1': { width: 1080, height: 1080, label: 'Square 1:1' },
+  '4:5': { width: 1080, height: 1350, label: 'Portrait 4:5' },
+};
 const SENSITIVITY = [
   { label: 'Only long pauses', threshold: 0.06, minSilence: 1.2 },
   { label: 'Normal', threshold: 0.1, minSilence: 0.6 },
@@ -30,9 +37,12 @@ export function AIPanel({
   addCaptions,
   addAudioFile,
   onAutoEdit,
+  seek,
 }: {
   /** Open the Auto edit dialog. */
   onAutoEdit?: () => void;
+  /** Jump the player to a time (for the transcript). */
+  seek?: (t: number) => void;
   project: VideoProject;
   time: number;
   set: (fn: (p: VideoProject) => VideoProject) => void;
@@ -49,6 +59,7 @@ export function AIPanel({
   const [sensitivity, setSensitivity] = useState(1);
   const [shortLength, setShortLength] = useState(30);
   const [message, setMessage] = useState('');
+  const [reframeTo, setReframeTo] = useState<keyof typeof REFRAME>('9:16');
   const sounds = useRef(new Map<string, Promise<Float32Array | null>>());
 
   const update = (patch: Partial<AISettings>) => {
@@ -214,6 +225,22 @@ export function AIPanel({
       return `Made a ${formatTime(length)} vertical Short from ${picks.length} moment${picks.length === 1 ? '' : 's'}. Export it with the TikTok or Shorts preset.`;
     });
 
+  const doReframe = () =>
+    run('Following the action…', async (progress) => {
+      const target = REFRAME[reframeTo];
+      const next = await smartReframe(project, target.width, target.height, progress);
+      set(() => next);
+      return `Reframed to ${target.label}. Each clip now pans to follow the action (Undo goes back).`;
+    });
+
+  const doDuck = () =>
+    run('Listening for speech…', async (progress) => {
+      const { project: next, changed } = await autoDuck(project, 0.25, progress);
+      if (!changed) return 'No music playing under speech was found.';
+      set(() => next);
+      return `Music now dips under speech in ${changed} clip${changed === 1 ? '' : 's'} (see the volume keyframes on the audio track).`;
+    });
+
   return (
     <>
       {onAutoEdit && (
@@ -264,6 +291,9 @@ export function AIPanel({
           )}
         </div>
       )}
+
+      <h4>Edit by transcript</h4>
+      <TranscriptPanel project={project} language={speechLang} set={set} seek={seek ?? (() => {})} setProgress={setProgress} addCaptions={addCaptions} />
 
       <h4>Auto captions</h4>
       <p className="hint">Listens to your video and writes timed captions (uses the caption style picked in the Text tab).</p>
@@ -317,6 +347,25 @@ export function AIPanel({
           <Icon name="scissors" size={15} /> Remove silences
         </button>
       </div>
+
+      <h4>Smart reframe</h4>
+      <p className="hint">Change the shape and keep the action in frame: every clip fills the screen and pans to follow what moves.</p>
+      <div className="row">
+        <select value={reframeTo} onChange={(e) => setReframeTo(e.target.value as keyof typeof REFRAME)} aria-label="Reframe to">
+          {Object.entries(REFRAME).map(([k, v]) => (
+            <option key={k} value={k}>{v.label}</option>
+          ))}
+        </select>
+        <button onClick={doReframe} disabled={project.clips.length === 0}>
+          <Icon name="crop" size={15} /> Reframe
+        </button>
+      </div>
+
+      <h4>Auto-duck music</h4>
+      <p className="hint">Turns the music down whenever someone talks, and back up in between.</p>
+      <button className="block" onClick={doDuck} disabled={!project.audio.length}>
+        <Icon name="volume" size={15} /> Duck music under speech
+      </button>
 
       <h4>Auto Shorts</h4>
       <p className="hint">Picks the loudest, most lively moments and makes a vertical clip for TikTok, Reels or Shorts.</p>

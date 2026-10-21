@@ -73,10 +73,19 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - **Raw clips in, finished video out.** Start from **Auto edit with AI** on the home screen, **✨ Auto edit my clips** in the Media tab, or the AI tab
 - It **watches every clip** (sharpness, light, movement, sound, speech and shot changes) and keeps the best moments. It never uses blurry or dark parts and never cuts across a shot change
 - It **finds the beat** of your song (tempo and beat times) and cuts on it
-- **Six styles**: Hype / TikTok (best shot first, punch zooms on the beat), Cinematic (long shots, fades, film look, widescreen bars), Vlog and Talking / tutorial (keeps what you say and cuts the pauses, optional captions), Travel montage (golden colours, slides with whooshes, location title), Product promo (sharpest shots, sparkles, call to action)
+- **Seven styles**: Hype / TikTok (best shot first, punch zooms on the beat), Cinematic (long shots, fades, film look, widescreen bars), Vlog and Talking / tutorial (keeps what you say and cuts the pauses, optional captions), Travel montage (golden colours, slides with whooshes, location title), Product promo (sharpest shots, sparkles, call to action), and **Long-form** for YouTube videos, podcasts, lectures and interviews
+- **Long-form edit** handles footage up to hours long: it keeps every word, trims the dead air, opens with a **“coming up” teaser** (the liveliest moment), adds **chapter cards** at the natural breaks (named from what is said), and plays quiet music that **drops under speech**
+- **Smart reframe** fills a new shape (9:16, 1:1…) and pans to follow the action instead of adding blurred bars
 - Or **describe it**: “a 30 second energetic travel video for TikTok with warm colours called ‘Lisbon’”. It reads the style, length, shape, colours, pace, title, captions and music from the sentence
 - Shows **why it made each cut**, **Try another** gives a different take, and **Undo** takes it all back. The result is an ordinary timeline you can keep editing
 - Runs entirely on your device
+
+### 🤖 More AI tools (AI tab)
+- **Edit by transcript**: get a transcript of everything said, search it, tap a time to jump there, and cut a line (or several) to cut the video. Works in the original footage's time, so it stays right after trims and moves
+- **Remove filler words** (um, uh, erm… and, if you tick it, “like”, “you know”) in one click
+- **Make captions from the transcript** (only what is left after your cuts)
+- **Smart reframe** the whole project to 9:16, 1:1 or 4:5, following the action
+- **Auto-duck**: lowers the music wherever someone talks, with smooth ramps
 
 ### 🛫 Pre-flight check (only in B-E Motion)
 - Press **Check** (top bar, or from Export) before posting. It watches your video and tells you whether it will work:
@@ -225,6 +234,7 @@ Video
 - [x] Captions from a script and .srt import/export
 - [x] Automatic speech-to-text captions, translation and text-to-speech (AI tab)
 - [x] Silence removal and auto Shorts
+- [x] Long-form auto edit, edit by transcript, filler-word removal, smart reframe, auto-duck
 - [x] Motion tracking
 - [x] MP4 export
 - [x] Motion presets (zoom/pan)

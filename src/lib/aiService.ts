@@ -11,6 +11,7 @@
  * Tests (and other apps) can swap any part by setting `window.__beeAI`.
  */
 import type { SpeechSegment } from '../video/ai';
+import { groupWords } from '../video/transcript';
 
 export type AIEngine = 'device' | 'api';
 
@@ -103,8 +104,9 @@ const deviceProvider: AIProvider = {
     // Multilingual tiny Whisper: about 40 MB, cached by the browser after the first use.
     const asr = await devicePipeline('automatic-speech-recognition', 'onnx-community/whisper-tiny', (f) => onProgress?.(f * 0.5));
     onProgress?.(0.55);
+    // Word timings, so the transcript can cut single words (filler words, mistakes).
     const out = await asr(samples, {
-      return_timestamps: true,
+      return_timestamps: 'word',
       chunk_length_s: 30,
       stride_length_s: 5,
       ...(language ? { language, task: 'transcribe' } : {}),
@@ -112,7 +114,8 @@ const deviceProvider: AIProvider = {
     onProgress?.(1);
     const chunks: { timestamp: [number, number | null]; text: string }[] = out.chunks ?? [];
     const end = samples.length / 16000;
-    return chunks.map((c) => ({ start: c.timestamp[0] ?? 0, end: c.timestamp[1] ?? end, text: c.text }));
+    const words = chunks.map((c) => ({ start: c.timestamp[0] ?? 0, end: c.timestamp[1] ?? Math.min(end, (c.timestamp[0] ?? 0) + 0.4), text: c.text }));
+    return groupWords(words);
   },
   async translate(texts, from, to, onProgress) {
     const factory = browserTranslator();
@@ -155,13 +158,20 @@ function apiProvider(s: AISettings): AIProvider {
       form.append('model', 'whisper-1');
       form.append('response_format', 'verbose_json');
       form.append('timestamp_granularities[]', 'segment');
+      form.append('timestamp_granularities[]', 'word');
       if (language) form.append('language', language);
       onProgress?.(0.2);
       const r = await fetch(`${base}/audio/transcriptions`, { method: 'POST', headers, body: form });
       if (!r.ok) await fail(r);
       const data = await r.json();
       onProgress?.(1);
-      const segments: SpeechSegment[] = (data.segments ?? []).map((g: SpeechSegment) => ({ start: g.start, end: g.end, text: g.text }));
+      const words: { start: number; end: number; text: string }[] = (data.words ?? []).map((w: { word: string; start: number; end: number }) => ({ start: w.start, end: w.end, text: w.word }));
+      const segments: SpeechSegment[] = (data.segments ?? []).map((g: SpeechSegment) => ({
+        start: g.start,
+        end: g.end,
+        text: g.text,
+        words: words.filter((w) => w.start >= g.start - 0.01 && w.start < g.end),
+      }));
       return segments.length ? segments : [{ start: 0, end: samples.length / 16000, text: data.text ?? '' }];
     },
     async translate(texts, from, to, onProgress) {

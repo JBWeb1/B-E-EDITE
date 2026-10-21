@@ -6,6 +6,7 @@ import { buildAutoEdit, defaultOptions, findShots, grayQuality, parsePrompt, pla
 import type { AutoEditOptions, Built, ClipAnalysis, Plan, Shape } from './autoedit';
 import { detectBeats } from './beats';
 import { grabGrayFrames } from './grab';
+import { focusX, smooth } from './transcript';
 import { LOOKS } from './grade';
 import type { LookId } from './grade';
 import { layoutClips } from './timeline';
@@ -22,8 +23,12 @@ async function analyse(asset: MediaAsset, onProgress: (f: number) => void): Prom
   const times = Array.from({ length: Math.max(1, Math.floor(asset.duration * rate)) }, (_, i) => i / rate);
   const frames = await grabGrayFrames(asset.url, times, 64, 36, (f) => onProgress(f * 0.85));
   const motion = motionScore(frames);
-  const samples = await decodeMono(asset.url, 8000);
+  // Long recordings decode at a lower rate (plenty for finding speech and pauses).
+  const audioRate = asset.duration > 1200 ? 4000 : 8000;
+  const samples = await decodeMono(asset.url, audioRate);
   onProgress(1);
+  // Where the action is in each frame (for smart reframe), steadied like a camera operator would.
+  const focus = smooth(frames.map((f, i) => focusX(f, frames[i - 1])), 2);
   return {
     assetId: asset.id,
     name: asset.name,
@@ -32,8 +37,12 @@ async function analyse(asset: MediaAsset, onProgress: (f: number) => void): Prom
     rate,
     motion,
     quality: frames.map(grayQuality),
-    loud: samples ? loudness(samples, 8000, rate).slice(0, frames.length) : new Array(frames.length).fill(0),
+    loud: samples ? loudness(samples, audioRate, rate).slice(0, frames.length) : new Array(frames.length).fill(0),
     shots: findShots(motion, rate),
+    focus,
+    // Ten loudness readings a second, so pauses are found precisely even in long videos.
+    audio: samples ? loudness(samples, audioRate, 10) : undefined,
+    audioRate: 10,
   };
 }
 
@@ -41,7 +50,13 @@ async function analyse(asset: MediaAsset, onProgress: (f: number) => void): Prom
 function normaliseLoudness(list: ClipAnalysis[]): ClipAnalysis[] {
   const all = list.flatMap((c) => c.loud).sort((a, b) => a - b);
   const top = all[Math.floor(all.length * 0.95)] || 1e-6;
-  return list.map((c) => ({ ...c, loud: c.loud.map((v) => Math.min(1, top > 1e-4 ? v / top : 0)) }));
+  const fine = list.flatMap((c) => c.audio ?? []).sort((a, b) => a - b);
+  const fineTop = fine[Math.floor(fine.length * 0.95)] || 1e-6;
+  return list.map((c) => ({
+    ...c,
+    loud: c.loud.map((v) => Math.min(1, top > 1e-4 ? v / top : 0)),
+    audio: c.audio?.map((v) => Math.min(1, fineTop > 1e-4 ? v / fineTop : 0)),
+  }));
 }
 
 /**
@@ -93,7 +108,8 @@ export function AutoEditDialog({
   }, [busy]);
 
   const update = (patch: Partial<AutoEditOptions>) => setOptions((o) => ({ ...o, ...patch }));
-  const pickStyle = (id: AutoEditOptions['style']) => update({ style: id, shape: styleById(id).shape, captions: styleById(id).speech });
+  const longest = Math.max(0, ...picked.map((id) => project.assets.find((a) => a.id === id)?.duration ?? 0).filter(Number.isFinite));
+  const pickStyle = (id: AutoEditOptions['style']) => update({ style: id, shape: styleById(id).shape, captions: styleById(id).speech, coldOpen: id === 'longform', chapters: id === 'longform' });
   const readPrompt = (text: string) => {
     setPrompt(text);
     const r = parsePrompt(text, { ...options, style: options.style });
@@ -309,6 +325,37 @@ export function AutoEditDialog({
             </span>
           </label>
         </div>
+        <div className="autoedit-extras">
+          {styleById(options.style).speech && (
+            <>
+              <label className="check">
+                <input type="checkbox" checked={options.coldOpen} onChange={(e) => update({ coldOpen: e.target.checked })} aria-label="Teaser at the start" />
+                <span>
+                  Teaser at the start <small>the liveliest moment first, “coming up”</small>
+                </span>
+              </label>
+              <label className="check">
+                <input type="checkbox" checked={options.chapters} onChange={(e) => update({ chapters: e.target.checked })} aria-label="Chapters" />
+                <span>
+                  Chapters <small>title cards at the natural breaks</small>
+                </span>
+              </label>
+            </>
+          )}
+          <label className="check">
+            <input type="checkbox" checked={options.duck} onChange={(e) => update({ duck: e.target.checked })} aria-label="Lower music under speech" />
+            <span>
+              Lower music under speech <small>auto-ducking</small>
+            </span>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={options.reframe} onChange={(e) => update({ reframe: e.target.checked })} aria-label="Smart reframe" />
+            <span>
+              Smart reframe <small>fill the frame and follow the action</small>
+            </span>
+          </label>
+        </div>
+        {longest > 600 && <p className="hint">Long footage ({Math.round(longest / 60)} min): watching it takes about {Math.max(1, Math.round(longest / 600))} min the first time; “Try another” is instant after that.</p>}
         {project.clips.length > 0 && <p className="hint">This replaces what is on your timeline (Undo brings it back).</p>}
         {error && <p className="ai-message">{error}</p>}
         {busy ? (

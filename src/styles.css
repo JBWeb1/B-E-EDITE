@@ -5169,3 +5169,68 @@ button.link {
     scroll-margin-top: max(40vh, 240px);
   }
 }
+.autoedit-extras {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  margin: 8px 0;
+}
+@media (max-width: 520px) {
+  .autoedit-extras {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Edit by transcript ---------- */
+.transcript {
+  display: grid;
+  gap: 8px;
+}
+.transcript-fillers {
+  display: grid;
+  gap: 6px;
+}
+.transcript-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.transcript-lines li {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 6px;
+  align-items: start;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.transcript-lines li:last-child {
+  border-bottom: 0;
+}
+.transcript-lines li.cut .transcript-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.transcript-lines input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+.transcript-time {
+  min-height: 0;
+  padding: 1px 6px;
+  font: 11.5px ui-monospace, monospace;
+  color: var(--accent-text);
+  background: transparent;
+  border-color: transparent;
+}
+.transcript-lines .icon-btn {
+  width: 26px;
+  height: 26px;
+  min-height: 0;
+}

@@ -35,8 +35,8 @@ await ctx.addInitScript(() => {
       onProgress?.(1);
       window.__heard = samples.length / 16000;
       return [
-        { start: 0.1, end: 0.9, text: 'Hello and welcome' },
-        { start: 2.6, end: 3.4, text: 'to my channel' },
+        { start: 0.1, end: 0.9, text: 'Hello and welcome', words: [{ text: 'Hello', start: 0.1, end: 0.3 }, { text: 'um', start: 0.35, end: 0.55 }, { text: 'and', start: 0.6, end: 0.7 }, { text: 'welcome', start: 0.7, end: 0.9 }] },
+        { start: 2.6, end: 3.4, text: 'to my channel', words: [{ text: 'to', start: 2.6, end: 2.8 }, { text: 'my', start: 2.8, end: 3 }, { text: 'channel', start: 3, end: 3.4 }] },
       ];
     },
     async translate(texts, _from, to) {
@@ -265,6 +265,57 @@ check('more design templates', designTemplates >= 15, String(designTemplates));
 await page.locator('.home-card', { hasText: 'Animated Launch' }).click();
 await page.locator('.artboard canvas').waitFor();
 check('animated template plays its keyframes', await page.getByRole('button', { name: '▶ Preview animation' }).isEnabled());
+
+// ---------- Edit by transcript, filler words, smart reframe, auto-duck, long-form
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([`${FIX}/talk.webm`, `${FIX}/beat120.wav`]);
+await page.locator('.clip-item').first().waitFor();
+await page.locator('.audio-item').first().waitFor();
+await libTab('AI');
+const ai = page.locator('.cc-library-body');
+await ai.getByRole('button', { name: 'Get transcript' }).click();
+await ai.locator('.transcript-lines li').first().waitFor({ timeout: 30000 });
+check('transcript lists what is said', (await ai.locator('.transcript-lines li').count()) === 2, (await ai.locator('.transcript-text').allInnerTexts()).join(' | '));
+const fillerBtn = ai.getByRole('button', { name: /Remove 1 filler word/ });
+check('finds the filler word', (await fillerBtn.count()) === 1);
+await fillerBtn.click();
+await settle();
+check('removing filler words cuts the clip around them', (await page.locator('.clip-item').count()) === 2, `${await page.locator('.clip-item').count()} clips`);
+check('no filler words left', (await ai.getByRole('button', { name: /Remove 0 filler words/ }).count()) === 1);
+await ai.getByRole('button', { name: 'Cut: to my channel' }).click();
+await settle();
+check('cutting a line cuts the video and marks it', (await ai.locator('.transcript-lines li.cut').count()) === 1 && (await page.locator('.clip-item').count()) === 3, `${await page.locator('.clip-item').count()} clips`);
+await ai.getByRole('button', { name: 'Make captions from it' }).click();
+check('captions from the transcript (only what is left)', (await page.locator('.text-item').count()) === 1);
+await page.keyboard.press('Control+z');
+await page.keyboard.press('Control+z');
+await settle();
+await ai.getByRole('button', { name: 'Duck music under speech' }).click();
+await ai.locator('.ai-message', { hasText: /dips under speech|No music/ }).waitFor({ timeout: 30000 });
+check('auto-duck lowers the music under speech', /dips under speech/.test(await ai.locator('.ai-message').last().innerText()), await ai.locator('.ai-message').last().innerText());
+await ai.getByRole('combobox', { name: 'Reframe to' }).selectOption('9:16');
+await ai.getByRole('button', { name: 'Reframe' }).click();
+await ai.locator('.ai-message', { hasText: /Reframed/ }).waitFor({ timeout: 30000 });
+const ratioNow = await page.locator('canvas.preview').evaluate((c) => c.height / c.width);
+const fillPixels = await page.locator('canvas.preview').evaluate((c) => {
+  // The picture fills the frame: no black bars at the top or bottom.
+  const g = c.getContext('2d');
+  const top = g.getImageData(c.width / 2, 4, 1, 1).data;
+  const bottom = g.getImageData(c.width / 2, c.height - 5, 1, 1).data;
+  return [...top.slice(0, 3), ...bottom.slice(0, 3)];
+});
+check('smart reframe makes it vertical and fills the frame', Math.abs(ratioNow - 16 / 9) < 0.02 && fillPixels.some((v) => v > 20), `${ratioNow.toFixed(2)}; ${fillPixels.join(',')}`);
+await ai.locator('.autoedit-card').click();
+const aed = page.getByRole('dialog', { name: 'Auto edit' });
+await aed.waitFor();
+await aed.getByRole('radio', { name: /Long-form/ }).click();
+check('long-form style offers teaser and chapters', (await aed.getByRole('checkbox', { name: 'Teaser at the start' }).isChecked()) && (await aed.getByRole('checkbox', { name: 'Chapters' }).isChecked()));
+await aed.getByRole('checkbox', { name: /Captions from speech/ }).uncheck();
+await aed.getByRole('button', { name: /Auto edit 1 clip/ }).click();
+const aer = page.getByRole('dialog', { name: 'Auto edit result' });
+await aer.waitFor({ timeout: 60000 });
+check('long-form auto edit runs', /long-form/i.test(await aer.innerText()) && (await page.locator('.clip-item').count()) >= 2, (await aer.innerText()).replace(/\n/g, ' ').slice(0, 140));
+await aer.getByRole('button', { name: 'Keep it' }).click();
 
 // MORE CHECKS BELOW
 

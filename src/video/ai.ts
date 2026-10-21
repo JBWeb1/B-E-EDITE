@@ -152,10 +152,18 @@ export function normalise(values: number[]): number[] {
   return values.map((v) => v / max);
 }
 
+export interface Word {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface SpeechSegment {
   start: number;
   end: number;
   text: string;
+  /** Word timings, when the speech engine gives them. */
+  words?: Word[];
 }
 
 /**

@@ -282,6 +282,18 @@ export interface VideoProject {
   watermark?: Watermark | null;
   /** Versions saved by name (visual history), newest first. */
   versions?: SavedVersion[];
+  /** What is said in the media (source times), for editing by transcript. */
+  transcript?: TranscriptLine[];
+}
+
+export interface TranscriptLine {
+  id: string;
+  assetId: string;
+  /** Seconds in the source file. */
+  start: number;
+  end: number;
+  text: string;
+  words?: { start: number; end: number; text: string }[];
 }
 
 export interface SavedVersion {

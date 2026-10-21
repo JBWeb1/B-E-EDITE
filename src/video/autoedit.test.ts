@@ -90,11 +90,75 @@ describe('auto edit: building the video', () => {
     expect(music.out - music.in).toBeLessThanOrEqual(plan.length + 0.01);
   });
 
-  it('frames a landscape clip in a vertical video with a blurred fill', () => {
+  it('reframes a landscape clip to fill a vertical video, following the action', () => {
     const assets: MediaAsset[] = [{ id: 'a', kind: 'video', name: 'a', url: '', duration: 30, width: 1920, height: 1080 }];
-    const plan = planAutoEdit([clip('a', 30)], { ...defaultOptions('hype'), length: 8 }, [], 1);
+    const right = { ...clip('a', 30), focus: new Array(120).fill(0.7) };
+    const plan = planAutoEdit([right], { ...defaultOptions('hype'), length: 8 }, [], 1);
     const { project } = buildAutoEdit(createProject(), plan, assets);
-    expect([project.width, project.height, project.fill]).toEqual([720, 1280, 'blur']);
-    expect(project.clips[0].keys?.scale?.[0].v).toBeCloseTo(1.1);
+    const cover = (16 / 9) / (9 / 16);
+    expect([project.width, project.height, project.fill]).toEqual([720, 1280, 'color']);
+    expect(project.clips[0].scale).toBeCloseTo(cover);
+    expect(project.clips[0].x!).toBeLessThan(0.5); // moved left so the right side is in view
+    expect(project.clips[0].keys?.scale?.[0].v).toBeCloseTo(1.1 * cover);
+  });
+
+  it('uses a blurred fill when reframe is off', () => {
+    const assets: MediaAsset[] = [{ id: 'a', kind: 'video', name: 'a', url: '', duration: 30, width: 1920, height: 1080 }];
+    const plan = planAutoEdit([clip('a', 30)], { ...defaultOptions('hype'), length: 8, reframe: false }, [], 1);
+    expect(buildAutoEdit(createProject(), plan, assets).project.fill).toBe('blur');
+  });
+});
+
+describe('auto edit: long-form', () => {
+  // 6 minutes of talking: 20 s parts with a short pause, and a long break every 2 minutes.
+  const talk = () => clip('ep', 360, { loud: (t) => (t % 120 > 115 ? 0.01 : t % 20 < 18.5 ? 0.6 + 0.3 * Math.sin(t / 7) : 0.01), motion: (t) => (t > 200 && t < 210 ? 0.3 : 0.04) });
+  const assets: MediaAsset[] = [
+    { id: 'ep', kind: 'video', name: 'episode', url: '', duration: 360, width: 1280, height: 720 },
+    { id: 'song', kind: 'audio', name: 'bed', url: '', duration: 100 },
+  ];
+
+  it('keeps everything said, adds a teaser and chapters', () => {
+    const plan = planAutoEdit([talk()], { ...defaultOptions('longform'), musicAssetId: 'song' });
+    expect(plan.segments[0].teaser).toBe(true);
+    expect(plan.segments[0].out - plan.segments[0].in).toBeLessThanOrEqual(7);
+    expect(plan.length).toBeGreaterThan(300); // only the pauses were cut
+    expect(plan.chapters.length).toBeGreaterThanOrEqual(3);
+    expect(plan.chapters[0].t).toBeCloseTo(plan.segments[0].out - plan.segments[0].in);
+    for (let i = 1; i < plan.chapters.length; i++) expect(plan.chapters[i].t - plan.chapters[i - 1].t).toBeGreaterThanOrEqual(30);
+  });
+
+  it('builds chapter cards, a teaser label, looping music that ducks under speech', () => {
+    const plan = planAutoEdit([talk()], { ...defaultOptions('longform'), musicAssetId: 'song' });
+    const { project } = buildAutoEdit(createProject(), plan, assets);
+    expect(project.texts[0].text).toBe('COMING UP');
+    expect(project.texts.filter((t) => t.template === 'chapter').length).toBe(plan.chapters.length - 1);
+    expect(project.clips[1].transition?.type).toBe('zoom');
+    const total = project.audio.reduce((s, a) => s + a.out - a.in, 0);
+    expect(project.audio.length).toBeGreaterThan(1); // the 100 s song repeats
+    expect(total).toBeCloseTo(plan.length, 0);
+    expect(project.audio[0].keys?.volume?.some((k) => k.v < 0.5)).toBe(true);
+    expect(project.clips.some((c) => c.scale === 1.1)).toBe(true); // a little zoom now and then
+  });
+
+  it('names chapters from the transcript', () => {
+    const plan = planAutoEdit([talk()], { ...defaultOptions('longform') });
+    const second = plan.chapters[1];
+    let at = 0;
+    let src = 0;
+    for (const s of plan.segments) {
+      if (second.t < at + s.out - s.in + 1e-6) {
+        src = s.in + (second.t - at);
+        break;
+      }
+      at += s.out - s.in;
+    }
+    const p = { ...createProject(), transcript: [{ id: 'l', assetId: 'ep', start: src, end: src + 5, text: 'now let us talk about pricing, okay' }] };
+    const { project } = buildAutoEdit(p, plan, assets);
+    expect(project.texts.find((t) => t.template === 'chapter')!.text).toBe('CHAPTER 1\nNow let us talk about');
+  });
+
+  it('understands a long-form request', () => {
+    const { options } = parsePrompt('edit my 40 minute podcast episode with chapters');
+    expect([options.style, options.chapters, options.coldOpen]).toEqual(['longform', true, true]);
   });
 });

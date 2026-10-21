@@ -1456,6 +1456,7 @@ export function VideoEditor({
       <Suspense fallback={<p className="hint">Loading…</p>}>
       <AIPanel
         onAutoEdit={() => setAutoEditOpen(true)}
+        seek={(t) => seek(t)}
         project={project}
         time={time}
         set={set}
