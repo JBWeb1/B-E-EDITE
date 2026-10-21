@@ -246,6 +246,9 @@ await modal.getByRole('button', { name: 'Export video' }).click();
 const vid = await vidDl;
 const vidSize = fs.statSync(await vid.path()).size;
 check('video export at 720p60 finishes', vidSize > 20000, `${vidSize} bytes`);
+// The "ready to post" dialog follows every export.
+await page.getByRole('dialog', { name: 'Your video is ready' }).waitFor();
+await page.keyboard.press('Escape');
 
 // Preset that changes the shape of the video (accepts the confirm).
 await page.getByRole('button', { name: 'Export', exact: true }).click();

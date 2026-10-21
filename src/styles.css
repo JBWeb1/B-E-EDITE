@@ -2166,11 +2166,13 @@ kbd {
 }
 
 .cc-tabs button {
-  flex: 1 0 auto;
+  /* Tabs share the row and squeeze on narrow screens (labels get cut, icons stay). */
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 3px;
-  min-width: 38px;
-  padding: 6px 2px 7px;
+  min-width: 34px;
+  padding: 6px 1px 7px;
+  overflow: hidden;
   font-size: 10.5px;
   background: transparent;
   border: 0;
@@ -2790,7 +2792,7 @@ kbd {
 }
 
 .design .cc-library {
-  width: 320px;
+  width: 360px;
 }
 
 .cc-head-info {
@@ -5617,4 +5619,77 @@ button.link {
   50% {
     opacity: 0.3;
   }
+}
+
+/* Stock library and AI pictures */
+.stock-search input {
+  flex: 1;
+  min-width: 0;
+}
+.stock-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 8px 0;
+}
+.stock-item {
+  position: relative;
+  padding: 0;
+  aspect-ratio: 1;
+  overflow: hidden;
+}
+.stock-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.stock-sound {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.stock-sound audio {
+  width: 100%;
+  height: 32px;
+}
+.stock-sound button {
+  justify-content: flex-start;
+}
+.ai-image textarea {
+  width: 100%;
+}
+.chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Post dialog */
+.post-modal {
+  width: min(520px, calc(100vw - 32px));
+}
+.post-preview {
+  width: 100%;
+  max-height: 300px;
+  background: #000;
+  border-radius: 8px;
+}
+.post-sites {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.post-sites .button {
+  justify-content: center;
+  text-decoration: none;
+}
+
+.cc-tabs button span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

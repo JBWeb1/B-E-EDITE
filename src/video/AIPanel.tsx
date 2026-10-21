@@ -303,6 +303,10 @@ export function AIPanel({
                   ))}
                 </select>
               </label>
+              <label className="field">
+                <span>Picture model</span>
+                <input value={settings.imageModel} onChange={(e) => update({ imageModel: e.target.value.trim() })} aria-label="Picture model" placeholder="gpt-image-1" />
+              </label>
               <p className="hint">Works with OpenAI or any OpenAI-compatible service. The key is stored only in this browser and sent only to the address above.</p>
             </>
           )}

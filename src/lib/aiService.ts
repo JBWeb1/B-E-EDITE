@@ -21,6 +21,8 @@ export interface AISettings {
   baseUrl: string;
   /** Voice name for the API voice-over (alloy, nova, onyx, …). */
   voice: string;
+  /** Model for making pictures (API only). */
+  imageModel: string;
 }
 
 export interface AIProvider {
@@ -31,10 +33,19 @@ export interface AIProvider {
   speak(text: string, language: string, onProgress?: (f: number) => void): Promise<Blob>;
   /** How much each pixel belongs to a person in the picture (0..255, one byte per pixel). */
   segment(image: ImageData, onProgress?: (f: number) => void): Promise<Uint8Array>;
+  /** A picture made from a description. `size` is "1024x1024", "1536x1024" or "1024x1536". */
+  image(prompt: string, size: ImageSize, onProgress?: (f: number) => void): Promise<Blob>;
 }
 
+export type ImageSize = '1024x1024' | '1536x1024' | '1024x1536';
+
+/** The picture size closest to a shape (width / height). */
+export const imageSizeFor = (aspect: number): ImageSize => (aspect > 1.2 ? '1536x1024' : aspect < 0.83 ? '1024x1536' : '1024x1024');
+
+export const NEEDS_KEY = 'Making pictures needs an AI service: open AI settings (in the video editor’s AI tab) and add an API key.';
+
 const KEY = 'bee.ai';
-const DEFAULTS: AISettings = { engine: 'device', apiKey: '', baseUrl: 'https://api.openai.com/v1', voice: 'nova' };
+const DEFAULTS: AISettings = { engine: 'device', apiKey: '', baseUrl: 'https://api.openai.com/v1', voice: 'nova', imageModel: 'gpt-image-1' };
 
 export function loadAISettings(): AISettings {
   try {
@@ -168,6 +179,10 @@ const deviceProvider: AIProvider = {
     return new Blob([floatToWav(out.audio as Float32Array, out.sampling_rate as number)], { type: 'audio/wav' });
   },
   segment: deviceSegment,
+  async image() {
+    // Picture models are gigabytes; they don't run in a browser yet.
+    throw new Error(NEEDS_KEY);
+  },
 };
 
 // ---------- API (OpenAI-compatible) ----------
@@ -240,6 +255,23 @@ function apiProvider(s: AISettings): AIProvider {
     },
     // Cut-outs always run on this device (there is no standard API for them).
     segment: deviceSegment,
+    async image(prompt, size, onProgress) {
+      onProgress?.(0.1);
+      const r = await fetch(`${base}/images/generations`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: s.imageModel || 'gpt-image-1', prompt, size, n: 1 }),
+      });
+      if (!r.ok) await fail(r);
+      const item = (await r.json()).data?.[0] ?? {};
+      onProgress?.(0.9);
+      let blob: Blob;
+      if (item.b64_json) blob = await (await fetch(`data:image/png;base64,${item.b64_json}`)).blob();
+      else if (item.url) blob = await (await fetch(item.url)).blob();
+      else throw new Error('The AI service sent no picture.');
+      onProgress?.(1);
+      return blob;
+    },
   };
 }
 

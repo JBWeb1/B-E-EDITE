@@ -44,6 +44,42 @@ await ctx.addInitScript(() => {
     return c.captureStream(30);
   };
 });
+// Stand-in stock library and picture maker (the real ones are online services).
+await ctx.addInitScript(() => {
+  const picture = (hue, w = 400, h = 300) =>
+    new Promise((resolve) => {
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const g = c.getContext('2d');
+      g.fillStyle = `hsl(${hue}, 70%, 55%)`;
+      g.fillRect(0, 0, w, h);
+      c.toBlob(resolve, 'image/png');
+    });
+  const tone = () => {
+    const rate = 16000;
+    const n = rate * 2;
+    const buf = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(buf);
+    const str = (o, s) => [...s].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    str(36, 'data'); v.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(i / 6) * 6000, true);
+    return new Blob([buf], { type: 'audio/wav' });
+  };
+  window.__beeStock = {
+    async search(kind, q) {
+      window.__stockQuery = `${kind}:${q}`;
+      const thumb = URL.createObjectURL(await picture(200));
+      return [1, 2, 3].map((i) => ({ id: `t${i}`, kind, title: `${q} ${i}`, thumb, url: `stub://${i}`, creator: 'Test Maker', license: 'CC BY 4.0', source: 'Openverse', duration: kind === 'image' ? undefined : 2 }));
+    },
+    async fetch(item) {
+      return item.kind === 'audio' ? tone() : picture(120 * Number(item.id.slice(1)));
+    },
+  };
+});
 // Stand-in AI engine, so the AI tools can be tested without downloading models.
 await ctx.addInitScript(() => {
   window.__beeAI = {
@@ -65,6 +101,17 @@ await ctx.addInitScript(() => {
         out[i] = d[i * 4] + d[i * 4 + 1] + d[i * 4 + 2] > 450 ? 255 : 0;
       }
       return out;
+    },
+    async image(prompt, size) {
+      window.__imagePrompt = prompt;
+      window.__imageSize = size;
+      const [w, h] = size.split('x').map(Number);
+      const c = document.createElement('canvas');
+      c.width = w / 4;
+      c.height = h / 4;
+      c.getContext('2d').fillStyle = '#7c3aed';
+      c.getContext('2d').fillRect(0, 0, c.width, c.height);
+      return new Promise((resolve) => c.toBlob(resolve, 'image/png'));
     },
     async translate(texts, _from, to) {
       return texts.map((t) => `[${to}] ${t}`);
@@ -89,7 +136,7 @@ const page = await ctx.newPage();
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 // This test machine can't reach Google Fonts; failed font downloads aren't app errors.
 const offline = (m) => /fonts\.(googleapis|gstatic)\.com/.test(m.location()?.url ?? '');
-page.on('console', (m) => m.type() === 'error' && !offline(m) && errors.push('console: ' + m.text()));
+page.on('console', (m) => m.type() === 'error' && !offline(m) && errors.push('console: ' + m.text() + ' @ ' + (m.location()?.url ?? '').slice(0, 60)));
 page.on('dialog', (d) => d.accept());
 
 const details = page.locator('.cc-details-body');
@@ -127,6 +174,10 @@ let dl = page.waitForEvent('download', { timeout: 120000 });
 await m.getByRole('button', { name: 'Export video' }).click();
 let d = await dl;
 const fastSeconds = (Date.now() - t0) / 1000;
+const ready = page.getByRole('dialog', { name: 'Your video is ready' });
+await ready.waitFor();
+check('after exporting, the video is ready to post', (await ready.locator('.post-sites a').count()) === 6 && (await ready.getByRole('textbox', { name: 'Post caption' }).inputValue()).includes('#'));
+await page.keyboard.press('Escape');
 const fastFile = await d.path();
 const fs = await import('fs');
 const fastBytes = fs.statSync(fastFile).size;
@@ -138,6 +189,8 @@ m = await exportWith('⚡ Fast', 'MP4');
 dl = page.waitForEvent('download', { timeout: 120000 });
 await m.getByRole('button', { name: 'Export video' }).click();
 d = await dl;
+await ready.waitFor();
+await page.keyboard.press('Escape');
 const mp4 = fs.readFileSync(await d.path());
 check('fast export makes an MP4 file', d.suggestedFilename().endsWith('.mp4') && mp4.subarray(4, 8).toString() === 'ftyp', mp4.subarray(4, 8).toString());
 
@@ -428,6 +481,43 @@ await rec.waitFor({ state: 'detached', timeout: 20000 });
 await page.locator('.main-track .clip-item', { hasText: 'Screen recording' }).waitFor({ timeout: 20000 });
 check('the screen recording goes on the main track', (await page.locator('.main-track .clip-item').count()) === clipsBefore + 1);
 check('the camera goes on a layer above it', (await page.locator('.overlay-item', { hasText: 'Camera' }).count()) === 1);
+
+// ---------- AI pictures and free stock media ----------
+await page.goto(`${BASE}/?new=design`);
+await page.locator('.cc-library .cc-tabs').getByRole('button', { name: 'Photos', exact: true }).click();
+const plib = page.locator('.cc-library-body');
+await plib.getByRole('textbox', { name: 'Describe the picture' }).fill('a cosy coffee shop');
+await plib.getByRole('button', { name: 'Illustration' }).click();
+await plib.getByRole('button', { name: '✨ Make picture' }).click();
+await page.locator('.panel.right h3').first().waitFor();
+await page.waitForFunction(() => window.__imageSize);
+check('AI picture is made in the shape of the page', (await page.evaluate(() => window.__imageSize)) === '1024x1024' && (await page.evaluate(() => window.__imagePrompt)).includes('flat vector illustration'), await page.evaluate(() => `${window.__imageSize} · ${window.__imagePrompt}`));
+check('the AI picture is added to the design', (await page.locator('.panel.right').getByRole('button', { name: '✂ Remove background' }).count()) === 1);
+await plib.getByRole('textbox', { name: 'Search stock' }).fill('beach');
+await plib.getByRole('button', { name: 'Search', exact: true }).click();
+await plib.locator('.stock-item').first().waitFor();
+check('stock photos can be searched', (await plib.locator('.stock-item').count()) === 3);
+await plib.getByRole('button', { name: 'Add beach 2' }).click();
+await page.locator('.panel.right h3', { hasText: '“beach 2” by Test Maker (CC BY 4.0) via Openverse' }).waitFor({ timeout: 10000 });
+check('a stock photo is added with its credit', true);
+
+await page.goto(`${BASE}/?new=video`);
+await page.locator('summary', { hasText: 'Free stock media' }).click();
+const vlib = page.locator('.cc-library-body');
+await vlib.getByRole('button', { name: 'Music & sounds' }).click();
+await vlib.getByRole('button', { name: 'upbeat' }).click();
+await vlib.getByRole('button', { name: 'Add upbeat 1' }).click();
+await page.locator('.audio-item').first().waitFor({ timeout: 10000 });
+check('stock music goes on the audio track', (await page.locator('.audio-item').first().innerText()).includes('upbeat 1 by Test Maker'));
+await vlib.getByRole('button', { name: 'Photos' }).click();
+await vlib.getByRole('button', { name: 'Add upbeat 1' }).click();
+await page.locator('.main-track .clip-item').first().waitFor({ timeout: 10000 });
+check('stock photos go on the main track', (await page.locator('.main-track .clip-item').count()) === 1);
+await page.locator('summary', { hasText: 'Make a picture with AI' }).click();
+await vlib.getByRole('textbox', { name: 'Describe the picture' }).fill('mountains at dawn');
+await vlib.getByRole('button', { name: '✨ Make picture' }).click();
+await page.locator('.main-track .clip-item').nth(1).waitFor({ timeout: 10000 });
+check('AI pictures for a video use its shape', (await page.evaluate(() => window.__imageSize)) === '1536x1024');
 
 // MORE CHECKS BELOW
 

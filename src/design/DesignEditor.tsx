@@ -14,6 +14,9 @@ import { FontPicker } from '../ui/FontPicker';
 import { loadWebFonts } from '../lib/fonts';
 import { brandFontFor, useBrand } from '../lib/brand';
 import { BrandPanel } from '../ui/BrandPanel';
+import { StockPanel } from '../ui/StockPanel';
+import { AIImagePanel } from '../ui/AIImagePanel';
+import { creditLine } from '../lib/stock';
 import { FilterSliders } from '../ui/FilterSliders';
 import { keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import { Tour, tourSeen } from '../ui/Tour';
@@ -110,7 +113,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['?'], action: 'Show this help' },
 ];
 
-type Tab = 'templates' | 'text' | 'elements' | 'uploads' | 'background' | 'brand';
+type Tab = 'templates' | 'text' | 'elements' | 'photos' | 'uploads' | 'background' | 'brand';
 
 type Drag =
   | { mode: 'move'; start: Point; origins: Map<string, Point & { keys?: Keyframes }>; bounds: Rect; clickedId: string; moved: boolean }
@@ -858,7 +861,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       <div className="workspace">
         <aside className={`panel cc-library ${panelOpen ? '' : 'collapsed'}`} ref={libraryRef}>
           <nav className="cc-tabs" aria-label="Library">
-          {(['templates', 'text', 'elements', 'uploads', 'background', 'brand'] as Tab[]).map((t) => (
+          {(['templates', 'text', 'elements', 'photos', 'uploads', 'background', 'brand'] as Tab[]).map((t) => (
             <button
               key={t}
               className={tab === t ? 'active' : ''}
@@ -872,7 +875,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                 if (window.matchMedia?.('(max-width: 760px)').matches) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
               }}
             >
-              <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', uploads: 'upload', background: 'droplet', brand: 'palette' } as const)[t]} size={18} />
+              <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', photos: 'image', uploads: 'upload', background: 'droplet', brand: 'palette' } as const)[t]} size={18} />
               <span>{t[0].toUpperCase() + t.slice(1)}</span>
             </button>
           ))}
@@ -982,6 +985,25 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                   </button>
                 ))}
               </div>
+            </>
+          )}
+
+          {tab === 'photos' && (
+            <>
+              <h3>✨ AI picture</h3>
+              <AIImagePanel aspect={doc.width / doc.height} onImage={(file) => addImageFiles([file])} />
+              <h3>Free stock photos</h3>
+              <StockPanel
+                kinds={['image']}
+                onPick={async (file, item) => {
+                  const src = await readFileAsDataURL(file);
+                  const { w, h } = await loadImageSize(src);
+                  if (frameRef.current) {
+                    const frame = frameRef.current;
+                    set((d) => updateElement(d, frame.id, { ...fillFrame(frame, src, w, h), name: creditLine(item) }));
+                  } else insert({ ...createImage(doc, src, w, h), name: creditLine(item) });
+                }}
+              />
             </>
           )}
 

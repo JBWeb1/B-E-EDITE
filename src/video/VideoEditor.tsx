@@ -35,6 +35,8 @@ import { extensionFor, mixSoundtrack } from './export';
 import { fastExport } from './fastExport';
 import { SmartCutoutSection, StabilizeSection, StudioSoundSection } from './SmartTools';
 import { FontPicker } from '../ui/FontPicker';
+import { StockPanel } from '../ui/StockPanel';
+import { AIImagePanel } from '../ui/AIImagePanel';
 import { loadWebFonts } from '../lib/fonts';
 import { isEmptyBrand, useBrand } from '../lib/brand';
 import type { Cutout } from './types';
@@ -138,9 +140,10 @@ const ShareDialog = lazy(() => import('./ShareDialog').then((m) => ({ default: m
 const AutoEditDialog = lazy(() => import('./AutoEditDialog').then((m) => ({ default: m.AutoEditDialog })));
 const MulticamDialog = lazy(() => import('./MulticamDialog').then((m) => ({ default: m.MulticamDialog })));
 const ScreenRecorder = lazy(() => import('./ScreenRecorder').then((m) => ({ default: m.ScreenRecorder })));
+const PostDialog = lazy(() => import('./PostDialog').then((m) => ({ default: m.PostDialog })));
 /** Fetch them in the background once the editor is idle, so they open instantly (and work offline). */
 const prefetchDialogs = () => {
-  for (const load of [() => import('./AIPanel'), () => import('./ExportDialog'), () => import('./PreflightDialog'), () => import('./RecipesDialog'), () => import('./PostKitDialog'), () => import('./HistoryDialog'), () => import('./ShareDialog'), () => import('./AutoEditDialog'), () => import('./MulticamDialog'), () => import('./ScreenRecorder')]) void load().catch(() => {});
+  for (const load of [() => import('./AIPanel'), () => import('./ExportDialog'), () => import('./PreflightDialog'), () => import('./RecipesDialog'), () => import('./PostKitDialog'), () => import('./HistoryDialog'), () => import('./ShareDialog'), () => import('./AutoEditDialog'), () => import('./MulticamDialog'), () => import('./ScreenRecorder'), () => import('./PostDialog')]) void load().catch(() => {});
 };
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -293,6 +296,7 @@ export function VideoEditor({
   const [exportDialog, setExportDialog] = useState(false);
   const [multicamOpen, setMulticamOpen] = useState(false);
   const [screenRecOpen, setScreenRecOpen] = useState(false);
+  const [exported, setExported] = useState<File | null>(null);
   const [preflight, setPreflight] = useState(false);
   const [recipesOpen, setRecipesOpen] = useState(false);
   const [postKit, setPostKit] = useState(false);
@@ -1135,7 +1139,10 @@ export function VideoEditor({
       let blob = c.fast ? await fastExport(engine, project, c, (v, label) => setProgress({ label, value: v }), abort.signal) : null;
       if (!blob) blob = await engine.record((v) => setProgress({ label: 'Exporting video (real time)…', value: v }), c);
       lastExportSeconds.current = (performance.now() - started) / 1000;
-      downloadBlob(blob, `${project.name || 'video'}.${extensionFor(blob.type)}`);
+      const name = `${project.name || 'video'}.${extensionFor(blob.type)}`;
+      downloadBlob(blob, name);
+      // Then offer to post it.
+      setExported(new File([blob], name, { type: blob.type }));
     } catch (err) {
       if (!(err instanceof DOMException && err.name === 'AbortError')) alert(err instanceof Error ? err.message : 'Export failed');
     } finally {
@@ -1199,6 +1206,14 @@ export function VideoEditor({
         <button className="block autoedit-media-btn" onClick={() => setAutoEditOpen(true)} title="Raw clips in, finished video out">
           ✨ Auto edit my clips
         </button>
+        <details className="insp-section media-extra">
+          <summary>Free stock media</summary>
+          <StockPanel kinds={['video', 'image', 'audio']} onPick={(file) => importFiles([file])} />
+        </details>
+        <details className="insp-section media-extra">
+          <summary>✨ Make a picture with AI</summary>
+          <AIImagePanel aspect={project.width / project.height} onImage={(file) => importFiles([file])} />
+        </details>
         {!!navigator.mediaDevices?.getDisplayMedia && (
           <button className="block" onClick={() => setScreenRecOpen(true)} title="Record your screen, voice and camera">
             <Icon name="video" size={15} /> Record screen
@@ -1975,6 +1990,7 @@ export function VideoEditor({
       {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
       <Suspense fallback={null}>
+      {exported && <PostDialog file={exported} project={project} onClose={() => setExported(null)} />}
       {screenRecOpen && (
         <ScreenRecorder
           onClose={() => setScreenRecOpen(false)}
