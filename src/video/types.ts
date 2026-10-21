@@ -82,6 +82,8 @@ export interface LayerProps {
   /** Play backwards. */
   reverse?: boolean;
   ramp?: Ramp;
+  /** Custom speed curve (used when `ramp` is 'custom'): speed at evenly spaced moments. */
+  curve?: number[];
   /** Audio noise reduction, 0 (off) to 3 (strong). */
   denoise?: number;
 }
@@ -248,6 +250,9 @@ export interface AudioClip {
   keys?: Keyframes;
   /** Noise reduction, 0 (off) to 3 (strong). */
   denoise?: number;
+  /** Beat times found in the song (seconds in the source file), and its tempo. */
+  beats?: number[];
+  bpm?: number;
 }
 
 export type WatermarkPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
@@ -284,6 +289,8 @@ export interface VideoProject {
   versions?: SavedVersion[];
   /** What is said in the media (source times), for editing by transcript. */
   transcript?: TranscriptLine[];
+  /** Markers the user dropped on the timeline (project seconds). */
+  markers?: number[];
 }
 
 export interface TranscriptLine {

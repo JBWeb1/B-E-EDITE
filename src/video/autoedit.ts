@@ -403,6 +403,8 @@ export interface Plan {
   beat: number | null;
   /** Where the music starts playing from (seconds into the song). */
   musicIn: number;
+  /** The song's beats (seconds into the song), kept on the music clips as beat markers. */
+  musicBeats?: number[];
   notes: string[];
   /** Chapter starts (seconds on the timeline) for long videos. */
   chapters: { t: number; title: string }[];
@@ -606,7 +608,7 @@ export function planAutoEdit(clips: ClipAnalysis[], options: AutoEditOptions, be
   }
   if (beat) notes.push(`Cut on the beat of the music (${Math.round(60 / beat)} BPM).`);
   else if (style.music !== 'none' && !options.musicAssetId) notes.push('Add a song to cut on the beat.');
-  return { options, style, segments, length, beat, musicIn: beats[0] ?? 0, notes, chapters };
+  return { options, style, segments, length, beat, musicIn: beats[0] ?? 0, musicBeats: beats, notes, chapters };
 }
 
 // ---------- Building the project ----------
@@ -698,6 +700,7 @@ export function buildAutoEdit(p: VideoProject, plan: Plan, assets: MediaAsset[])
       const len = Math.min(music.duration - from, length - start);
       if (len < 0.5) break;
       const clip: AudioClip = { id: uid('audio'), assetId: music.id, start, in: from, out: from + len, volume: style.music === 'quiet' ? (options.duck ? 0.45 : 0.22) : 0.9, fadeIn: first ? 0.3 : 0, fadeOut: start + len >= length - 0.01 ? Math.min(1.5, length / 4) : 0 };
+      if (plan.musicBeats?.length) clip.beats = plan.musicBeats;
       // Lower the music while people talk.
       if (options.duck && speech.length) {
         const local = speech.map((r) => ({ start: r.start - start, end: r.end - start })).filter((r) => r.end > 0 && r.start < len);

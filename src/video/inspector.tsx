@@ -11,6 +11,8 @@ import { Icon } from '../ui/Icon';
 import {
   ANIM_PRESETS,
   applyPreset,
+  curveSpeeds,
+  DEFAULT_CURVE,
   EASINGS,
   keyAt,
   neighbourKey,
@@ -470,23 +472,118 @@ export function ColorSection({ grade, mark, onChange }: { grade: ColorGrade | nu
   );
 }
 
-export function SpeedRampSection({ ramp, reverse, update }: { ramp: Ramp | undefined; reverse: boolean | undefined; update: (patch: { ramp?: Ramp; reverse?: boolean }) => void }) {
+export function SpeedRampSection({
+  ramp,
+  curve,
+  reverse,
+  mark,
+  update,
+}: {
+  ramp: Ramp | undefined;
+  curve?: number[];
+  reverse: boolean | undefined;
+  mark?: () => void;
+  update: (patch: { ramp?: Ramp; curve?: number[]; reverse?: boolean }, live?: boolean) => void;
+}) {
   return (
     <>
       <h4>Speed ramp</h4>
       <div className="grid3">
         {RAMPS.map((r) => (
-          <button key={r.value} className={(ramp ?? 'none') === r.value ? 'active' : ''} onClick={() => update({ ramp: r.value })} title={r.hint}>
+          <button
+            key={r.value}
+            className={(ramp ?? 'none') === r.value ? 'active' : ''}
+            onClick={() => update(r.value === 'custom' && !curve ? { ramp: r.value, curve: DEFAULT_CURVE } : { ramp: r.value })}
+            title={r.hint}
+          >
             {r.label}
           </button>
         ))}
       </div>
+      {ramp === 'custom' && <SpeedCurve curve={curve ?? DEFAULT_CURVE} mark={mark} onChange={(c, live) => update({ curve: c }, live)} />}
       <h4>Direction</h4>
       <button className={reverse ? 'active block' : 'block'} onClick={() => update({ reverse: !reverse })} aria-pressed={!!reverse}>
         <Icon name="undo" size={15} /> {reverse ? 'Playing backwards' : 'Play backwards'}
       </button>
       {reverse && <p className="hint">Reversed clips play without their sound.</p>}
     </>
+  );
+}
+
+const CURVE_MIN = 0.1;
+const CURVE_MAX = 10;
+const toY = (v: number) => 1 - (Math.log10(Math.max(CURVE_MIN, Math.min(CURVE_MAX, v))) + 1) / 2;
+const fromY = (y: number) => Math.pow(10, (1 - Math.max(0, Math.min(1, y))) * 2 - 1);
+
+/** CapCut-style speed curve: drag each point up (faster) or down (slow motion). */
+function SpeedCurve({ curve, mark, onChange }: { curve: number[]; mark?: () => void; onChange: (curve: number[], live: boolean) => void }) {
+  const ref = useRef<SVGSVGElement>(null);
+  const drag = useRef<number | null>(null);
+  const W = 240;
+  const H = 110;
+  const speeds = curveSpeeds(curve);
+  const xOf = (i: number) => 10 + (i / (curve.length - 1)) * (W - 20);
+  const yOf = (v: number) => 8 + toY(v) * (H - 16);
+  const move = (e: ReactPointerEvent) => {
+    if (drag.current === null || !ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    const y = ((e.clientY - r.top) / r.height) * H;
+    const v = Math.round(fromY((y - 8) / (H - 16)) * 100) / 100;
+    onChange(curve.map((c, i) => (i === drag.current ? v : c)), true);
+  };
+  const d = curve.map((v, i) => `${i ? 'L' : 'M'}${xOf(i)} ${yOf(v)}`).join('');
+  return (
+    <div className="speed-curve">
+      <svg
+        ref={ref}
+        viewBox={`0 0 ${W} ${H}`}
+        role="group"
+        aria-label="Speed curve"
+        onPointerMove={move}
+        onPointerUp={() => (drag.current = null)}
+        onPointerCancel={() => (drag.current = null)}
+      >
+        <line x1={0} x2={W} y1={yOf(1)} y2={yOf(1)} className="speed-curve-mid" />
+        <path d={d} className="speed-curve-line" />
+        {curve.map((v, i) => (
+          <circle
+            key={i}
+            cx={xOf(i)}
+            cy={yOf(v)}
+            r={7}
+            className="speed-curve-point"
+            role="slider"
+            aria-label={`Speed point ${i + 1}`}
+            aria-valuenow={Math.round(speeds[i] * 100) / 100}
+            aria-valuemin={CURVE_MIN}
+            aria-valuemax={CURVE_MAX}
+            tabIndex={0}
+            onPointerDown={(e) => {
+              mark?.();
+              drag.current = i;
+              (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+              e.preventDefault();
+              const next = Math.min(CURVE_MAX, Math.max(CURVE_MIN, Math.round(v * (e.key === 'ArrowUp' ? 1.25 : 0.8) * 100) / 100));
+              onChange(curve.map((c, j) => (j === i ? next : c)), false);
+            }}
+          >
+            <title>{`${speeds[i].toFixed(2)}×`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div className="speed-curve-labels">
+        {speeds.map((v, i) => (
+          <span key={i}>{v >= 10 ? Math.round(v) : v.toFixed(1)}×</span>
+        ))}
+      </div>
+      <div className="row">
+        <button onClick={() => onChange(DEFAULT_CURVE, false)}>Reset curve</button>
+      </div>
+      <p className="hint">Drag a point up to speed up, down for slow motion. The clip keeps its length, so speeding up one part slows the rest.</p>
+    </div>
   );
 }
 

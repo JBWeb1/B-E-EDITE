@@ -14,10 +14,12 @@
     "test:e2e": "node e2e/full.mjs",
     "test:e2e:pro": "node e2e/pro.mjs",
     "test:e2e:next": "node e2e/next.mjs",
-    "test:e2e:unique": "node e2e/unique.mjs"
+    "test:e2e:unique": "node e2e/unique.mjs",
+    "test:e2e:more": "node e2e/more.mjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
+    "mediabunny": "^1.61.3",
     "qrcode-generator": "^2.0.4",
     "react": "18.3.1",
     "react-dom": "18.3.1"

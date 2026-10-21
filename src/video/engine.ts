@@ -282,7 +282,7 @@ export class VideoEngine {
           if (!v.paused) v.pause();
           if (Math.abs(v.currentTime - hit.sourceTime) > 0.03) v.currentTime = hit.sourceTime;
         } else {
-          v.playbackRate = Math.max(0.0625, Math.min(16, clip.speed * rampRate(clip.ramp, len > 0 ? local / len : 0)));
+          v.playbackRate = Math.max(0.0625, Math.min(16, clip.speed * rampRate(clip.ramp, len > 0 ? local / len : 0, clip.curve)));
           this.align(v, hit.sourceTime);
         }
       } else if (!v.paused) {
@@ -990,8 +990,44 @@ export class VideoEngine {
     this.snapshotClipId = clipId;
   }
 
+  /**
+   * Decoded frames to draw instead of the <video> elements (`asset:<id>` for the main
+   * track, `overlay:<id>` for layers). Used by fast export, which decodes the files itself.
+   */
+  frameOverride: Map<string, CanvasImageSource> | null = null;
+
+  /** Draw the frame at `t` without touching the media elements (for fast export). */
+  drawFrameAt(t: number) {
+    this.time = Math.max(0, Math.min(t, this.duration));
+    this.draw();
+  }
+
+  /** Draw at `width`×`height` while `fn` runs, then put the preview size back. */
+  async atSize<T>(width: number, fn: () => Promise<T>): Promise<T> {
+    const p = this.project;
+    const prevScale = this.scale;
+    const prevTime = this.time;
+    this.pause();
+    if (p) this.scale = width / p.width;
+    this.resize();
+    try {
+      return await fn();
+    } finally {
+      this.frameOverride = null;
+      this.scale = prevScale;
+      this.resize();
+      this.seek(prevTime);
+    }
+  }
+
+  get outputCanvas() {
+    return this.canvas;
+  }
+
   private sourceFor(asset: MediaAsset): CanvasImageSource | null {
     if (asset.kind === 'video') {
+      const o = this.frameOverride?.get(`asset:${asset.id}`);
+      if (o) return o;
       const v = this.videos.get(asset.id);
       return v && v.readyState >= 2 ? v : null;
     }
@@ -1052,7 +1088,7 @@ export class VideoEngine {
     let source: CanvasImageSource | null = null;
     if (asset.kind === 'video') {
       const v = this.overlayVideos.get(o.id);
-      source = v && v.readyState >= 2 ? v : null;
+      source = this.frameOverride?.get(`overlay:${o.id}`) ?? (v && v.readyState >= 2 ? v : null);
     } else {
       source = this.sourceFor(asset);
     }

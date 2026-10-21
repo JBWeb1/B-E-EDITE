@@ -7,6 +7,7 @@ import { hasKeys, keyTimes } from './anim';
 import type { Keyframes } from './anim';
 import {
   assignLanes,
+  beatTimes,
   clipDuration,
   dropIndex,
   EFFECTS,
@@ -78,6 +79,7 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
   const duration = projectDuration(project);
   const width = HEAD_W + Math.max(duration + 10, 30) * pps;
   const placed = layoutClips(project.clips);
+  const beats = beatTimes(project);
   const assetOf = (id: string) => project.assets.find((a) => a.id === id);
   const textLanes = assignLanes(project.texts, (o) => o.start, (o) => o.start + o.duration);
   const effectLanes = assignLanes(project.effects, (o) => o.start, (o) => o.start + o.duration);
@@ -334,7 +336,29 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
               {formatTime(t).replace(/\.0$/, '')}
             </span>
           ))}
+          {beats.map((b) => (
+            <span key={`b${b}`} className="beat-mark" style={{ left: xOf(b) }} aria-hidden />
+          ))}
+          {(project.markers ?? []).map((m) => (
+            <button
+              key={`m${m}`}
+              className="marker"
+              style={{ left: xOf(m) }}
+              title={`Marker at ${formatTime(m)} (double-click to remove)`}
+              aria-label={`Marker at ${formatTime(m)}`}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => onSeek(m)}
+              onDoubleClick={() => onCommit((p) => ({ ...p, markers: (p.markers ?? []).filter((x) => x !== m) }))}
+            />
+          ))}
         </div>
+        {beats.length > 0 && (
+          <div className="beat-lines" aria-hidden>
+            {beats.map((b) => (
+              <span key={b} style={{ left: xOf(b) }} />
+            ))}
+          </div>
+        )}
 
         {project.effects.length > 0 && rangeTrack('effects', project.effects, effectLanes, 'effect', 'sparkles', 'Effects', 'effectsHidden')}
         {rangeTrack('texts', project.texts, textLanes, 'text', 'text', 'Text', 'textHidden')}

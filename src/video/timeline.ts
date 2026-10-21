@@ -313,7 +313,55 @@ export function snapCandidates(p: VideoProject, playhead: number, excludeId?: st
   for (const o of p.texts) if (o.id !== excludeId) out.push(o.start, o.start + o.duration);
   for (const a of [...p.audio, ...p.overlays]) if (a.id !== excludeId) out.push(a.start, a.start + a.out - a.in);
   for (const e of p.effects ?? []) if (e.id !== excludeId) out.push(e.start, e.start + e.duration);
+  out.push(...beatTimes(p), ...(p.markers ?? []));
   return out;
+}
+
+/** Every beat of the songs on the audio track, in project seconds, sorted. */
+export function beatTimes(p: VideoProject): number[] {
+  const out: number[] = [];
+  for (const a of p.audio) {
+    for (const b of a.beats ?? []) if (b >= a.in - 1e-6 && b <= a.out + 1e-6) out.push(Math.round((a.start + b - a.in) * 1000) / 1000);
+  }
+  return [...new Set(out)].sort((x, y) => x - y);
+}
+
+/** Add a marker at `t`, or remove the one already within `near` seconds of it. */
+export function toggleMarker(markers: number[] | undefined, t: number, near = 0.05): number[] {
+  const list = markers ?? [];
+  const hit = list.findIndex((m) => Math.abs(m - t) <= near);
+  if (hit >= 0) return list.filter((_, i) => i !== hit);
+  return [...list, Math.round(t * 1000) / 1000].sort((a, b) => a - b);
+}
+
+/**
+ * Trim or stretch each main-track clip so every cut lands on a beat (CapCut's "beat
+ * sync"). A clip that can't reach the next beat (its video is too short) ends on an
+ * earlier one; photos stretch freely.
+ */
+export function fitClipsToBeats(p: VideoProject, beats: number[]): Clip[] {
+  if (beats.length < 2) return p.clips;
+  const clips: Clip[] = [];
+  let start = 0;
+  for (const clip of p.clips) {
+    const asset = p.assets.find((a) => a.id === clip.assetId);
+    const max = asset ? sourceLength(asset) : clip.out;
+    const photo = asset?.kind === 'image';
+    const end = start + clipDuration(clip);
+    // The latest end the clip's source allows, in project time.
+    const reach = photo ? Infinity : start + (max - clip.in) / clip.speed;
+    const options = beats.filter((b) => b > start + MIN_CLIP_SECONDS && b <= reach + 1e-6);
+    if (!options.length) {
+      clips.push(clip);
+      start = end;
+      continue;
+    }
+    const target = options.reduce((best, b) => (Math.abs(b - end) < Math.abs(best - end) ? b : best), options[0]);
+    const out = clip.in + (target - start) * clip.speed;
+    clips.push({ ...clip, out: Math.min(photo ? Infinity : max, out) });
+    start = target;
+  }
+  return clips;
 }
 
 export interface Caption {

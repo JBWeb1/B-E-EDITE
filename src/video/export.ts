@@ -140,7 +140,7 @@ export function audioPlan(p: VideoProject): AudioSegment[] {
         duration: len,
         reverse: !!clip.reverse,
         gain: samples(start, len, (l) => clip.volume * fadeOpacity(clip, l) * valueAt(clip.keys?.volume, l, 1)),
-        rate: samples(start, len, (l) => clip.speed * rampRate(clip.ramp, len > 0 ? l / len : 0)),
+        rate: samples(start, len, (l) => clip.speed * rampRate(clip.ramp, len > 0 ? l / len : 0, clip.curve)),
         denoise: clip.denoise ?? 0,
       });
     }
@@ -234,7 +234,12 @@ function reversed(ctx: BaseAudioContext, b: AudioBuffer): AudioBuffer {
 
 /** Render the whole soundtrack to a stereo WAV blob. */
 export async function mixSoundtrack(p: VideoProject, onProgress?: (f: number) => void): Promise<Blob> {
-  const rate = 44100;
+  const out = await mixSoundtrackBuffer(p, 44100, onProgress);
+  return new Blob([encodeWavChannels([out.getChannelData(0), out.getChannelData(1)], out.sampleRate)], { type: 'audio/wav' });
+}
+
+/** The whole soundtrack, mixed to a stereo buffer at `rate`. */
+export async function mixSoundtrackBuffer(p: VideoProject, rate = 44100, onProgress?: (f: number) => void): Promise<AudioBuffer> {
   const seconds = Math.max(0.1, projectDuration(p));
   const ctx = new OfflineAudioContext(2, Math.ceil(seconds * rate), rate);
   const plan = audioPlan(p);
@@ -277,7 +282,7 @@ export async function mixSoundtrack(p: VideoProject, onProgress?: (f: number) =>
   }
   const out = await ctx.startRendering();
   onProgress?.(1);
-  return new Blob([encodeWavChannels([out.getChannelData(0), out.getChannelData(1)], rate)], { type: 'audio/wav' });
+  return out;
 }
 
 // ---------- Container / codec choice ----------

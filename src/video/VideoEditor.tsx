@@ -32,6 +32,9 @@ import type { FixId, Platform } from './preflight';
 import { defaultPlatform } from './preflightRun';
 import type { VideoExportChoice } from './ExportDialog';
 import { extensionFor, mixSoundtrack } from './export';
+import { fastExport } from './fastExport';
+import { detectBeats } from './beats';
+import { decodeMono } from '../lib/aiService';
 import { LOOKS } from './grade';
 import type { ColorGrade, LookId } from './grade';
 import {
@@ -61,6 +64,7 @@ import { HEAD_W, Timeline } from './Timeline';
 import type { Selection } from './Timeline';
 import {
   ASPECTS,
+  beatTimes,
   clipDuration,
   createAudioClip,
   createClip,
@@ -71,6 +75,7 @@ import {
   EFFECT_GROUPS,
   EFFECTS,
   FILTER_PRESETS,
+  fitClipsToBeats,
   freeTrack,
   insertClipAt,
   isParticleEffect,
@@ -87,6 +92,7 @@ import {
   splitClips,
   splitTexts,
   textsAt,
+  toggleMarker,
   toSrt,
   trackOf,
   TRANSITIONS,
@@ -181,6 +187,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['Q'], action: 'Delete the part of the clip before the playhead' },
   { keys: ['W'], action: 'Delete the part of the clip after the playhead' },
   { keys: ['K'], action: 'Add / remove a position keyframe on the selected item' },
+  { keys: ['M'], action: 'Add / remove a marker at the playhead' },
   { keys: ['Del'], action: 'Delete selected' },
   { keys: ['←', '→'], action: 'Step one frame (Shift: 1 second)' },
   { keys: ['Home'], action: 'Go to start' },
@@ -270,6 +277,8 @@ export function VideoEditor({
   const [tab, setTab] = useState<LibraryTab>('media');
   const [importing, setImporting] = useState(0);
   const [progress, setProgress] = useState<{ label: string; value: number } | null>(null);
+  const exportAbort = useRef<AbortController | null>(null);
+  const lastExportSeconds = useRef(0);
   const [showHelp, setShowHelp] = useState(false);
   const [showLook, setShowLook] = useState(false);
   const look = useLook();
@@ -603,6 +612,29 @@ export function VideoEditor({
   const updateOverlay = (patch: Partial<OverlayClip>, live = false) => updateItem('overlays', selectedOverlay?.id, patch, live);
   const updateEffect = (patch: Partial<EffectItem>, live = false) => updateItem('effects', selectedEffect?.id, patch, live);
 
+  // ---------- Beats and markers ----------
+
+  const [beatBusy, setBeatBusy] = useState<string | null>(null);
+  const findBeats = async (clip: AudioClip) => {
+    const asset = assetOf(clip.assetId);
+    if (!asset) return;
+    setBeatBusy('Listening for the beat…');
+    try {
+      const samples = await decodeMono(asset.url, 11025);
+      const grid = samples ? detectBeats(samples, 11025) : null;
+      if (!grid || grid.confidence < 0.05 || grid.beats.length < 4) {
+        setBeatBusy('No clear beat found in this sound.');
+        return;
+      }
+      set((p) => ({ ...p, audio: p.audio.map((a) => (a.assetId === clip.assetId ? { ...a, beats: grid.beats, bpm: grid.bpm } : a)) }));
+      setBeatBusy(null);
+    } catch {
+      setBeatBusy('Could not read this sound.');
+    }
+  };
+  const toggleMarkerHere = () => set((p) => ({ ...p, markers: toggleMarker(p.markers, engineRef.current?.time ?? 0) }));
+  const fitToBeats = () => set((p) => ({ ...p, clips: fitClipsToBeats(p, beatTimes(p)) }));
+
   const split = useCallback(() => {
     const t = engineRef.current?.time ?? 0;
     if (selection?.kind === 'text') {
@@ -879,6 +911,8 @@ export function VideoEditor({
         trimPlayhead('after');
       } else if (key === 'k' && !mod) {
         togglePositionKey();
+      } else if (key === 'm' && !mod) {
+        toggleMarkerHere();
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         removeSelected();
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -1070,12 +1104,19 @@ export function VideoEditor({
     setExportDialog(false);
     setSelection(null);
     setProgress({ label: 'Exporting video…', value: 0 });
+    const abort = new AbortController();
+    exportAbort.current = abort;
+    const started = performance.now();
     try {
-      const blob = await engine.record((v) => setProgress({ label: 'Exporting video…', value: v }), c);
+      // Fast export (frame by frame with the browser's encoder) when it can; otherwise record in real time.
+      let blob = c.fast ? await fastExport(engine, project, c, (v, label) => setProgress({ label, value: v }), abort.signal) : null;
+      if (!blob) blob = await engine.record((v) => setProgress({ label: 'Exporting video (real time)…', value: v }), c);
+      lastExportSeconds.current = (performance.now() - started) / 1000;
       downloadBlob(blob, `${project.name || 'video'}.${extensionFor(blob.type)}`);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Export failed');
+      if (!(err instanceof DOMException && err.name === 'AbortError')) alert(err instanceof Error ? err.message : 'Export failed');
     } finally {
+      exportAbort.current = null;
       setProgress(null);
     }
   };
@@ -1721,6 +1762,29 @@ export function VideoEditor({
                 <RangeField label="Fade in" value={selectedAudio.fadeIn ?? 0} min={0} max={Math.min(5, (selectedAudio.out - selectedAudio.in) / 2)} step={0.1} onStart={mark} onChange={(v) => updateAudio({ fadeIn: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
                 <RangeField label="Fade out" value={selectedAudio.fadeOut ?? 0} min={0} max={Math.min(5, (selectedAudio.out - selectedAudio.in) / 2)} step={0.1} onStart={mark} onChange={(v) => updateAudio({ fadeOut: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
                 <NumberField label="Start (s)" value={selectedAudio.start} min={0} step={0.1} onChange={(v) => updateAudio({ start: v })} />
+                <h4>Beat</h4>
+                {selectedAudio.beats?.length ? (
+                  <p className="hint beat-info">
+                    ♪ {selectedAudio.bpm ? `${Math.round(selectedAudio.bpm)} BPM · ` : ''}
+                    {selectedAudio.beats.filter((b) => b >= selectedAudio.in && b <= selectedAudio.out).length} beats marked on the timeline. Clip edges snap to them.
+                  </p>
+                ) : (
+                  <p className="hint">Find the beat of this song to see it on the timeline and snap cuts to it.</p>
+                )}
+                <div className="row">
+                  <button onClick={() => void findBeats(selectedAudio)} disabled={beatBusy === 'Listening for the beat…'}>
+                    <Icon name="music" size={15} /> {selectedAudio.beats?.length ? 'Find again' : 'Find beats'}
+                  </button>
+                  {!!selectedAudio.beats?.length && (
+                    <button onClick={() => updateAudio({ beats: undefined, bpm: undefined })}>Remove beats</button>
+                  )}
+                </div>
+                {beatBusy && <p className="hint" role="status">{beatBusy}</p>}
+                {!!selectedAudio.beats?.length && project.clips.length > 0 && (
+                  <button className="block primary" onClick={fitToBeats} title="Trim or stretch each clip so every cut lands on a beat">
+                    Fit clips to the beat
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -1777,6 +1841,9 @@ export function VideoEditor({
           </button>
           <button className="icon-btn" onClick={duplicateSelected} disabled={!selectedClip && !selectedText && !selectedOverlay && !selectedEffect} title="Duplicate" aria-label="Duplicate">
             <Icon name="copy" />
+          </button>
+          <button className="icon-btn" onClick={toggleMarkerHere} title="Marker at the playhead (M); double-click a marker to remove it" aria-label="Add marker">
+            <Icon name="flag" />
           </button>
           <span className="divider" />
           <button className="icon-btn" onClick={() => void freezeFrame()} disabled={!currentClip} title="Freeze frame: insert a 3s still of this frame" aria-label="Freeze frame">
@@ -1933,6 +2000,11 @@ export function VideoEditor({
               <div style={{ width: `${Math.round(progress.value * 100)}%` }} />
             </div>
             <p>{Math.round(progress.value * 100)}%</p>
+            {exportAbort.current && (
+              <button onClick={() => exportAbort.current?.abort()} aria-label="Cancel export">
+                Cancel
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -2123,7 +2195,7 @@ function ClipInspector({
             </select>
           </label>
           <p className="hint">Faster makes the clip shorter on the timeline; slower makes it longer.</p>
-          <SpeedRampSection ramp={clip.ramp} reverse={clip.reverse} update={(patch) => update(patch)} />
+          <SpeedRampSection ramp={clip.ramp} curve={clip.curve} reverse={clip.reverse} mark={mark} update={(patch, live) => update(patch, live)} />
         </>
       )}
 

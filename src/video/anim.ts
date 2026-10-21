@@ -163,7 +163,7 @@ export function wiggle(seed: number, t: number, speed: number): number {
 
 // ---------- Speed ramps & reverse ----------
 
-export type Ramp = 'none' | 'montage' | 'hero' | 'bullet' | 'flash-in' | 'flash-out';
+export type Ramp = 'none' | 'montage' | 'hero' | 'bullet' | 'flash-in' | 'flash-out' | 'custom';
 
 export const RAMPS: { value: Ramp; label: string; hint: string }[] = [
   { value: 'none', label: 'None', hint: 'Constant speed' },
@@ -172,16 +172,49 @@ export const RAMPS: { value: Ramp; label: string; hint: string }[] = [
   { value: 'bullet', label: 'Bullet', hint: 'Big slow-mo moment in the middle' },
   { value: 'flash-in', label: 'Flash in', hint: 'Starts fast, ends slow' },
   { value: 'flash-out', label: 'Flash out', hint: 'Starts slow, ends fast' },
+  { value: 'custom', label: 'Custom', hint: 'Draw your own speed curve' },
 ];
 
-const RAMP_DEPTH: Record<Ramp, number> = { none: 0, montage: 0.6, hero: 0.6, bullet: 0.85, 'flash-in': 0.8, 'flash-out': 0.8 };
+/** Points of a new custom curve (speed at evenly spaced moments of the clip). */
+export const DEFAULT_CURVE = [1, 1, 1, 1, 1, 1];
+
+/** Custom curve speed at progress u, before normalising (straight lines between the points). */
+function curveRaw(curve: number[], u: number): number {
+  if (curve.length < 2) return 1;
+  const x = Math.max(0, Math.min(1, u)) * (curve.length - 1);
+  const i = Math.min(curve.length - 2, Math.floor(x));
+  return curve[i] + (curve[i + 1] - curve[i]) * (x - i);
+}
+
+/** Area under the raw curve from 0 to u (exact, segment by segment). */
+function curveArea(curve: number[], u: number): number {
+  const n = curve.length - 1;
+  const x = Math.max(0, Math.min(1, u)) * n;
+  let area = 0;
+  for (let i = 0; i < n && i < x; i++) {
+    const end = Math.min(x, i + 1);
+    const a = curve[i];
+    const b = curveRaw(curve, end / n);
+    area += ((a + b) / 2) * (end - i);
+  }
+  return area / n;
+}
+
+/** The speed the clip really plays at each curve point (the curve keeps the clip's length, so speeds average 1). */
+export function curveSpeeds(curve: number[]): number[] {
+  const mean = curveArea(curve, 1) || 1;
+  return curve.map((v) => v / mean);
+}
+
+const RAMP_DEPTH: Record<Ramp, number> = { none: 0, montage: 0.6, hero: 0.6, bullet: 0.85, 'flash-in': 0.8, 'flash-out': 0.8, custom: 0 };
 
 /**
  * How far through the source a ramped clip is, for output progress u (both 0..1).
  * Every curve starts at 0, ends at 1 and never runs backwards, so the clip keeps its length.
  */
-export function rampWarp(ramp: Ramp | undefined, u: number): number {
+export function rampWarp(ramp: Ramp | undefined, u: number, curve?: number[]): number {
   const x = Math.max(0, Math.min(1, u));
+  if (ramp === 'custom' && curve && curve.length > 1) return curveArea(curve, x) / (curveArea(curve, 1) || 1);
   const a = RAMP_DEPTH[ramp ?? 'none'] ?? 0;
   switch (ramp) {
     case 'hero':
@@ -201,8 +234,9 @@ export function rampWarp(ramp: Ramp | undefined, u: number): number {
 }
 
 /** Relative playback speed of a ramp at output progress u (the slope of rampWarp). */
-export function rampRate(ramp: Ramp | undefined, u: number): number {
+export function rampRate(ramp: Ramp | undefined, u: number, curve?: number[]): number {
   const x = Math.max(0, Math.min(1, u));
+  if (ramp === 'custom' && curve && curve.length > 1) return curveRaw(curve, x) / (curveArea(curve, 1) || 1);
   const a = RAMP_DEPTH[ramp ?? 'none'] ?? 0;
   switch (ramp) {
     case 'hero':
@@ -221,13 +255,13 @@ export function rampRate(ramp: Ramp | undefined, u: number): number {
 
 /** Source time for `local` seconds into a clip, honouring speed, ramp and reverse. */
 export function sourceTimeAt(
-  clip: { in: number; out: number; speed: number; ramp?: Ramp; reverse?: boolean },
+  clip: { in: number; out: number; speed: number; ramp?: Ramp; curve?: number[]; reverse?: boolean },
   local: number,
 ): number {
   const len = clip.out - clip.in;
   const outLen = len / clip.speed;
   const u = outLen > 0 ? local / outLen : 0;
-  const w = rampWarp(clip.ramp, u) * len;
+  const w = rampWarp(clip.ramp, u, clip.curve) * len;
   return clip.reverse ? clip.out - w : clip.in + w;
 }
 

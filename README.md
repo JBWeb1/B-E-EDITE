@@ -51,6 +51,7 @@ npm run preview    # serve the production build on http://localhost:4173
 npm run test:e2e   # full browser test against the preview (needs `npx playwright install chromium` once)
 npm run test:e2e:pro  # browser test for the pro tools (green screen, keyframes, export…)
 npm run test:e2e:next # browser test for MP4, motion tracking, AI tools, tour, templates, design upgrades
+npm run test:e2e:more # browser test for fast export, beats, speed curves and the newest tools
 npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, history, sharing
 ```
 
@@ -160,6 +161,9 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - **Titles**: animated name captions (lower thirds), subscribe button, countdown, title reveal, breaking news, location, quote, social handle, chapter — just type your words and pick colours
 - **Shapes**: animated boxes, circles, rings, lines, arrows, stars, hearts, bursts, ticks — they draw on, pop, spin or pulse
 - **More effects**: glitch, chromatic aberration, blur, light leak, lens flare, and particles (confetti, sparkles, snow, hearts, bubbles, dust) with a speed control
+- **⚡ Fast export**: decodes your videos and draws every frame on its own with the browser's video encoder (WebCodecs), so it is usually several times faster than real time, never drops a frame and keeps going in a background tab. Cancel any time. Older browsers record in real time instead
+- **Beat markers**: select a song and press **Find beats**; the beats show on the timeline and clip edges snap to them. **Fit clips to the beat** trims or stretches every clip so each cut lands on a beat. Drop your own **markers** with **M** (double-click one to remove it)
+- **Custom speed curve**: besides the speed ramp presets, draw your own curve: drag points up to speed up, down for slow motion
 - **Export**: one-click presets for YouTube (1080p, 4K, Shorts), TikTok, Instagram (Reels, post, portrait); resolution up to **4K**, **24–60 fps**, quality; **watermark** (text or your logo); save the current **frame as PNG/JPEG**, or the **soundtrack as WAV**
 
 - **CapCut-style workspace**: library tabs on the left (Media, Audio, Text, Stickers, Effects, Transitions, Filters), player in the middle, details on the right, and a full-width multi-track timeline with track headers to hide or mute each track
@@ -240,8 +244,9 @@ Video
 - [x] Motion presets (zoom/pan)
 - [x] Full keyframe animation (position/scale/opacity), in both editors
 - [x] Audio waveforms and voice-over recording
-- [ ] Beat markers
-- [ ] Faster-than-realtime MP4 export (WebCodecs / ffmpeg.wasm)
+- [x] Beat markers, user markers and fit-to-beat
+- [x] Faster-than-realtime MP4/WebM export (WebCodecs)
+- [x] Custom speed curves
 - [x] Save video projects (media stored in IndexedDB)
 - [x] Several saved projects with a project list
 

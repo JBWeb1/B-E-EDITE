@@ -26,8 +26,11 @@ export interface VideoExportChoice {
   fps: Fps;
   bitrate: number;
   format: VideoFormat;
+  /** Frame-by-frame export with WebCodecs (falls back to real-time recording). */
+  fast: boolean;
 }
 
+const canFast = typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
 const canRecord = (t: string) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t);
 
 export function ExportDialog({
@@ -57,9 +60,10 @@ export function ExportDialog({
   const [fps, setFps] = useState<Fps>(30);
   const [quality, setQuality] = useState(1);
   const [presetId, setPresetId] = useState<string | null>(null);
-  const formats = availableFormats(canRecord);
+  const formats = canFast ? (['mp4', 'webm'] as VideoFormat[]) : availableFormats(canRecord);
+  const [fast, setFast] = useState(canFast);
   const [format, setFormat] = useState<VideoFormat>(formats[0] ?? 'webm');
-  const mp4IsH264 = /avc1/.test(pickMimeType('mp4', canRecord) ?? '');
+  const mp4IsH264 = canFast || /avc1/.test(pickMimeType('mp4', canRecord) ?? '');
   const logoInput = useRef<HTMLInputElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -165,6 +169,23 @@ export function ExportDialog({
               : 'WebM: smaller files; YouTube, TikTok and Instagram accept it.'}
         </p>
 
+        <h4>Speed</h4>
+        <div className="segmented" role="group" aria-label="Export speed">
+          <button className={fast ? 'active' : ''} disabled={!canFast} onClick={() => setFast(true)}>
+            ⚡ Fast
+          </button>
+          <button className={!fast ? 'active' : ''} onClick={() => setFast(false)}>
+            Real time
+          </button>
+        </div>
+        <p className="hint">
+          {!canFast
+            ? 'Fast export needs Chrome, Edge or Safari 17+. This browser records in real time.'
+            : fast
+              ? 'Draws every frame on its own: usually several times faster, never drops a frame, and works in the background.'
+              : 'Plays the video once while it records (for older browsers).'}
+        </p>
+
         <h4>Watermark</h4>
         <div className="row">
           <button className={wm ? 'active' : ''} onClick={() => onWatermark(wm ? null : DEFAULT_WATERMARK)} aria-pressed={!!wm}>
@@ -213,7 +234,7 @@ export function ExportDialog({
         )}
 
         <div className="export-actions">
-          <button className="primary block" onClick={() => onExport({ ...size, fps, bitrate, format })} disabled={duration <= 0}>
+          <button className="primary block" onClick={() => onExport({ ...size, fps, bitrate, format, fast })} disabled={duration <= 0}>
             <Icon name="film" /> Export video
           </button>
           <div className="row">
@@ -227,7 +248,7 @@ export function ExportDialog({
               <Icon name="music" size={15} /> Audio WAV
             </button>
           </div>
-          <p className="hint">The video plays through once while it records. Keep this tab open.</p>
+          <p className="hint">{fast ? 'Keep this tab open until it finishes.' : 'The video plays through once while it records. Keep this tab open.'}</p>
         </div>
       </div>
     </div>
