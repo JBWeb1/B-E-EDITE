@@ -9,6 +9,11 @@ import { uid } from '../lib/id';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { removeBackgroundFromImage } from '../lib/bgremove';
 import { smartRemoveBackground } from '../video/cutout';
+import { createFrame, createIcon, FRAMES, fillFrame, FRAME_PLACEHOLDER, groupElements, iconSrc, ICONS, isOneGroup, ungroupElements, withGroups } from './extras';
+import { FontPicker } from '../ui/FontPicker';
+import { loadWebFonts } from '../lib/fonts';
+import { brandFontFor, useBrand } from '../lib/brand';
+import { BrandPanel } from '../ui/BrandPanel';
 import { FilterSliders } from '../ui/FilterSliders';
 import { keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import { Tour, tourSeen } from '../ui/Tour';
@@ -93,6 +98,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['Ctrl', 'V'], action: 'Paste (also pastes images)' },
   { keys: ['Ctrl', 'D'], action: 'Duplicate' },
   { keys: ['Ctrl', 'A'], action: 'Select everything' },
+  { keys: ['Ctrl', 'G'], action: 'Group the selection (Shift: ungroup)' },
   { keys: ['Shift', 'Click'], action: 'Add to / remove from selection' },
   { keys: ['Del'], action: 'Delete' },
   { keys: ['Arrows'], action: 'Nudge 1px (Shift: 10px)' },
@@ -104,7 +110,7 @@ const SHORTCUTS: Shortcut[] = [
   { keys: ['?'], action: 'Show this help' },
 ];
 
-type Tab = 'templates' | 'text' | 'elements' | 'uploads' | 'background';
+type Tab = 'templates' | 'text' | 'elements' | 'uploads' | 'background' | 'brand';
 
 type Drag =
   | { mode: 'move'; start: Point; origins: Map<string, Point & { keys?: Keyframes }>; bounds: Rect; clickedId: string; moved: boolean }
@@ -204,7 +210,17 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const [zoomOverride, setZoomOverride] = useState<number | null>(null);
   const [fitZoom, setFitZoom] = useState(0.5);
   const [imageVersion, setImageVersion] = useState(0);
+  const [brand, setBrand] = useBrand();
+  // Google fonts used in the design load once it opens; redraw when they arrive.
+  useEffect(() => {
+    const stacks = file.pages.flatMap((p) => p.elements.flatMap((e) => (e.type === 'text' ? [e.fontFamily] : [])));
+    void loadWebFonts(stacks).then(() => setImageVersion((v) => v + 1));
+    const redraw = () => setImageVersion((v) => v + 1);
+    document.fonts?.addEventListener?.('loadingdone', redraw);
+    return () => document.fonts?.removeEventListener?.('loadingdone', redraw);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [uploads, setUploads] = useState<string[]>([]);
+  const [iconQuery, setIconQuery] = useState('');
   const [exportScale, setExportScale] = useState(1);
   const [busy, setBusy] = useState(false);
   const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
@@ -433,7 +449,8 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
         setSelectedIds(next);
         if (next.includes(hit.id)) startMove(p, next, hit.id);
       } else if (hit) {
-        const next = selectedIds.includes(hit.id) ? selectedIds : [hit.id];
+        // Clicking any part of a group picks the whole group.
+        const next = selectedIds.includes(hit.id) ? selectedIds : withGroups(doc, [hit.id]);
         setSelectedIds(next);
         startMove(p, next, hit.id);
       } else {
@@ -509,7 +526,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
     const drag = dragRef.current;
     dragRef.current = null;
     // A plain click on one item of a multi-selection selects just that item.
-    if (drag?.mode === 'move' && !drag.moved && !e.shiftKey && selectedIds.length > 1) setSelectedIds([drag.clickedId]);
+    if (drag?.mode === 'move' && !drag.moved && !e.shiftKey && selectedIds.length > 1 && !isOneGroup(doc, selectedIds)) setSelectedIds([drag.clickedId]);
     setGuides([]);
     setMarquee(null);
   };
@@ -526,7 +543,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const onContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const hit = elementAt(doc, toDoc(e), 6 / zoom);
-    if (hit && !selectedIds.includes(hit.id)) setSelectedIds([hit.id]);
+    if (hit && !selectedIds.includes(hit.id)) setSelectedIds(withGroups(doc, [hit.id]));
     if (!hit) setSelectedIds([]);
     setMenu({ x: e.clientX, y: e.clientY });
   };
@@ -556,11 +573,19 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
         const src = await readFileAsDataURL(file);
         setUploads((u) => [src, ...u]);
         const { w, h } = await loadImageSize(src);
-        insert(createImage(doc, src, w, h));
+        if (frameRef.current) {
+          const frame = frameRef.current;
+          set((d) => updateElement(d, frame.id, fillFrame(frame, src, w, h)));
+          frameRef.current = null;
+        } else insert(createImage(doc, src, w, h));
       }
     },
     [doc, insert],
   );
+
+  // An empty frame that is selected takes the next photo added.
+  const frameRef = useRef<ImageElement | null>(null);
+  frameRef.current = selected?.type === 'image' && selected.frame && selected.src === FRAME_PLACEHOLDER ? selected : null;
 
   const patchSelected = (patch: Partial<DesignElement>, live = false) => {
     if (!selected) return;
@@ -636,6 +661,10 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       } else if (mod && key === 'd') {
         e.preventDefault();
         duplicateSelected();
+      } else if (mod && key === 'g') {
+        e.preventDefault();
+        if (e.shiftKey) set((d) => ungroupElements(d, selectedIds));
+        else if (selectedIds.length > 1) set((d) => groupElements(d, selectedIds));
       } else if (mod && key === 'a') {
         e.preventDefault();
         setSelectedIds(doc.elements.map((el) => el.id));
@@ -743,7 +772,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   ];
 
   const allLocked = selectedEls.length > 0 && selectedEls.every((e) => e.locked);
-  const usedColors = docColors(doc);
+  const usedColors = [...new Set([...brand.colors, ...docColors(doc)])].slice(0, 16);
 
   /** Change the crop of the selected image without stretching it. */
   const setCrop = (crop: Crop | undefined, live = false) => {
@@ -829,7 +858,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
       <div className="workspace">
         <aside className={`panel cc-library ${panelOpen ? '' : 'collapsed'}`} ref={libraryRef}>
           <nav className="cc-tabs" aria-label="Library">
-          {(['templates', 'text', 'elements', 'uploads', 'background'] as Tab[]).map((t) => (
+          {(['templates', 'text', 'elements', 'uploads', 'background', 'brand'] as Tab[]).map((t) => (
             <button
               key={t}
               className={tab === t ? 'active' : ''}
@@ -843,7 +872,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                 if (window.matchMedia?.('(max-width: 760px)').matches) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
               }}
             >
-              <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', uploads: 'upload', background: 'droplet' } as const)[t]} size={18} />
+              <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', uploads: 'upload', background: 'droplet', brand: 'palette' } as const)[t]} size={18} />
               <span>{t[0].toUpperCase() + t.slice(1)}</span>
             </button>
           ))}
@@ -921,6 +950,30 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                   </button>
                 ))}
               </div>
+              <h3>Frames</h3>
+              <p className="hint">Add a frame, then upload or click a photo to fill it.</p>
+              <div className="grid4 frame-grid">
+                {FRAMES.map((f) => (
+                  <button key={f.shape} className="card shape-card" onClick={() => insert(createFrame(doc, f.shape))} aria-label={`${f.label} frame`}>
+                    <ShapeIcon shape={f.shape} />
+                  </button>
+                ))}
+              </div>
+              <h3>Icons</h3>
+              <input className="icon-search" placeholder="Search icons…" value={iconQuery} onChange={(e) => setIconQuery(e.target.value)} aria-label="Search icons" />
+              <div className="icon-grid">
+                {Object.keys(ICONS)
+                  .filter((n) => n.includes(iconQuery.trim().toLowerCase()))
+                  .map((n) => (
+                    <button key={n} onClick={() => insert(createIcon(doc, n, brand.colors[0] ?? '#111827'))} aria-label={`Icon ${n}`}>
+                      <svg viewBox="-1 -1 26 26" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        {ICONS[n].map((d, i) => (
+                          <path key={i} d={d} />
+                        ))}
+                      </svg>
+                    </button>
+                  ))}
+              </div>
               <h3>Stickers</h3>
               <div className="sticker-grid">
                 {STICKERS.map((em) => (
@@ -956,7 +1009,9 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                     className="card thumb"
                     onClick={async () => {
                       const { w, h } = await loadImageSize(src);
-                      insert(createImage(doc, src, w, h));
+                      // A selected frame is filled with the photo instead of adding a new one.
+                      if (selected?.type === 'image' && selected.frame) set((d) => updateElement(d, selected.id, fillFrame(selected, src, w, h)));
+                      else insert(createImage(doc, src, w, h));
                     }}
                   >
                     <img src={src} alt="" />
@@ -964,6 +1019,34 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                 ))}
               </div>
             </>
+          )}
+
+          {tab === 'brand' && (
+            <BrandPanel
+              brand={brand}
+              setBrand={setBrand}
+              designColors={docColors(doc)}
+              onLogo={async (src: string) => {
+                const { w, h } = await loadImageSize(src);
+                const el = createImage(doc, src, w, h);
+                const s = Math.min(1, (doc.width * 0.25) / el.width);
+                insert({ ...el, name: 'Logo', width: el.width * s, height: el.height * s, x: doc.width - el.width * s - doc.width * 0.04, y: doc.height * 0.04 });
+              }}
+              onApply={() =>
+                set((d) => {
+                  const texts = d.elements.filter((e): e is TextElement => e.type === 'text');
+                  const sizes = texts.map((t) => t.fontSize);
+                  return {
+                    ...d,
+                    elements: d.elements.map((e) => {
+                      if (e.type !== 'text') return e;
+                      const font = brandFontFor(e, sizes, brand);
+                      return font ? { ...e, fontFamily: font, height: fitTextHeight({ ...e, fontFamily: font }) } : e;
+                    }),
+                  };
+                })
+              }
+            />
           )}
 
           {tab === 'background' && (
@@ -1096,7 +1179,18 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
           <div className="cc-details-body">
           {selectedEls.length > 1 ? (
             <>
-              <h3>{selectedEls.length} elements selected</h3>
+              <h3>{isOneGroup(doc, selectedIds) ? `Group of ${selectedEls.length}` : `${selectedEls.length} elements selected`}</h3>
+              <div className="row">
+                {isOneGroup(doc, selectedIds) ? (
+                  <button onClick={() => set((d) => ungroupElements(d, selectedIds))} title="Ungroup (Ctrl+Shift+G)">
+                    Ungroup
+                  </button>
+                ) : (
+                  <button onClick={() => set((d) => groupElements(d, selectedIds))} title="Group (Ctrl+G): select and move them together">
+                    Group
+                  </button>
+                )}
+              </div>
               <h4>Align</h4>
               <div className="grid3">
                 {ALIGN_BUTTONS.map((a) => (
@@ -1140,14 +1234,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                     <span>Text</span>
                     <textarea value={selected.text} rows={3} onFocus={mark} onChange={(e) => patchSelected({ text: e.target.value }, true)} />
                   </label>
-                  <label className="field">
-                    <span>Font</span>
-                    <select value={selected.fontFamily} onChange={(e) => patchSelected({ fontFamily: e.target.value })}>
-                      {FONTS.map((f) => (
-                        <option key={f} value={f} style={{ fontFamily: f }}>{f.split(',')[0].replace(/"/g, '')}</option>
-                      ))}
-                    </select>
-                  </label>
+                  <FontPicker value={selected.fontFamily} local={FONTS} brand={[brand.heading, brand.body].filter((f): f is string => !!f)} onChange={(fontFamily) => patchSelected({ fontFamily })} />
                   <NumberField label="Size" value={selected.fontSize} min={4} onChange={(v) => patchSelected({ fontSize: v })} />
                   <div className="row">
                     <button className={selected.fontWeight === 'bold' ? 'active' : ''} onClick={() => patchSelected({ fontWeight: selected.fontWeight === 'bold' ? 'normal' : 'bold' })}><b>B</b></button>
@@ -1161,6 +1248,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                   <ColorField label="Color" value={selected.color} onStart={mark} onChange={(v) => patchSelected({ color: v }, true)} swatches={usedColors} />
                   <RangeField label="Line height" value={selected.lineHeight} min={0.8} max={3} step={0.05} onStart={mark} onChange={(v) => patchSelected({ lineHeight: v }, true)} />
                   <RangeField label="Letter spacing" value={selected.letterSpacing ?? 0} min={-5} max={50} step={1} onStart={mark} onChange={(v) => patchSelected({ letterSpacing: v }, true)} format={(v) => `${v}px`} />
+                  <RangeField label="Curve" value={selected.curve ?? 0} min={-100} max={100} step={1} onStart={mark} onChange={(v) => patchSelected({ curve: Math.abs(v) < 2 ? 0 : v }, true)} format={(v) => (v === 0 ? 'Straight' : `${v > 0 ? '∩' : '∪'} ${Math.abs(v)}`)} />
                   <h4>Effects</h4>
                   <div className="row">
                     <button className={selected.shadow ? 'active' : ''} onClick={() => patchSelected({ shadow: !selected.shadow })}>Shadow</button>
@@ -1193,8 +1281,45 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                 </>
               )}
 
-              {selected.type === 'image' && (
+              {selected.type === 'image' && selected.icon && (
                 <>
+                  <ColorField
+                    label="Icon colour"
+                    value={selected.icon.color}
+                    onStart={mark}
+                    onChange={(v) => patchSelected({ icon: { ...selected.icon!, color: v }, src: iconSrc(selected.icon!.name, v, selected.icon!.stroke) }, true)}
+                    swatches={usedColors}
+                  />
+                  <RangeField
+                    label="Line thickness"
+                    value={selected.icon.stroke}
+                    min={0.5}
+                    max={4}
+                    step={0.25}
+                    onStart={mark}
+                    onChange={(v) => patchSelected({ icon: { ...selected.icon!, stroke: v }, src: iconSrc(selected.icon!.name, selected.icon!.color, v) }, true)}
+                  />
+                </>
+              )}
+              {selected.type === 'image' && !selected.icon && (
+                <>
+                  <h4>Frame</h4>
+                  <div className="grid4 frame-grid">
+                    <button className={!selected.frame ? 'active' : ''} onClick={() => patchSelected({ frame: undefined })} aria-label="No frame">
+                      ▭
+                    </button>
+                    {FRAMES.map((f) => (
+                      <button
+                        key={f.shape}
+                        className={selected.frame === f.shape ? 'active' : ''}
+                        onClick={() => patchSelected({ frame: f.shape, crop: { aspect: selected.width / selected.height, zoom: selected.crop?.zoom ?? 1, cx: selected.crop?.cx ?? 0.5, cy: selected.crop?.cy ?? 0.5 } })}
+                        aria-label={`Put in ${f.label.toLowerCase()} frame`}
+                      >
+                        <ShapeIcon shape={f.shape} />
+                      </button>
+                    ))}
+                  </div>
+                  {selected.src === FRAME_PLACEHOLDER && <p className="hint">Upload a photo (or click one in Uploads) to fill this frame.</p>}
                   <div className="row">
                     <button className={selected.flipX ? 'active' : ''} onClick={() => patchSelected({ flipX: !selected.flipX })}>⇋ Flip H</button>
                     <button className={selected.flipY ? 'active' : ''} onClick={() => patchSelected({ flipY: !selected.flipY })}>⇵ Flip V</button>

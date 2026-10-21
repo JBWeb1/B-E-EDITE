@@ -34,6 +34,9 @@ import type { VideoExportChoice } from './ExportDialog';
 import { extensionFor, mixSoundtrack } from './export';
 import { fastExport } from './fastExport';
 import { SmartCutoutSection, StabilizeSection, StudioSoundSection } from './SmartTools';
+import { FontPicker } from '../ui/FontPicker';
+import { loadWebFonts } from '../lib/fonts';
+import { isEmptyBrand, useBrand } from '../lib/brand';
 import type { Cutout } from './types';
 import { detectBeats } from './beats';
 import { decodeMono } from '../lib/aiService';
@@ -838,6 +841,20 @@ export function VideoEditor({
     set((p) => (a.kind === 'audio' ? { ...p, audio: [...p.audio, createAudioClip(a, time)] } : { ...p, clips: [...p.clips, createClip(a)] }));
 
   /** Put a photo/video on the lowest video track (2+) that has room at the playhead. */
+  const [brand] = useBrand();
+  // Google fonts used by the project's text load when it opens.
+  useEffect(() => {
+    void loadWebFonts(project.texts.map((t) => t.font ?? '')).then(() => engineRef.current?.seek(engineRef.current.time));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const addLogo = async (src: string) => {
+    const blob = await (await fetch(src)).blob();
+    const asset = await addAssetFile(new File([blob], 'Logo.png', { type: blob.type || 'image/png' }));
+    const o = { ...createOverlay(asset, time), scale: 0.18, x: 0.88, y: 0.12, shadow: false };
+    set((p) => ({ ...p, assets: [...p.assets, asset], overlays: [...p.overlays, { ...o, track: freeTrack(p.overlays, o.start, o.start + o.out - o.in) }] }));
+    setSelection({ kind: 'overlay', id: o.id });
+  };
+
   const addAsLayer = (a: MediaAsset) => {
     const o = createOverlay(a, time);
     set((p) => ({ ...p, overlays: [...p.overlays, { ...o, track: freeTrack(p.overlays, o.start, o.start + o.out - o.in) }] }));
@@ -1359,6 +1376,32 @@ export function VideoEditor({
             }}
           />
         </label>
+        {!isEmptyBrand(brand) && (
+          <div className="brand-quick">
+            <h4>Brand kit</h4>
+            <div className="font-list">
+              {brand.heading && (
+                <button style={{ fontFamily: brand.heading }} onClick={() => addText({ text: 'Heading', font: brand.heading, bold: true, y: 0.4, size: 0.1, color: brand.colors[0] })}>
+                  Brand heading
+                </button>
+              )}
+              {brand.body && (
+                <button style={{ fontFamily: brand.body }} onClick={() => addText({ text: 'Your text here', font: brand.body, y: 0.6, size: 0.06, color: brand.colors[1] ?? brand.colors[0] })}>
+                  Brand body text
+                </button>
+              )}
+            </div>
+            {brand.logos.length > 0 && (
+              <div className="grid3">
+                {brand.logos.map((src, i) => (
+                  <button key={i} className="card thumb" onClick={() => void addLogo(src)} title="Add your logo as a layer" aria-label={`Add brand logo ${i + 1}`}>
+                    <img src={src} alt="" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {fonts.length > 0 && (
           <div className="font-list">
             {fonts.map((f) => (
@@ -1704,6 +1747,8 @@ export function VideoEditor({
                 key={selectedText.id}
                 text={selectedText}
                 fonts={fonts}
+                swatches={brand.colors}
+                brandFonts={[brand.heading, brand.body].filter((f): f is string => !!f)}
                 local={textLocal(selectedText)}
                 mark={mark}
                 update={updateText}
@@ -2411,6 +2456,8 @@ type TextTab = 'text' | 'style' | 'animate';
 function TextInspector({
   text,
   fonts,
+  swatches,
+  brandFonts,
   local,
   mark,
   update,
@@ -2421,6 +2468,8 @@ function TextInspector({
 }: {
   text: TextOverlay;
   fonts: MediaAsset[];
+  swatches?: string[];
+  brandFonts?: string[];
   local: number;
   mark: () => void;
   update: (patch: Partial<TextOverlay>, live?: boolean) => void;
@@ -2530,20 +2579,13 @@ function TextInspector({
       {tab === 'style' && (
         <>
           <RangeField label="Size" value={text.size} min={0.02} max={0.5} step={0.005} onStart={mark} onChange={(v) => update({ size: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
-          <ColorField label={isShape ? 'Colour' : 'Text colour'} value={text.color} onStart={mark} onChange={(v) => update({ color: v }, true)} />
+          <ColorField label={isShape ? 'Colour' : 'Text colour'} value={text.color} onStart={mark} onChange={(v) => update({ color: v }, true)} swatches={swatches} />
           {(text.template || (text.words && text.words !== 'off')) && (
-            <ColorField label="Accent colour" value={text.accent ?? (text.template ? '#00c8d2' : '#facc15')} onStart={mark} onChange={(v) => update({ accent: v }, true)} />
+            <ColorField label="Accent colour" value={text.accent ?? (text.template ? '#00c8d2' : '#facc15')} onStart={mark} onChange={(v) => update({ accent: v }, true)} swatches={swatches} />
           )}
           {!isShape && (
             <>
-              <label className="field">
-                <span>Font</span>
-                <select value={text.font ?? FONTS[0].family} onChange={(e) => update({ font: e.target.value })} aria-label="Font">
-                  {fontOptions.map((f) => (
-                    <option key={f.family} value={f.family}>{f.label}</option>
-                  ))}
-                </select>
-              </label>
+              <FontPicker value={text.font ?? FONTS[0].family} local={fontOptions.map((f) => f.family)} brand={brandFonts} onChange={(font) => update({ font })} />
               <label className="button block">
                 <Icon name="upload" size={15} /> Upload a font
                 <input

@@ -5,6 +5,7 @@ import { elementAtTime } from './motion';
 import { adjustedImage, isNeutralPhoto } from './photo';
 import type { AnimFrame } from './animate';
 import { center, cropRect, gradientLine, wrapText } from './model';
+import { curveLayout } from './extras';
 import { pageDuration, pageView } from './pages';
 import type { DesignDoc, DesignElement, DesignFile, ShapeElement, TextElement } from './types';
 
@@ -53,6 +54,7 @@ export function textLines(ctx: CanvasRenderingContext2D, el: TextElement): strin
 
 /** Height a text element needs to show all of its lines. */
 export function measureTextHeight(ctx: CanvasRenderingContext2D, el: TextElement): number {
+  if (el.curve && Math.abs(el.curve) >= 0.5) return curvedText(ctx, el).height;
   return Math.ceil(textLines(ctx, el).length * el.fontSize * el.lineHeight);
 }
 
@@ -67,7 +69,7 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
   ctx.closePath();
 }
 
-function shapePath(ctx: CanvasRenderingContext2D, el: ShapeElement) {
+function shapePath(ctx: CanvasRenderingContext2D, el: Pick<ShapeElement, 'shape' | 'x' | 'y' | 'width' | 'height' | 'radius'>) {
   const { x, y, width: w, height: h } = el;
   ctx.beginPath();
   switch (el.shape) {
@@ -184,7 +186,9 @@ function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: I
   } else if (el.type === 'image') {
     const img = images.get(el.src);
     if (img) {
-      roundedRect(ctx, el.x, el.y, el.width, el.height, el.radius);
+      // A photo frame clips the picture to its shape; otherwise rounded corners.
+      if (el.frame) shapePath(ctx, { shape: el.frame, x: el.x, y: el.y, width: el.width, height: el.height, radius: el.radius });
+      else roundedRect(ctx, el.x, el.y, el.width, el.height, el.radius);
       ctx.clip();
       if (el.flipX || el.flipY) {
         ctx.translate(c.x, c.y);
@@ -196,6 +200,8 @@ function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: I
       if (isNeutralPhoto(el.photo)) ctx.drawImage(img, r.x, r.y, r.width, r.height, el.x, el.y, el.width, el.height);
       else ctx.drawImage(adjustedImage(img, el.src, r.x, r.y, r.width, r.height, el.photo!), el.x, el.y, el.width, el.height);
     }
+  } else if (el.curve && Math.abs(el.curve) >= 0.5) {
+    drawCurvedText(ctx, el);
   } else {
     const lines = textLines(ctx, el);
     ctx.fillStyle = el.color;
@@ -224,6 +230,44 @@ function drawElement(ctx: CanvasRenderingContext2D, el: DesignElement, images: I
     });
   }
   ctx.restore();
+}
+
+/** Letters of curved text, measured with the element's font and spacing. */
+export function curvedText(ctx: CanvasRenderingContext2D, el: TextElement) {
+  ctx.font = textFont(el);
+  ctx.letterSpacing = '0px';
+  const chars = [...el.text.replace(/\s*\n\s*/g, ' ')];
+  const widths = chars.map((ch) => ctx.measureText(ch).width + (el.letterSpacing ?? 0));
+  return { chars, ...curveLayout(widths, el.curve ?? 0, el.fontSize) };
+}
+
+function drawCurvedText(ctx: CanvasRenderingContext2D, el: TextElement) {
+  const { chars, glyphs } = curvedText(ctx, el);
+  ctx.fillStyle = el.color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (el.shadow) {
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = el.fontSize * 0.15;
+    ctx.shadowOffsetX = el.fontSize * 0.04;
+    ctx.shadowOffsetY = el.fontSize * 0.06;
+  }
+  const outline = el.outlineWidth ?? 0;
+  const cx = el.x + el.width / 2;
+  chars.forEach((ch, i) => {
+    const g = glyphs[i];
+    ctx.save();
+    ctx.translate(cx + g.x, el.y + g.y);
+    ctx.rotate(g.angle);
+    if (outline > 0) {
+      ctx.strokeStyle = el.outlineColor ?? '#000000';
+      ctx.lineWidth = outline * 2;
+      ctx.lineJoin = 'round';
+      ctx.strokeText(ch, 0, 0);
+    }
+    ctx.fillText(ch, 0, 0);
+    ctx.restore();
+  });
 }
 
 /**

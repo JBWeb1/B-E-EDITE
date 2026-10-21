@@ -72,7 +72,8 @@ export function AutoEditDialog({
 }: {
   project: VideoProject;
   onImport: (files: File[]) => Promise<void> | void;
-  onApply: (built: Built) => void;
+  /** Puts the edit on the timeline (may first make sound effects), before the result shows. */
+  onApply: (built: Built) => void | Promise<void>;
   onUndo: () => void;
   onClose: () => void;
 }) {
@@ -151,7 +152,7 @@ export function AutoEditDialog({
           p.notes.push(`Captions skipped: ${e instanceof Error ? e.message : 'the speech model could not load'}. Try AI → Auto captions later.`);
         }
       }
-      onApply(built);
+      await onApply(built);
       setPlan(p);
       setSeed(nextSeed);
     } catch (e) {

@@ -176,7 +176,7 @@ if (fs.existsSync(fontPath)) {
   await subTab('Style');
   await details.locator('input[type=file][accept^=".ttf"]').setInputFiles(fontPath);
   await page.waitForTimeout(800);
-  const font = await details.getByRole('combobox', { name: 'Font' }).inputValue();
+  const font = await details.locator('.font-picker-current').getAttribute('aria-label');
   check('uploaded font is used by the text', font.includes('DejaVuSerif-Bold'), font);
 }
 

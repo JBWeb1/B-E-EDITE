@@ -134,6 +134,12 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - Double-click text to edit it in place
 - Fonts, size, bold/italic, alignment, colors, line height, letter spacing, borders, corner radius, transparency
 - Text effects: shadow and outline
+- **Brand kit** (Brand tab): save your colours, heading and body fonts and logos once; they show up as swatches, in the font menus and as one-click logos in every design and video. **Use brand fonts on this page** restyles headings and body text in one go
+- **Google Fonts**: a searchable font menu with 50+ Google fonts (sans, serif, display, handwriting, mono), each shown in its own style; in both editors
+- **Curved text**: bend any text into an arch or a dip with the Curve slider
+- **Photo frames**: circle, rounded, heart, star, hexagon, diamond, triangle and speech-bubble frames; add one and upload or click a photo to fill it, or put any photo in a frame
+- **Icon library**: 45 line icons with search; change their colour and line thickness
+- **Grouping**: select several things and press **Group** (Ctrl+G); clicking any part selects the whole group. Ctrl+Shift+G ungroups
 - **Background remover** for photos: **Smart (AI)** cuts people out of any background; **Plain background** handles white, green-screen or studio-wall shots with a strength slider. Restore any time
 - Photo editing: **crop** (Original, 1:1, 4:5, 3:2, 16:9, 9:16 with zoom and position), flip, filter presets, brightness/contrast/saturation/blur/B&W
 - **Photo tools**: exposure, temperature, tint, highlights, shadows, sharpen and vignette, plus one-click looks (Auto enhance, Golden hour, Cool blue, Portrait, Crisp, Moody)
@@ -215,14 +221,14 @@ Easier to use
 - [x] First-run tips and a shortcuts panel
 - [x] Full interactive onboarding tour
 - [x] Multi-select (shift-click / marquee) and align/distribute tools
-- [ ] Grouping
+- [x] Grouping
 - [x] Right-click context menus
 - [x] Template gallery with thumbnails and categories
 - [x] Phone-friendly layout
 
 Design
 - [x] Text effects (shadow, outline, letter spacing)
-- [ ] Google Fonts picker, curved text
+- [x] Google Fonts picker, curved text
 - [x] Image filters and flip
 - [x] Image crop
 - [x] Background remover (plain backgrounds)
@@ -230,10 +236,10 @@ Design
 - [x] PDF export
 - [x] Multiple pages, present mode, animations
 - [x] Quick reuse of colors already in the design
-- [ ] Brand kit (saved colors, fonts, logos)
+- [x] Brand kit (saved colors, fonts, logos)
 - [x] Gradient backgrounds
 - [x] More shapes and emoji stickers
-- [ ] Frames and an icon library
+- [x] Frames and an icon library
 
 Video
 - [x] Transitions between clips (crossfade, dip to black, slide, zoom, wipe)

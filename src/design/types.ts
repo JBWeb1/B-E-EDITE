@@ -19,6 +19,8 @@ export interface ElementBase {
   keys?: Keyframes;
   /** Gentle hand-held wobble while the page plays. */
   wiggle?: { amount: number; speed: number } | null;
+  /** Elements with the same group select and move together. */
+  groupId?: string;
 }
 
 export type ElementAnimation = 'none' | 'fade' | 'rise' | 'pop' | 'slide' | 'wipe';
@@ -38,6 +40,8 @@ export interface TextElement extends ElementBase {
   shadow?: boolean;
   outlineWidth?: number;
   outlineColor?: string;
+  /** Bend the text along a circle: -100 (dips) … 0 (straight) … 100 (arches). */
+  curve?: number;
 }
 
 export type ShapeKind = 'rect' | 'ellipse' | 'triangle' | 'star' | 'line' | 'heart' | 'arrow' | 'bubble' | 'hexagon' | 'diamond';
@@ -67,6 +71,10 @@ export interface ImageElement extends ElementBase {
   crop?: Crop;
   /** The photo before its background was removed, so it can be restored. */
   originalSrc?: string;
+  /** Show the photo inside a shape (a photo frame). */
+  frame?: ShapeKind;
+  /** Drawn from the icon library (kept so its colour can be changed). */
+  icon?: { name: string; color: string; stroke: number };
 }
 
 /** Which part of a picture is shown. */

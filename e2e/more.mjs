@@ -71,7 +71,9 @@ await ctx.addInitScript(() => {
 });
 const page = await ctx.newPage();
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => m.type() === 'error' && errors.push('console: ' + m.text()));
+// This test machine can't reach Google Fonts; failed font downloads aren't app errors.
+const offline = (m) => /fonts\.(googleapis|gstatic)\.com/.test(m.location()?.url ?? '');
+page.on('console', (m) => m.type() === 'error' && !offline(m) && errors.push('console: ' + m.text()));
 page.on('dialog', (d) => d.accept());
 
 const details = page.locator('.cc-details-body');
@@ -236,6 +238,101 @@ await page.getByRole('button', { name: '✂ Remove background' }).click();
 await page.getByRole('button', { name: 'Restore' }).waitFor({ timeout: 20000 });
 check('smart removal cuts out the photo', (await page.evaluate(() => window.__segmented)) >= 1 && (await page.getByRole('button', { name: 'Redo removal' }).count()) === 1);
 void right;
+
+// ---------- Design: frames, icons, curved text, fonts, groups, brand kit ----------
+await page.goto(`${BASE}/?new=design`);
+const dright = page.locator('.panel.right');
+const art = page.locator('.artboard canvas');
+const artPixel = (fx, fy) => art.evaluate((c, [x, y]) => Array.from(c.getContext('2d').getImageData(Math.round(x * (c.width - 1)), Math.round(y * (c.height - 1)), 1, 1).data), [fx, fy]);
+const dtab = (name) => page.locator('.cc-library .cc-tabs').getByRole('button', { name, exact: true }).click();
+await dtab('Elements');
+await page.getByRole('button', { name: 'Heart frame' }).click();
+await dright.getByText('Upload a photo (or click one in Uploads) to fill this frame.').waitFor();
+check('a frame can be added', (await dright.locator('h3').first().innerText()).includes('Frame: Heart'));
+await dtab('Uploads');
+await page.locator('.panel input[type=file][accept="image/*"]').first().setInputFiles(path.join(FIX, 'greenscreen.png'));
+await dright.getByText('Upload a photo (or click one in Uploads)').waitFor({ state: 'detached' });
+await settle();
+const inHeart = await artPixel(0.5, 0.55);
+const outside = await artPixel(0.29, 0.29);
+// Inside the heart: the photo (not the grey placeholder); its corner, outside the heart: the white page.
+const placeholder = [203, 213, 225];
+check('uploading fills the selected frame (photo clipped to the heart)', inHeart.slice(0, 3).some((v, i) => Math.abs(v - placeholder[i]) > 40) && outside.slice(0, 3).every((v) => v > 240), `${inHeart.join(',')} / ${outside.join(',')}`);
+await dright.getByRole('button', { name: 'Put in circle frame' }).click();
+check('a photo can switch frames', await dright.getByRole('button', { name: 'Put in circle frame' }).evaluate((b) => b.classList.contains('active')));
+
+await dtab('Elements');
+await page.getByRole('textbox', { name: 'Search icons' }).fill('heart');
+check('icons can be searched', (await page.locator('.icon-grid button').count()) === 1);
+await page.getByRole('button', { name: 'Icon heart' }).click();
+await dright.getByText('Icon colour').waitFor();
+check('an icon is added with a colour setting', (await dright.locator('h3').first().innerText()).includes('Icon: heart'));
+
+await dtab('Text');
+await page.locator('.text-preset').first().click();
+const hBefore = Number(await dright.getByRole('spinbutton', { name: 'H' }).inputValue());
+await dright.locator('.field', { hasText: 'Curve' }).locator('input[type=range]').fill('70');
+await settle();
+const hAfter = Number(await dright.getByRole('spinbutton', { name: 'H' }).inputValue());
+check('curving text bends it into an arch (taller box)', hAfter > hBefore * 1.3, `${hBefore} → ${hAfter}`);
+
+await dright.locator('.font-picker-current').click();
+await dright.getByRole('textbox', { name: 'Search fonts' }).fill('bebas');
+check('Google Fonts can be searched', (await dright.locator('.font-picker-list').getByRole('option').count()) === 1, (await dright.locator('.font-picker-list').getByRole('option').allInnerTexts()).join('|'));
+await dright.getByRole('option', { name: 'Bebas Neue' }).click();
+await dright.locator('.font-picker-current[aria-label="Font: Bebas Neue"]').waitFor({ timeout: 10000 });
+check('picking a Google font sets it on the text', true);
+const fontLinks = await page.evaluate(() => [...document.querySelectorAll('link[data-webfont]')].map((l) => l.href));
+check('the font is requested from Google Fonts', fontLinks.some((h) => h.includes('family=Bebas+Neue&display=swap')), fontLinks.slice(-1)[0]);
+
+// Groups
+await dtab('Elements');
+await page.locator('.shape-card[title="rect"]').click();
+await page.locator('.shape-card[title="ellipse"]').click();
+await page.keyboard.press('Escape');
+await page.locator('.stage').click({ position: { x: 5, y: 5 } });
+await page.keyboard.press('Control+a');
+await dright.getByRole('button', { name: 'Group' }).click();
+check('elements can be grouped', /^Group of \d+/.test(await dright.locator('h3').first().innerText()));
+await page.keyboard.press('Escape');
+const abox = await art.boundingBox();
+await page.mouse.click(abox.x + abox.width / 2, abox.y + abox.height / 2);
+check('clicking one part selects the whole group', /^Group of \d+/.test(await dright.locator('h3').first().innerText()), await dright.locator('h3').first().innerText());
+await page.keyboard.press('Control+Shift+g');
+check('Ctrl+Shift+G ungroups', /elements selected/.test(await dright.locator('h3').first().innerText()));
+
+// Brand kit
+await dtab('Brand');
+await page.getByRole('textbox', { name: 'Brand colour to add' }).or(page.locator('input[aria-label="Brand colour to add"]')).first().fill('#ff3366');
+await page.getByRole('button', { name: 'Add colour' }).click();
+check('brand colours can be added', (await page.locator('.brand-swatches .swatch').count()) === 1);
+const lib = page.locator('.cc-library-body');
+await lib.locator('.font-picker', { hasText: 'Headings' }).locator('.font-picker-current').click();
+await lib.getByRole('textbox', { name: 'Search fonts' }).fill('poppins');
+await lib.getByRole('option', { name: 'Poppins' }).click();
+await lib.locator('.font-picker-current[aria-label="Headings: Poppins"]').waitFor({ timeout: 10000 });
+await page.locator('input[aria-label="Brand logo"]').setInputFiles(path.join(FIX, 'greenscreen.png'));
+await lib.getByRole('button', { name: 'Add logo 1' }).waitFor();
+await lib.getByRole('button', { name: 'Use brand fonts on this page' }).click();
+await settle();
+await lib.getByRole('button', { name: 'Add logo 1' }).click();
+await dright.locator('h3', { hasText: /^Logo$/ }).waitFor({ timeout: 10000 }).catch(() => {});
+check('a brand logo can be added to the design', (await dright.locator('h3').first().innerText()) === 'Logo', await dright.locator('h3').first().innerText());
+await dtab('Background');
+check('brand colours show up as swatches in the design', (await page.locator('.cc-library-body .mini-swatch[title="#ff3366"]').count()) >= 1);
+
+// The video editor offers the same brand kit.
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.cc-tabs').getByRole('button', { name: 'Text', exact: true }).click();
+await page.getByRole('button', { name: 'Brand heading' }).waitFor({ timeout: 10000 });
+await page.getByRole('button', { name: 'Brand heading' }).click();
+await page.locator('.cc-details-body .cc-subtabs').getByRole('tab', { name: 'Style', exact: true }).click();
+await page.locator('.cc-details-body .font-picker-current').waitFor();
+check('brand heading font is used in the video editor', (await page.locator('.cc-details-body .font-picker-current').getAttribute('aria-label')) === 'Font: Poppins');
+check('brand heading text uses the brand colour', (await page.locator('.cc-details-body .field', { hasText: 'Text colour' }).locator('input[type=color]').inputValue()) === '#ff3366');
+await page.getByRole('button', { name: 'Add brand logo 1' }).click();
+await page.locator('.overlay-item').first().waitFor({ timeout: 10000 });
+check('brand logo goes on a video layer', (await page.locator('.overlay-item').count()) === 1);
 
 // MORE CHECKS BELOW
 
