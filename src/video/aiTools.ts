@@ -8,9 +8,10 @@ import { loudness } from './ai';
 import type { Range } from './ai';
 import { grabGrayFrames } from './grab';
 import { simplifyPath } from './tracker';
-import { duckKeys, focusX, reframe, smooth, toTranscriptLines } from './transcript';
+import { duckKeys, focusX, reframe, smooth, toTranscriptLines, transcriptView } from './transcript';
 import { layoutClips } from './timeline';
-import type { MediaAsset, TranscriptLine, VideoProject } from './types';
+import type { AudioClip, MediaAsset, TranscriptLine, VideoProject } from './types';
+import { uid } from '../lib/id';
 
 /** Transcribe every video and voice file used in the project (whole files, so later trims stay covered). */
 export async function getTranscript(p: VideoProject, language: string, onProgress: (f: number, label: string) => void): Promise<TranscriptLine[]> {
@@ -127,4 +128,62 @@ export async function smartReframe(p: VideoProject, width: number, height: numbe
   }
   onProgress?.(1);
   return { ...p, width, height, fill: 'color', clips };
+}
+
+export interface DubLine {
+  /** Project seconds where the line is said, and for how long. */
+  at: number;
+  length: number;
+  text: string;
+}
+
+/** What is said in the edited video (lines that were cut are left out), in project time. */
+export function dubLines(p: Pick<VideoProject, 'clips' | 'transcript'>): DubLine[] {
+  return transcriptView(p)
+    .filter((v) => v.at !== null && v.kept > 0.3 && v.line.text.trim())
+    .map((v) => ({ at: Math.round(v.at! * 1000) / 1000, length: Math.round((v.line.end - v.line.start) * v.kept * 1000) / 1000, text: v.line.text.trim() }));
+}
+
+/**
+ * AI dubbing: transcribe (if needed), translate every line and speak it in the new
+ * language at the moment it was said; the original voice is turned down to `keep`.
+ * `makeAsset` stores each spoken line as a media file. Returns the new project and
+ * the translated lines (for captions).
+ */
+export async function dubProject(
+  p: VideoProject,
+  opts: { from: string; to: string; keep: number },
+  makeAsset: (file: File) => Promise<MediaAsset>,
+  onProgress: (f: number, label: string) => void,
+): Promise<{ project: VideoProject; lines: DubLine[] }> {
+  const ai = aiProvider();
+  let project = p;
+  if (!project.transcript?.length) {
+    const transcript = await getTranscript(project, opts.from, (f, label) => onProgress(f * 0.3, label));
+    project = { ...project, transcript };
+  }
+  const lines = dubLines(project);
+  if (!lines.length) throw new Error('No speech found to dub.');
+  onProgress(0.3, 'Translating…');
+  const translated = await ai.translate(lines.map((l) => l.text), opts.from || 'en', opts.to, (f) => onProgress(0.3 + f * 0.1, 'Translating…'));
+  const assets: MediaAsset[] = [];
+  const audio: AudioClip[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    onProgress(0.4 + (i / lines.length) * 0.58, `Speaking line ${i + 1} of ${lines.length}…`);
+    const blob = await ai.speak(translated[i] ?? lines[i].text, opts.to);
+    const ext = blob.type.includes('mpeg') ? 'mp3' : 'wav';
+    const asset = await makeAsset(new File([blob], `AI voice ${opts.to.toUpperCase()} ${i + 1}.${ext}`, { type: blob.type }));
+    assets.push(asset);
+    audio.push({ id: uid('audio'), assetId: asset.id, start: lines[i].at, in: 0, out: asset.duration, volume: 1 });
+  }
+  onProgress(1, 'Done');
+  return {
+    project: {
+      ...project,
+      assets: [...project.assets, ...assets],
+      audio: [...project.audio, ...audio],
+      clips: project.clips.map((c) => ({ ...c, volume: Math.round(c.volume * opts.keep * 100) / 100 })),
+    },
+    lines: lines.map((l, i) => ({ ...l, text: translated[i] ?? l.text })),
+  };
 }

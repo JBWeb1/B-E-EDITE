@@ -6,11 +6,11 @@ import { Icon } from '../ui/Icon';
 import { cutClip, findSilences, LANGUAGES, loudness, motionScore, normalise, pickHighlights, segmentsToCaptions, toProjectTime, totalLength } from './ai';
 import type { Range } from './ai';
 import { grabGrayFrames } from './grab';
-import { autoDuck, smartReframe } from './aiTools';
+import { autoDuck, dubProject, smartReframe } from './aiTools';
 import { TranscriptPanel } from './TranscriptPanel';
 import { clipDuration, layoutClips } from './timeline';
 import type { Caption } from './timeline';
-import type { Clip, VideoProject } from './types';
+import type { Clip, MediaAsset, VideoProject } from './types';
 
 const RATE = 16000;
 const SHORT_LENGTHS = [15, 30, 60];
@@ -36,9 +36,12 @@ export function AIPanel({
   setProgress,
   addCaptions,
   addAudioFile,
+  makeAsset,
   onAutoEdit,
   seek,
 }: {
+  /** Store a media file and describe it (without placing it anywhere). */
+  makeAsset?: (file: File) => Promise<MediaAsset>;
   /** Open the Auto edit dialog. */
   onAutoEdit?: () => void;
   /** Jump the player to a time (for the transcript). */
@@ -56,6 +59,9 @@ export function AIPanel({
   const [target, setTarget] = useState('es');
   const [voiceText, setVoiceText] = useState('');
   const [voiceLang, setVoiceLang] = useState('en');
+  const [dubTo, setDubTo] = useState('es');
+  const [dubKeep, setDubKeep] = useState(true);
+  const [dubCaptions, setDubCaptions] = useState(false);
   const [sensitivity, setSensitivity] = useState(1);
   const [shortLength, setShortLength] = useState(30);
   const [message, setMessage] = useState('');
@@ -142,6 +148,17 @@ export function AIPanel({
       await addAudioFile(new File([blob], `AI voice ${n}.${ext}`, { type: blob.type }), time);
       setVoiceText('');
       return 'Voice-over added to the audio track at the playhead.';
+    });
+
+  const dub = () =>
+    run('Dubbing…', async (progress) => {
+      if (!makeAsset) return;
+      const label = LANGUAGES.find((l) => l.code === dubTo)?.label ?? dubTo;
+      const r = await dubProject(project, { from: speechLang, to: dubTo, keep: dubKeep ? 0.15 : 0 }, makeAsset, (f, l) => setProgress({ label: l, value: f }));
+      set(() => r.project);
+      if (dubCaptions) addCaptions(r.lines.map((l) => ({ start: l.at, end: l.at + Math.max(0.8, l.length), text: l.text })));
+      progress(1);
+      return `Dubbed ${r.lines.length} line${r.lines.length === 1 ? '' : 's'} into ${label}${dubKeep ? '; the original voice plays quietly underneath' : ''}. Undo takes it back.`;
     });
 
   const removeSilences = () =>
@@ -334,6 +351,27 @@ export function AIPanel({
           <Icon name="mic" size={15} /> Create voice-over
         </button>
       </div>
+
+      <h4>AI dubbing</h4>
+      <p className="hint">Says everything in another language, in time with the video: it transcribes, translates and speaks each line.</p>
+      <div className="row">
+        <select value={dubTo} onChange={(e) => setDubTo(e.target.value)} aria-label="Dub into">
+          {LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>{l.label}</option>
+          ))}
+        </select>
+        <button onClick={dub} disabled={!makeAsset || project.clips.length === 0}>
+          <Icon name="mic" size={15} /> Dub the video
+        </button>
+      </div>
+      <label className="check">
+        <input type="checkbox" checked={dubKeep} onChange={(e) => setDubKeep(e.target.checked)} />
+        Keep the original voice quietly underneath
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={dubCaptions} onChange={(e) => setDubCaptions(e.target.checked)} />
+        Add captions in that language
+      </label>
 
       <h4>Remove silences</h4>
       <p className="hint">Cuts the pauses out of talking videos, so they feel snappy.</p>

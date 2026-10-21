@@ -18,7 +18,7 @@ const check = (name, ok, detail = '') => {
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
-  args: ['--autoplay-policy=no-user-gesture-required'],
+  args: ['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
 });
 const errors = [];
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
@@ -27,6 +27,22 @@ await ctx.addInitScript(() => {
   localStorage.setItem('bee.tips.video', '1');
   localStorage.setItem('bee.tour.video', '1');
   localStorage.setItem('bee.tour.design', '1');
+});
+// Stand-in screen share: an animated canvas (headless browsers have no screen to share).
+await ctx.addInitScript(() => {
+  if (!navigator.mediaDevices) return;
+  navigator.mediaDevices.getDisplayMedia = async () => {
+    const c = document.createElement('canvas');
+    c.width = 640;
+    c.height = 360;
+    const g = c.getContext('2d');
+    let i = 0;
+    setInterval(() => {
+      g.fillStyle = `hsl(${(i += 7) % 360}, 70%, 50%)`;
+      g.fillRect(0, 0, 640, 360);
+    }, 33);
+    return c.captureStream(30);
+  };
 });
 // Stand-in AI engine, so the AI tools can be tested without downloading models.
 await ctx.addInitScript(() => {
@@ -333,6 +349,85 @@ check('brand heading text uses the brand colour', (await page.locator('.cc-detai
 await page.getByRole('button', { name: 'Add brand logo 1' }).click();
 await page.locator('.overlay-item').first().waitFor({ timeout: 10000 });
 check('brand logo goes on a video layer', (await page.locator('.overlay-item').count()) === 1);
+
+// ---------- Multicam ----------
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'talk.webm'), path.join(FIX, 'talk-late.webm')]);
+await page.locator('.main-track .clip-item').nth(1).waitFor();
+await page.getByRole('button', { name: '🎥 Multicam edit' }).click();
+const mc = page.getByRole('dialog', { name: 'Multicam' });
+await mc.waitFor();
+await mc.getByRole('button', { name: /Line up 2 cameras by sound/ }).click();
+await mc.locator('.multicam-sync').waitFor({ timeout: 30000 });
+const syncText = await mc.locator('.multicam-sync').innerText();
+const offset = Number(syncText.match(/([+-]\d+\.\d+) s/)?.[1]);
+check('multicam lines the cameras up by sound', Math.abs(offset - 1.5) < 0.08, syncText.replace(/\n/g, ' '));
+await mc.getByRole('button', { name: 'Play' }).click();
+await page.waitForTimeout(1500);
+await page.keyboard.press('2');
+await page.waitForTimeout(1500);
+await page.keyboard.press('1');
+await page.waitForTimeout(600);
+await mc.getByRole('button', { name: 'Pause' }).click();
+check('pressing 1 and 2 cuts between cameras live', (await mc.locator('.multicam-seg').count()) === 3, `${await mc.locator('.multicam-seg').count()} shots`);
+await mc.getByRole('button', { name: 'Put the multicam edit on the timeline' }).click();
+await mc.waitFor({ state: 'detached' });
+const names = await page.locator('.main-track .clip-item .clip-name').allInnerTexts();
+check('the multicam edit switches cameras on the main track', names.length === 3 && names[1].includes('talk-late') && !names[0].includes('late'), names.join(' | '));
+check('one camera\'s sound plays underneath', (await page.locator('.audio-item').count()) === 1);
+
+// ---------- Graph editor ----------
+await page.locator('.main-track .clip-item').first().click();
+await subTab('Animate');
+await details.locator('.anim-presets button').first().click();
+await details.locator('summary', { hasText: 'Graph editor' }).click();
+const k2 = details.getByRole('slider', { name: 'Keyframe 2' });
+await k2.waitFor();
+const before = Number(await k2.getAttribute('aria-valuenow'));
+await details.locator('.graph-canvas').scrollIntoViewIfNeeded();
+const kb = await k2.boundingBox();
+await page.mouse.move(kb.x + kb.width / 2, kb.y + kb.height / 2);
+await page.mouse.down();
+await page.mouse.move(kb.x + kb.width / 2, kb.y + kb.height / 2 - 30, { steps: 4 });
+await page.mouse.up();
+const after = Number(await details.getByRole('slider', { name: 'Keyframe 2' }).getAttribute('aria-valuenow'));
+check('dragging a keyframe in the graph changes its value', after > before, `${before} → ${after}`);
+await details.getByRole('slider', { name: 'Keyframe 1' }).click();
+await details.getByRole('combobox', { name: 'Move easing' }).selectOption('custom');
+const handle = details.getByRole('slider', { name: 'Ease out of this keyframe' });
+await handle.waitFor();
+const h0 = Number(await handle.getAttribute('aria-valuenow'));
+await details.locator('.graph-canvas').scrollIntoViewIfNeeded();
+const hb = await handle.boundingBox();
+await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+await page.mouse.down();
+await page.mouse.move(hb.x + hb.width / 2 + 10, hb.y + hb.height / 2 - 25, { steps: 4 });
+await page.mouse.up();
+check('a custom curve has handles that shape the move', Number(await handle.getAttribute('aria-valuenow')) !== h0, `${h0} → ${await handle.getAttribute('aria-valuenow')}`);
+
+// ---------- AI dubbing ----------
+const audioBefore = await page.locator('.audio-item').count();
+await page.locator('.cc-tabs').getByRole('button', { name: 'AI', exact: true }).click();
+const ailib = page.locator('.cc-library-body');
+await ailib.getByRole('combobox', { name: 'Dub into' }).selectOption('es');
+await ailib.getByRole('button', { name: 'Dub the video' }).click();
+await ailib.getByText(/Dubbed \d+ lines? into Spanish/).waitFor({ timeout: 30000 });
+check('AI dubbing speaks each line in the new language', (await page.locator('.audio-item').count()) > audioBefore && (await page.evaluate(() => window.__spoken ?? '')).startsWith('[es]'), `${audioBefore} → ${await page.locator('.audio-item').count()} audio clips; last line “${await page.evaluate(() => window.__spoken)}”`);
+
+// ---------- Screen recorder ----------
+await page.locator('.cc-tabs').getByRole('button', { name: 'Media', exact: true }).click();
+const clipsBefore = await page.locator('.main-track .clip-item').count();
+await page.getByRole('button', { name: 'Record screen' }).click();
+const rec = page.getByRole('dialog', { name: 'Record screen' });
+await rec.getByRole('checkbox', { name: /camera/ }).check();
+await rec.getByRole('button', { name: /Start recording/ }).click();
+await rec.getByRole('timer').waitFor({ timeout: 10000 });
+await page.waitForTimeout(2200);
+await rec.getByRole('button', { name: 'Stop and add to the video' }).click();
+await rec.waitFor({ state: 'detached', timeout: 20000 });
+await page.locator('.main-track .clip-item', { hasText: 'Screen recording' }).waitFor({ timeout: 20000 });
+check('the screen recording goes on the main track', (await page.locator('.main-track .clip-item').count()) === clipsBefore + 1);
+check('the camera goes on a layer above it', (await page.locator('.overlay-item', { hasText: 'Camera' }).count()) === 1);
 
 // MORE CHECKS BELOW
 

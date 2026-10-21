@@ -28,6 +28,7 @@ import type { AnimPreset, AnimProp, Easing, Keyframes, Ramp } from './anim';
 import { LOOKS, NEUTRAL_GRADE, NEUTRAL_WHEEL, wheelColor } from './grade';
 import type { ColorGrade, LookId, Wheel } from './grade';
 import { DEFAULT_KEY } from './keyer';
+import { GraphEditor } from './GraphEditor';
 import { BLEND_MODES, MASK_SHAPES, NO_CROP } from './layers';
 import type { BlendMode, Crop, LayerProps, Mask, MaskShape } from './types';
 
@@ -169,6 +170,11 @@ export function KeyframeTools({
           </label>
           <button onClick={() => update({ keys: undefined })} title="Remove all keyframes">Clear</button>
         </div>
+      )}
+      {anyKeys && (
+        <Section title="Graph editor">
+          <GraphEditor keys={item.keys ?? {}} length={length} local={local} mark={mark} onChange={(keys, live) => update({ keys }, live)} onSeekLocal={onSeekLocal} />
+        </Section>
       )}
       <h4>One-click animations</h4>
       <div className="grid3 anim-presets">

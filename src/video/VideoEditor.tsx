@@ -136,9 +136,11 @@ const PostKitDialog = lazy(() => import('./PostKitDialog').then((m) => ({ defaul
 const HistoryDialog = lazy(() => import('./HistoryDialog').then((m) => ({ default: m.HistoryDialog })));
 const ShareDialog = lazy(() => import('./ShareDialog').then((m) => ({ default: m.ShareDialog })));
 const AutoEditDialog = lazy(() => import('./AutoEditDialog').then((m) => ({ default: m.AutoEditDialog })));
+const MulticamDialog = lazy(() => import('./MulticamDialog').then((m) => ({ default: m.MulticamDialog })));
+const ScreenRecorder = lazy(() => import('./ScreenRecorder').then((m) => ({ default: m.ScreenRecorder })));
 /** Fetch them in the background once the editor is idle, so they open instantly (and work offline). */
 const prefetchDialogs = () => {
-  for (const load of [() => import('./AIPanel'), () => import('./ExportDialog'), () => import('./PreflightDialog'), () => import('./RecipesDialog'), () => import('./PostKitDialog'), () => import('./HistoryDialog'), () => import('./ShareDialog'), () => import('./AutoEditDialog')]) void load().catch(() => {});
+  for (const load of [() => import('./AIPanel'), () => import('./ExportDialog'), () => import('./PreflightDialog'), () => import('./RecipesDialog'), () => import('./PostKitDialog'), () => import('./HistoryDialog'), () => import('./ShareDialog'), () => import('./AutoEditDialog'), () => import('./MulticamDialog'), () => import('./ScreenRecorder')]) void load().catch(() => {});
 };
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -289,6 +291,8 @@ export function VideoEditor({
   const look = useLook();
   const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
   const [exportDialog, setExportDialog] = useState(false);
+  const [multicamOpen, setMulticamOpen] = useState(false);
+  const [screenRecOpen, setScreenRecOpen] = useState(false);
   const [preflight, setPreflight] = useState(false);
   const [recipesOpen, setRecipesOpen] = useState(false);
   const [postKit, setPostKit] = useState(false);
@@ -1195,6 +1199,16 @@ export function VideoEditor({
         <button className="block autoedit-media-btn" onClick={() => setAutoEditOpen(true)} title="Raw clips in, finished video out">
           ✨ Auto edit my clips
         </button>
+        {!!navigator.mediaDevices?.getDisplayMedia && (
+          <button className="block" onClick={() => setScreenRecOpen(true)} title="Record your screen, voice and camera">
+            <Icon name="video" size={15} /> Record screen
+          </button>
+        )}
+        {project.assets.filter((a) => a.kind === 'video').length >= 2 && (
+          <button className="block" onClick={() => setMulticamOpen(true)} title="Cut between several cameras, lined up by sound">
+            🎥 Multicam edit
+          </button>
+        )}
         {importing > 0 && <p className="hint">Importing {importing} file(s)…</p>}
         {project.assets.filter(isLibraryAsset).length === 0 && (
           <div className="library-empty">
@@ -1548,6 +1562,7 @@ export function VideoEditor({
         set={set}
         setProgress={setProgress}
         addCaptions={addCaptions}
+        makeAsset={(file) => addAssetFile(file)}
         addAudioFile={async (file, at) => {
           const asset = await addAssetFile(file);
           set((p) => ({ ...p, assets: [...p.assets, asset], audio: [...p.audio, createAudioClip(asset, at)] }));
@@ -1960,6 +1975,43 @@ export function VideoEditor({
       {showTour && <Tour steps={TOUR} storageKey="bee.tour.video" onClose={() => setShowTour(false)} />}
 
       <Suspense fallback={null}>
+      {screenRecOpen && (
+        <ScreenRecorder
+          onClose={() => setScreenRecOpen(false)}
+          onDone={async (screenFile, cameraFile) => {
+            setScreenRecOpen(false);
+            try {
+              const screen = await addAssetFile(screenFile);
+              const camera = cameraFile ? await addAssetFile(cameraFile) : null;
+              set((p) => {
+                // Where the screen clip lands: the end of the main track.
+                const start = p.clips.reduce((sum, c) => sum + clipDuration(c), 0);
+                const next = { ...p, assets: [...p.assets, screen, ...(camera ? [camera] : [])], clips: [...p.clips, createClip(screen)] };
+                if (!camera) return next;
+                // The camera bubble sits in the bottom-right corner, in step with the screen.
+                const o = { ...createOverlay(camera, start), scale: 0.22, x: 0.86, y: 0.78, rounded: 0.5 };
+                return { ...next, overlays: [...p.overlays, { ...o, track: freeTrack(p.overlays, o.start, o.start + o.out - o.in) }] };
+              });
+            } catch (err) {
+              alert(err instanceof Error ? err.message : 'Could not add the recording');
+            }
+          }}
+        />
+      )}
+      {multicamOpen && (
+        <MulticamDialog
+          project={project}
+          onClose={() => setMulticamOpen(false)}
+          onApply={(r) => {
+            engineRef.current?.pause();
+            // The cameras replace the main track; the first camera's sound goes on the audio track.
+            set((p) => ({ ...p, clips: r.clips, audio: [...p.audio, ...r.audio] }));
+            setMulticamOpen(false);
+            setSelection(null);
+            seek(0);
+          }}
+        />
+      )}
       {autoEditOpen && (
         <AutoEditDialog
           project={project}

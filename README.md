@@ -170,6 +170,9 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - **✨ Remove background (AI)**: cuts the person out of any video or photo, no green screen needed (Cutout tab). Runs on your device with a small person-matting model (MODNet, downloaded once); video masks are made 15 times a second, smoothed so the edge doesn't flicker, and saved with the project
 - **Stabilise** shaky handheld clips (Light, Medium or Locked): it measures the shake, keeps your intended camera move and zooms in just enough to hide the edges
 - **Studio sound**: one tap makes a voice clearer and more even (rumble and mud removed, presence added, loudness evened out to a steady level), on clips, layers and audio
+- **🎥 Multicam**: filmed with several cameras or phones? Pick them, and they are lined up by their sound. Then press 1, 2, 3… while it plays to cut between them live, or **Auto switch** to show whoever is talking. One camera's sound plays all the way through
+- **Record screen** (Media tab): your screen, window or tab with your voice, and your camera in a corner bubble on its own layer. Great for tutorials
+- **Graph editor** (Animate tab, both editors): see each animated value as a curve, drag keyframes in time and value, and pick **Custom curve** to shape how a move speeds up and slows down with two handles
 - **⚡ Fast export**: decodes your videos and draws every frame on its own with the browser's video encoder (WebCodecs), so it is usually several times faster than real time, never drops a frame and keeps going in a background tab. Cancel any time. Older browsers record in real time instead
 - **Beat markers**: select a song and press **Find beats**; the beats show on the timeline and clip edges snap to them. **Fit clips to the beat** trims or stretches every clip so each cut lands on a beat. Drop your own **markers** with **M** (double-click one to remove it)
 - **Custom speed curve**: besides the speed ramp presets, draw your own curve: drag points up to speed up, down for slow motion
@@ -199,6 +202,7 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - Undo/redo, keyboard shortcuts (Space, S, Del, ←/→)
 - Export to **MP4** (H.264 in Chrome, Edge and Safari) or WebM with mixed audio; choose quality (small / standard / high) and 30 or 60 fps, with a file-size estimate
 - **Video templates**: vlog intro, product promo, travel story, YouTube end screen, birthday wishes and quote of the day. Each comes with titles, effects and sound, and opens from Home or the Media tab
+- **AI dubbing** (AI tab): says everything in another language in time with the video (transcribe → translate → speak each line), with the original voice kept quietly underneath and optional captions in the new language
 - **AI tools** (AI tab): **auto captions from speech**, **translate captions** into 16 languages, **AI voice-overs** from typed text, **remove silences** from talking videos, and **auto Shorts** (picks the loudest, liveliest moments and makes a vertical 9:16 clip). They run **on your device** for free (Whisper and MMS voices through transformers.js, downloaded once and cached; translation uses Chrome's built-in translator). Or open *AI settings* and paste your own OpenAI-compatible API key. The key is stored only in your browser
 - **Motion tracking**: select a text, sticker, shape or layer, press *Track motion* (Animate tab) and click the thing to follow on the player. It follows that object through the video and writes position keyframes for you. *Remove tracking* undoes it
 
@@ -257,6 +261,7 @@ Video
 - [x] Faster-than-realtime MP4/WebM export (WebCodecs)
 - [x] Custom speed curves
 - [x] AI background removal for video, stabiliser, studio sound
+- [x] Multicam editing, screen recorder, AI dubbing, keyframe graph editor
 - [x] Save video projects (media stored in IndexedDB)
 - [x] Several saved projects with a project list
 

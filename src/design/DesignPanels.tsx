@@ -102,7 +102,8 @@ export function MotionSection({
         onSeekLocal={(t) => onTime(t)}
         update={(patch, live) => {
           update(patch as Partial<DesignElement>, live);
-          if (hasMotion({ ...el, ...patch } as DesignElement) && patch.keys) onPlay();
+          // Replay once a change is finished (not on every step of a drag).
+          if (!live && hasMotion({ ...el, ...patch } as DesignElement) && patch.keys) onPlay();
         }}
       />
     </div>

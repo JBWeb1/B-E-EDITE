@@ -3,7 +3,7 @@
  * presets, wiggle, speed ramps / reverse, and layer transforms. All pure.
  */
 
-export type Easing = 'linear' | 'smooth' | 'ease-in' | 'ease-out' | 'bounce' | 'elastic' | 'snap' | 'hold';
+export type Easing = 'linear' | 'smooth' | 'ease-in' | 'ease-out' | 'bounce' | 'elastic' | 'snap' | 'hold' | 'custom';
 
 export const EASINGS: { value: Easing; label: string }[] = [
   { value: 'smooth', label: 'Smooth' },
@@ -14,12 +14,52 @@ export const EASINGS: { value: Easing; label: string }[] = [
   { value: 'elastic', label: 'Elastic' },
   { value: 'snap', label: 'Snap' },
   { value: 'hold', label: 'Hold (jump)' },
+  { value: 'custom', label: 'Custom curve' },
 ];
 
-/** Map progress 0..1 through an easing curve. */
-export function ease(e: Easing | undefined, x: number): number {
+/** A "speed up / slow down" curve shaped by two handles (like CSS cubic-bezier). */
+export type Bezier = [number, number, number, number];
+
+/** Default handles for a new custom curve (a gentle ease in and out). */
+export const DEFAULT_BEZIER: Bezier = [0.42, 0, 0.58, 1];
+
+/** y of a cubic-bezier easing curve at x (both 0..1), found with Newton steps and bisection. */
+export function cubicBezier([x1, y1, x2, y2]: Bezier, x: number): number {
+  const cx = 3 * x1;
+  const bx = 3 * (x2 - x1) - cx;
+  const ax = 1 - cx - bx;
+  const cy = 3 * y1;
+  const by = 3 * (y2 - y1) - cy;
+  const ay = 1 - cy - by;
+  const X = (t: number) => ((ax * t + bx) * t + cx) * t;
+  const dX = (t: number) => (3 * ax * t + 2 * bx) * t + cx;
+  let t = x;
+  for (let i = 0; i < 8; i++) {
+    const err = X(t) - x;
+    if (Math.abs(err) < 1e-6) break;
+    const d = dX(t);
+    if (Math.abs(d) < 1e-6) break;
+    t -= err / d;
+  }
+  if (t < 0 || t > 1 || Math.abs(X(t) - x) > 1e-4) {
+    let lo = 0;
+    let hi = 1;
+    t = x;
+    for (let i = 0; i < 40; i++) {
+      if (X(t) < x) lo = t;
+      else hi = t;
+      t = (lo + hi) / 2;
+    }
+  }
+  return ((ay * t + by) * t + cy) * t;
+}
+
+/** Map progress 0..1 through an easing curve (`bez` shapes the 'custom' one). */
+export function ease(e: Easing | undefined, x: number, bez?: Bezier): number {
   const t = Math.max(0, Math.min(1, x));
   switch (e ?? 'smooth') {
+    case 'custom':
+      return cubicBezier(bez ?? DEFAULT_BEZIER, t);
     case 'linear':
       return t;
     case 'ease-in':
@@ -54,6 +94,8 @@ export interface Keyframe {
   v: number;
   /** Easing of the move from this keyframe to the next. */
   ease?: Easing;
+  /** Handles of a 'custom' easing. */
+  bez?: Bezier;
 }
 
 export type AnimProp = 'x' | 'y' | 'scale' | 'rotation' | 'opacity' | 'volume' | 'maskX' | 'maskY' | 'maskScale';
@@ -73,7 +115,7 @@ export function valueAt(keys: Keyframe[] | undefined, t: number, base: number): 
     const b = keys[i + 1];
     if (t >= a.t && t <= b.t) {
       const span = b.t - a.t;
-      const p = span <= 0 ? 1 : ease(a.ease, (t - a.t) / span);
+      const p = span <= 0 ? 1 : ease(a.ease, (t - a.t) / span, a.bez);
       return a.v + (b.v - a.v) * p;
     }
   }
