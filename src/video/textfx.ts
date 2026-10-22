@@ -3,7 +3,8 @@
  * captions, animated title templates and animated shapes. The timing maths
  * (`letterState`, `wordTiming`, …) is pure and unit-tested.
  */
-import { ease, transformAt } from './anim';
+import { ease, transformAt, valueAt } from './anim';
+import { lettersOnPath, pathBounds, pathLength, samplePath, tracePath, trimDash } from './vectorPath';
 import { heartPath, starPath } from './particles';
 import type { ShapeAnim, ShapeKind, TextAnimator, TextOverlay, TitleTemplate, WordMode } from './types';
 
@@ -230,7 +231,9 @@ export function drawTextItem(ctx: CanvasRenderingContext2D, o: TextOverlay, t: n
   ctx.scale(anim.scale * tr.scale, anim.scale * tr.scale);
   // While paused, letter animators and templates show their finished state.
   const at = animate ? local : Math.max(local, o.duration * 0.75);
-  if (o.shape) drawShape(ctx, o, animate ? local : o.duration, H);
+  if (o.shape === 'path' && o.path) drawPathShape(ctx, o, local, H);
+  else if (o.shape) drawShape(ctx, o, animate ? local : o.duration, H);
+  else if (o.textPath && !o.template) drawTextOnPath(ctx, o, local, H);
   else if (o.template) drawTemplate(ctx, o, at, W, H);
   else if (o.words && o.words !== 'off') drawWordCaption(ctx, o, local, W, H);
   else drawPlainText(ctx, o, animate ? local : o.duration, H);
@@ -790,9 +793,74 @@ function drawShape(ctx: CanvasRenderingContext2D, o: TextOverlay, local: number,
   }
 }
 
+/** Pen-tool shape: the path stroked (and filled when closed), trimmed to its visible part. */
+function drawPathShape(ctx: CanvasRenderingContext2D, o: TextOverlay, local: number, H: number) {
+  const path = o.path!;
+  ctx.beginPath();
+  tracePath(ctx, path, H);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (o.glow) {
+    ctx.shadowColor = o.glow;
+    ctx.shadowBlur = H * 0.02;
+  }
+  const start = valueAt(o.keys?.trimStart, local, o.trim?.start ?? 0);
+  const end = valueAt(o.keys?.trimEnd, local, o.trim?.end ?? 1);
+  const trimmed = start > 1e-4 || end < 1 - 1e-4;
+  if (path.closed && o.fill && !trimmed) {
+    ctx.fillStyle = o.fill;
+    ctx.fill();
+  }
+  const width = (o.lineWidth ?? 0.01) * H;
+  // Nothing of the line is showing yet (a round cap would still draw a dot).
+  if (width > 0 && Math.abs(end - start) > 1e-3) {
+    const dash = trimDash(pathLength(samplePath(path, 16)) * H, start, end);
+    if (dash) {
+      ctx.setLineDash(dash.dash);
+      ctx.lineDashOffset = dash.offset;
+    }
+    ctx.strokeStyle = o.color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+/** Text that runs along a path; trimStart keys slide it along. */
+function drawTextOnPath(ctx: CanvasRenderingContext2D, o: TextOverlay, local: number, H: number) {
+  const size = o.size * H;
+  ctx.font = fontOf(o, size);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (!o.glow) {
+    ctx.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx.shadowBlur = size * 0.15;
+  }
+  const scaled = { closed: o.textPath!.closed, points: o.textPath!.points.map((p) => ({ x: p.x * H, y: p.y * H, ix: p.ix !== undefined ? p.ix * H : undefined, iy: p.iy !== undefined ? p.iy * H : undefined, ox: p.ox !== undefined ? p.ox * H : undefined, oy: p.oy !== undefined ? p.oy * H : undefined })) };
+  const samples = samplePath(scaled, 24);
+  const chars = [...o.text.replace(/\n/g, ' ')];
+  const widths = chars.map((ch) => ctx.measureText(ch).width);
+  const spots = lettersOnPath(samples, widths, valueAt(o.keys?.trimStart, local, o.trim?.start ?? 0));
+  chars.forEach((ch, i) => {
+    const at = spots[i];
+    if (!at) return;
+    ctx.save();
+    ctx.translate(at.x, at.y);
+    ctx.rotate(at.angle);
+    paintString(ctx, o, ch, 0, -size * 0.1, size);
+    ctx.restore();
+  });
+}
+
 /** Rough on-screen size of a text item (fractions of the frame), for clicking it on the player. */
 export function textBounds(ctx: CanvasRenderingContext2D, o: TextOverlay, W: number, H: number): { w: number; h: number } {
   const size = o.size * H;
+  const along = o.shape === 'path' ? o.path : o.textPath;
+  if (along) {
+    const b = pathBounds(along);
+    const pad = o.textPath ? o.size * 1.2 : (o.lineWidth ?? 0.01) * 2;
+    return { w: ((b.w + pad) * H) / W, h: b.h + pad };
+  }
   if (o.shape) {
     const aspect = o.aspect ?? SHAPES.find((s) => s.value === o.shape)?.aspect ?? 1;
     return { w: (size * aspect) / W, h: size / H };

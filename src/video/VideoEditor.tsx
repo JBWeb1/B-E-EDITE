@@ -35,6 +35,9 @@ import { extensionFor, mixSoundtrack } from './export';
 import { fastExport } from './fastExport';
 import { FacesSection, SmartCutoutSection, StabilizeSection, StudioSoundSection } from './SmartTools';
 import { followKeys } from './faces';
+import { PenTool } from './PenTool';
+import { fromFrame, PATH_PRESETS } from './vectorPath';
+import type { PathPoint } from './vectorPath';
 import { FontPicker } from '../ui/FontPicker';
 import { StockPanel } from '../ui/StockPanel';
 import { AIImagePanel } from '../ui/AIImagePanel';
@@ -46,6 +49,7 @@ import { decodeMono } from '../lib/aiService';
 import { LOOKS } from './grade';
 import type { ColorGrade, LookId } from './grade';
 import {
+  AnimField,
   AudioTools,
   BlendField,
   ColorSection,
@@ -298,6 +302,7 @@ export function VideoEditor({
   const [multicamOpen, setMulticamOpen] = useState(false);
   const [screenRecOpen, setScreenRecOpen] = useState(false);
   const [exported, setExported] = useState<File | null>(null);
+  const [pen, setPen] = useState<'shape' | 'text' | null>(null);
   const [preflight, setPreflight] = useState(false);
   const [recipesOpen, setRecipesOpen] = useState(false);
   const [postKit, setPostKit] = useState(false);
@@ -838,6 +843,33 @@ export function VideoEditor({
     rec.start();
     setRecorder(rec);
     if ((engineRef.current?.duration ?? 0) > startAt) engineRef.current?.play();
+  };
+
+  /** The pen tool finished: a shape layer that draws itself on, or text that follows the line. */
+  const finishPen = (points: PathPoint[], closed: boolean) => {
+    const mode = pen;
+    setPen(null);
+    const { path, cx, cy } = fromFrame(points, closed, project.width, project.height);
+    if (mode === 'text') {
+      addText({ text: 'Your text along the path', textPath: path, x: cx, y: cy, size: 0.07, animation: 'fade', duration: 4 });
+      return;
+    }
+    const drawOn = Math.min(1.2, 4 / 2);
+    addText({
+      text: '',
+      shape: 'path',
+      path,
+      x: cx,
+      y: cy,
+      size: 0.2,
+      color: '#ffffff',
+      fill: closed ? '#22d3ee' : null,
+      lineWidth: 0.012,
+      animation: 'none',
+      shapeAnim: 'none',
+      duration: 4,
+      keys: { trimEnd: [{ t: 0, v: 0, ease: 'smooth' }, { t: drawOn, v: 1 }] },
+    });
   };
 
   /** A sticker over a face, or a name label under it, that follows the face through the clip. */
@@ -1495,6 +1527,23 @@ export function VideoEditor({
             </button>
           ))}
         </div>
+        <h4>Pen tool &amp; paths</h4>
+        <div className="row">
+          <button onClick={() => (engineRef.current?.pause(), setPen('shape'))} title="Draw your own shape or line on the player; it draws itself on">
+            ✒️ Draw a shape
+          </button>
+          <button onClick={() => (engineRef.current?.pause(), setPen('text'))} title="Draw a line for text to follow">
+            ✒️ Draw a text path
+          </button>
+        </div>
+        <p className="hint">Text on a path:</p>
+        <div className="grid3">
+          {PATH_PRESETS.filter((p) => p.id !== 'line').map((p) => (
+            <button key={p.id} onClick={() => addText({ text: 'Text on a path', textPath: p.make(p.id === 'circle' ? 0.55 : 0.9), y: 0.5, size: 0.07, animation: 'fade', duration: 4 })} aria-label={`Text on a path: ${p.label}`}>
+              {p.label}
+            </button>
+          ))}
+        </div>
         <h4>Stickers</h4>
         <div className="sticker-grid">
           {STICKERS.map((em) => (
@@ -1723,6 +1772,11 @@ export function VideoEditor({
               onPointerUp={() => (dragRef.current = null)}
             />
             {project.clips.length === 0 && project.texts.length === 0 && project.overlays.length === 0 && <div className="preview-empty">Import a video or photo to get started</div>}
+            {pen && (
+              <CanvasCover canvasRef={canvasRef}>
+                <PenTool aspect={project.width / project.height} mode={pen} onDone={finishPen} onCancel={() => setPen(null)} />
+              </CanvasCover>
+            )}
             {showZones && (
               <CanvasCover canvasRef={canvasRef}>
                 <Suspense fallback={null}>
@@ -2163,6 +2217,7 @@ function ShapeIcon({ shape }: { shape: ShapeKind }) {
     circle: <circle cx="12" cy="12" r="8" {...solid} />,
     ring: <circle cx="12" cy="12" r="8" {...common} />,
     line: <path d="M3 12h18" {...common} />,
+    path: <path d="M3 17C7 5 11 19 15 9s5-3 6-2" {...common} />,
     arrow: <path d="M3 12h17M14 6l6 6-6 6" {...common} />,
     star: <path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z" {...solid} />,
     heart: <path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" {...solid} />,
@@ -2610,7 +2665,45 @@ function TextInspector({
               </select>
             </label>
           )}
-          {isShape && (
+          {text.shape === 'path' && text.path && (
+            <>
+              <RangeField label="Line thickness" value={text.lineWidth ?? 0.01} min={0} max={0.06} step={0.001} onStart={mark} onChange={(v) => update({ lineWidth: v }, true)} format={(v) => `${(v * 100).toFixed(1)}%`} />
+              {text.path.closed && (
+                <div className="row">
+                  <button className={text.fill ? 'active' : ''} onClick={() => update({ fill: text.fill ? null : '#22d3ee' })} aria-pressed={!!text.fill}>
+                    {text.fill ? 'Filled' : 'Fill the shape'}
+                  </button>
+                </div>
+              )}
+              {text.fill && text.path.closed && <ColorField label="Fill colour" value={text.fill} onStart={mark} onChange={(v) => update({ fill: v }, true)} swatches={swatches} />}
+              <h4>Trim paths</h4>
+              <AnimField label="Start" prop="trimStart" base={text.trim?.start ?? 0} keys={text.keys} local={local} min={0} max={1} step={0.01} format={(v) => `${Math.round(v * 100)}%`} mark={mark} onBase={(v, live) => update({ trim: { start: v, end: text.trim?.end ?? 1 } }, live)} onKeys={(keys, live) => update({ keys }, live)} />
+              <AnimField label="End" prop="trimEnd" base={text.trim?.end ?? 1} keys={text.keys} local={local} min={0} max={1} step={0.01} format={(v) => `${Math.round(v * 100)}%`} mark={mark} onBase={(v, live) => update({ trim: { start: text.trim?.start ?? 0, end: v } }, live)} onKeys={(keys, live) => update({ keys }, live)} />
+              <div className="row">
+                <button onClick={() => update({ keys: { ...text.keys, trimStart: undefined, trimEnd: [{ t: 0, v: 0, ease: 'smooth' }, { t: Math.min(1.2, text.duration / 2), v: 1 }] } })}>Draw on</button>
+                <button onClick={() => update({ keys: { ...text.keys, trimStart: [{ t: Math.max(0, text.duration - 1.2), v: 0, ease: 'smooth' }, { t: text.duration, v: 1 }], trimEnd: undefined } })}>Draw off</button>
+                <button onClick={() => update({ keys: { ...text.keys, trimStart: undefined, trimEnd: undefined }, trim: undefined })}>Whole line</button>
+              </div>
+            </>
+          )}
+          {text.textPath && !isShape && (
+            <>
+              <h4>Text on a path</h4>
+              <div className="grid3">
+                {PATH_PRESETS.filter((p) => p.id !== 'line').map((p) => (
+                  <button key={p.id} onClick={() => update({ textPath: p.make(p.id === 'circle' ? 0.55 : 0.9) })}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <AnimField label="Position along the path" prop="trimStart" base={text.trim?.start ?? 0} keys={text.keys} local={local} min={-1} max={1} step={0.01} format={(v) => `${Math.round(v * 100)}%`} mark={mark} onBase={(v, live) => update({ trim: { start: v, end: 1 } }, live)} onKeys={(keys, live) => update({ keys }, live)} />
+              <div className="row">
+                <button onClick={() => update({ keys: { ...text.keys, trimStart: [{ t: 0, v: -0.6, ease: 'linear' }, { t: text.duration, v: 0.6 }] } })}>Travel along</button>
+                <button onClick={() => update({ textPath: undefined, keys: { ...text.keys, trimStart: undefined } })}>Straight text</button>
+              </div>
+            </>
+          )}
+          {isShape && text.shape !== 'path' && (
             <>
               <label className="field">
                 <span>Shape</span>

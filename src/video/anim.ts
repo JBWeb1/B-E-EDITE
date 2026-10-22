@@ -98,7 +98,7 @@ export interface Keyframe {
   bez?: Bezier;
 }
 
-export type AnimProp = 'x' | 'y' | 'scale' | 'rotation' | 'opacity' | 'volume' | 'maskX' | 'maskY' | 'maskScale';
+export type AnimProp = 'x' | 'y' | 'scale' | 'rotation' | 'opacity' | 'volume' | 'maskX' | 'maskY' | 'maskScale' | 'trimStart' | 'trimEnd';
 export type Keyframes = Partial<Record<AnimProp, Keyframe[]>>;
 
 /** Keyframes closer than this (seconds) count as the same one. */

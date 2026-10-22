@@ -1,6 +1,7 @@
 import type { Filters } from '../lib/filters';
 import type { Keyframes, Ramp } from './anim';
 import type { FaceLook, FaceScan } from './faces';
+import type { VectorPath } from './vectorPath';
 import type { ColorGrade } from './grade';
 import type { ChromaKey } from './keyer';
 
@@ -215,6 +216,16 @@ export interface TextOverlay {
   aspect?: number;
   outline?: boolean;
   shapeAnim?: ShapeAnim;
+  /** Pen-tool shape (when `shape` is 'path'): points in frame-height units around x, y. */
+  path?: VectorPath;
+  /** Fill colour of a closed path (null: line only). */
+  fill?: string | null;
+  /** Line thickness of a path, as a fraction of the frame height. */
+  lineWidth?: number;
+  /** Show only part of the line, 0..1 ("Trim Paths"; animate with trimStart / trimEnd keys). */
+  trim?: { start: number; end: number };
+  /** Run the text along this path instead of in straight lines. */
+  textPath?: VectorPath;
 }
 
 export type TextAnimator = 'none' | 'typewriter' | 'wave' | 'bounce' | 'glitch' | 'fade-letters' | 'rise' | 'zoom' | 'flicker' | 'rainbow' | 'spin';
@@ -231,7 +242,7 @@ export type TitleTemplate =
   | 'quote'
   | 'social'
   | 'chapter';
-export type ShapeKind = 'rect' | 'circle' | 'ring' | 'line' | 'arrow' | 'star' | 'heart' | 'burst' | 'check' | 'cross' | 'triangle';
+export type ShapeKind = 'rect' | 'circle' | 'ring' | 'line' | 'arrow' | 'star' | 'heart' | 'burst' | 'check' | 'cross' | 'triangle' | 'path';
 export type ShapeAnim = 'none' | 'draw' | 'pop' | 'spin' | 'pulse';
 
 export type EffectType =

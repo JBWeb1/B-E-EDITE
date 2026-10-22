@@ -184,6 +184,8 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
   - **Smart reframe keeps faces in frame** (AI tab), falling back to following the movement
   - Photos in the design editor get **Retouch faces** and **Blur faces** too
   - There is deliberately no face swapping
+- **✒️ Pen tool & shape layers** (Titles tab): draw your own shapes and lines on the player (click for corners, drag for curves, click the first point to close). They **draw themselves on** with After Effects-style **Trim Paths** (animatable start and end), with fill, line thickness and glow
+- **Text on a path**: run text along an arch, dip, wave, circle or a line you draw; slide it along or let it **travel along** the path
 - **⚡ Fast export**: decodes your videos and draws every frame on its own with the browser's video encoder (WebCodecs), so it is usually several times faster than real time, never drops a frame and keeps going in a background tab. Cancel any time. Older browsers record in real time instead
 - **Beat markers**: select a song and press **Find beats**; the beats show on the timeline and clip edges snap to them. **Fit clips to the beat** trims or stretches every clip so each cut lands on a beat. Drop your own **markers** with **M** (double-click one to remove it)
 - **Custom speed curve**: besides the speed ramp presets, draw your own curve: drag points up to speed up, down for slow motion

@@ -5718,3 +5718,57 @@ button.link {
   min-height: 28px;
   padding: 2px 8px;
 }
+
+/* Pen tool */
+.pen-tool {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  /* The cover lets clicks through to the player; the pen takes them. */
+  pointer-events: auto;
+}
+.pen-tool svg {
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+  display: block;
+}
+.pen-line {
+  fill: none;
+  stroke: #22d3ee;
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+.pen-point {
+  fill: #fff;
+  stroke: #0891b2;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.pen-point.first {
+  fill: #22d3ee;
+}
+.pen-handle {
+  fill: #22d3ee;
+}
+.pen-handle-line {
+  stroke: #22d3ee;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+.pen-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+}

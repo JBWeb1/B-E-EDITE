@@ -15,7 +15,8 @@
     "test:e2e:pro": "node e2e/pro.mjs",
     "test:e2e:next": "node e2e/next.mjs",
     "test:e2e:unique": "node e2e/unique.mjs",
-    "test:e2e:more": "node e2e/more.mjs"
+    "test:e2e:more": "node e2e/more.mjs",
+    "test:e2e:studio": "node e2e/studio.mjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
