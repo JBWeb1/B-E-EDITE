@@ -66,6 +66,7 @@ export function AIPanel({
   const [shortLength, setShortLength] = useState(30);
   const [message, setMessage] = useState('');
   const [reframeTo, setReframeTo] = useState<keyof typeof REFRAME>('9:16');
+  const [reframeFaces, setReframeFaces] = useState(true);
   const sounds = useRef(new Map<string, Promise<Float32Array | null>>());
 
   const update = (patch: Partial<AISettings>) => {
@@ -245,9 +246,9 @@ export function AIPanel({
   const doReframe = () =>
     run('Following the action…', async (progress) => {
       const target = REFRAME[reframeTo];
-      const next = await smartReframe(project, target.width, target.height, progress);
+      const next = await smartReframe(project, target.width, target.height, progress, { faces: reframeFaces });
       set(() => next);
-      return `Reframed to ${target.label}. Each clip now pans to follow the action (Undo goes back).`;
+      return `Reframed to ${target.label}. Each clip now pans to follow ${reframeFaces ? 'the faces (or the action where there are none)' : 'the action'} (Undo goes back).`;
     });
 
   const doDuck = () =>
@@ -402,6 +403,10 @@ export function AIPanel({
           <Icon name="crop" size={15} /> Reframe
         </button>
       </div>
+      <label className="check">
+        <input type="checkbox" checked={reframeFaces} onChange={(e) => setReframeFaces(e.target.checked)} />
+        Keep faces in frame
+      </label>
 
       <h4>Auto-duck music</h4>
       <p className="hint">Turns the music down whenever someone talks, and back up in between.</p>

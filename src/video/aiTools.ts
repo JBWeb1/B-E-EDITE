@@ -7,6 +7,8 @@ import { aiProvider, decodeMono, loadAISettings } from '../lib/aiService';
 import { loudness } from './ai';
 import type { Range } from './ai';
 import { grabGrayFrames } from './grab';
+import { grabFrames } from './faceRun';
+import { faceFocus } from './faces';
 import { simplifyPath } from './tracker';
 import { duckKeys, focusX, reframe, smooth, toTranscriptLines, transcriptView } from './transcript';
 import { layoutClips } from './timeline';
@@ -94,7 +96,10 @@ export async function autoDuck(p: VideoProject, low = 0.25, onProgress?: (f: num
  * Change the video's shape and keep the action in frame: each clip fills the new
  * frame and pans to follow what moves (like a camera operator).
  */
-export async function smartReframe(p: VideoProject, width: number, height: number, onProgress?: (f: number) => void): Promise<VideoProject> {
+export async function smartReframe(p: VideoProject, width: number, height: number, onProgress?: (f: number) => void, opts: { faces?: boolean } = {}): Promise<VideoProject> {
+  const ai = aiProvider();
+  // If the face detector can't load (offline), follow the movement instead.
+  let facesOk = !!opts.faces;
   const frameAspect = width / height;
   const clips = [];
   for (let i = 0; i < p.clips.length; i++) {
@@ -107,8 +112,24 @@ export async function smartReframe(p: VideoProject, width: number, height: numbe
     const len = c.out - c.in;
     const n = Math.max(2, Math.min(120, Math.ceil(len * 2)));
     const times = Array.from({ length: n }, (_, k) => c.in + (len * k) / (n - 1));
-    const frames = await grabGrayFrames(asset.url, times, 64, 36, (f) => onProgress?.((i + f) / p.clips.length));
-    const focus = smooth(frames.map((f, k) => focusX(f, frames[k - 1])), 3);
+    const frames = await grabGrayFrames(asset.url, times, 64, 36, (f) => onProgress?.((i + f * (opts.faces ? 0.5 : 1)) / p.clips.length));
+    let raw = frames.map((f, k) => focusX(f, frames[k - 1]));
+    if (facesOk) {
+      // Keep the biggest face centred where there is one; follow the movement elsewhere.
+      const pictures = await grabFrames(asset.url, 'video', times, 320, (f) => onProgress?.((i + 0.5 + f * 0.25) / p.clips.length));
+      const found: (number | null)[] = [];
+      for (let k = 0; k < pictures.length; k++) {
+        try {
+          found.push(faceFocus(await ai.faces(pictures[k])));
+        } catch {
+          facesOk = false;
+          break;
+        }
+        onProgress?.((i + 0.75 + ((k + 1) / pictures.length) * 0.25) / p.clips.length);
+      }
+      raw = raw.map((v, k) => found[k] ?? v);
+    }
+    const focus = smooth(raw, 3);
     const sourceAspect = asset.width / asset.height;
     const xs = focus.map((fx) => reframe(sourceAspect, frameAspect, fx));
     const scale = xs[0].scale;

@@ -9,6 +9,8 @@ import { uid } from '../lib/id';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { removeBackgroundFromImage } from '../lib/bgremove';
 import { smartRemoveBackground } from '../video/cutout';
+import { faceLookPhoto } from '../video/faceRun';
+import { NO_FACE_LOOK } from '../video/faces';
 import { createFrame, createIcon, FRAMES, fillFrame, FRAME_PLACEHOLDER, groupElements, iconSrc, ICONS, isOneGroup, ungroupElements, withGroups } from './extras';
 import { FontPicker } from '../ui/FontPicker';
 import { loadWebFonts } from '../lib/fonts';
@@ -1348,6 +1350,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                   </div>
                   <RangeField label="Corner radius" value={selected.radius} min={0} max={Math.min(selected.width, selected.height) / 2} step={1} onStart={mark} onChange={(v) => patchSelected({ radius: v }, true)} />
                   <BackgroundRemover el={selected} onApply={(patch) => patchSelected(patch)} />
+                  <FaceTools el={selected} onApply={(patch) => patchSelected(patch)} />
                   <CropControls el={selected} mark={mark} setCrop={setCrop} />
                   <h4>Filters</h4>
                   <div className="grid3">
@@ -1674,6 +1677,54 @@ function PageStrip({
         <button className="danger" onClick={onDelete} disabled={file.pages.length <= 1} title="Delete page">Delete</button>
       </div>
     </div>
+  );
+}
+
+/** Retouch, enhance or blur the faces in a photo (on this device), with a way back. */
+function FaceTools({ el, onApply }: { el: ImageElement; onApply: (patch: Partial<ImageElement>) => void }) {
+  const [smooth, setSmooth] = useState(0.5);
+  const [brighten, setBrighten] = useState(0.3);
+  const [enhance, setEnhance] = useState(0.4);
+  const [working, setWorking] = useState(false);
+  const [note, setNote] = useState('');
+  const run = async (hide: boolean) => {
+    setWorking(true);
+    setNote('');
+    try {
+      const original = el.originalSrc ?? el.src;
+      const out = await faceLookPhoto(original, { ...NO_FACE_LOOK, smooth, brighten, enhance, strength: 0.7 }, hide);
+      if (!out) {
+        setNote('No face found in this photo.');
+        return;
+      }
+      onApply({ src: out.src, originalSrc: original, naturalWidth: out.width, naturalHeight: out.height });
+      setNote(`${hide ? 'Blurred' : 'Retouched'} ${out.faces} face${out.faces === 1 ? '' : 's'}.`);
+    } catch (err) {
+      setNote(`Could not look for faces${err instanceof Error ? `: ${err.message}` : ''}.`);
+    } finally {
+      setWorking(false);
+    }
+  };
+  return (
+    <>
+      <h4>Faces</h4>
+      <RangeField label="Smooth skin" value={smooth} min={0} max={1} step={0.05} onChange={setSmooth} format={(v) => `${Math.round(v * 100)}%`} />
+      <RangeField label="Brighten faces" value={brighten} min={0} max={1} step={0.05} onChange={setBrighten} format={(v) => `${Math.round(v * 100)}%`} />
+      <RangeField label="Enhance detail" value={enhance} min={0} max={1} step={0.05} onChange={setEnhance} format={(v) => `${Math.round(v * 100)}%`} />
+      <div className="row">
+        <button className="primary" onClick={() => void run(false)} disabled={working}>
+          {working ? 'Working…' : '✨ Retouch faces'}
+        </button>
+        <button onClick={() => void run(true)} disabled={working} title="Hide every face (privacy)">
+          Blur faces
+        </button>
+      </div>
+      {note && (
+        <p className="hint" role="status">
+          {note}
+        </p>
+      )}
+    </>
   );
 }
 

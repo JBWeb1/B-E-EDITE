@@ -5,6 +5,9 @@ import { gradeFilterMarkup, gradeId, isNeutral } from './grade';
 import { ChromaKeyer } from './keyer';
 import { blendMasks, cutoutKey, decompress, maskIndexAt, unpackMasks } from './cutout';
 import { stabilizedRect } from './stabilize';
+import { boxAt } from './faces';
+import type { Box } from './faces';
+import { paintFaces } from './faceRun';
 import { getMedia } from '../lib/projects';
 import { blendOp, blurSamples, clipFrame, cropRect, overlayFrame } from './layers';
 import type { LayerFrame } from './layers';
@@ -555,6 +558,26 @@ export class VideoEngine {
     return `url(#${id})`;
   }
 
+  /** The faces on screen for a layer right now, in the layer's (cropped) picture, or null if no face look applies. */
+  private facesNow(job: PaintJob): { looks: Box[]; hide: Box[] } | null {
+    const { layer, full, src } = job;
+    const look = layer.faceLook;
+    if (!look || !layer.faces || !full) return null;
+    const active = look.blur.length > 0 || look.smooth > 0 || look.brighten > 0 || look.enhance > 0;
+    if (!active) return null;
+    const t = job.sourceTime ?? 0;
+    const looks: Box[] = [];
+    const hide: Box[] = [];
+    for (const track of layer.faces.tracks) {
+      const b = boxAt(layer.faces, track, t);
+      if (!b) continue;
+      // From fractions of the whole picture to fractions of the part shown.
+      const box = { x: (b.x * full.w - src.sx) / src.sw, y: (b.y * full.h - src.sy) / src.sh, w: (b.w * full.w) / src.sw, h: (b.h * full.h) / src.sh };
+      (look.blur.includes(track.id) ? hide : looks).push(box);
+    }
+    return looks.length || hide.length ? { looks, hide } : null;
+  }
+
   private cutouts = new Map<string, { frames: Uint8Array[]; w: number; h: number; blend: Uint8Array; img: ImageData; canvas: HTMLCanvasElement; shown: string } | 'loading' | 'missing'>();
 
   /** Masks just made (so they show at once, before the saved copy is read back). */
@@ -611,11 +634,12 @@ export class VideoEngine {
     const keyed = !!layer.chroma && !this.keyingOff;
     const masked = !!layer.mask && layer.mask.shape !== 'none';
     const cut = layer.cutout && job.full ? this.cutoutCanvas(layer.cutout, job.sourceTime ?? 0) : null;
+    const faces = this.facesNow(job);
     const f0 = job.frameAt(job.local);
 
     let image: CanvasImageSource = job.source;
     let rect = src;
-    if (keyed || masked || cut) {
+    if (keyed || masked || cut || faces) {
       // Work at the size the layer is drawn (capped), so keying stays fast.
       const px = Math.min(1, 2560 / Math.max(f0.w * this.scale, f0.h * this.scale, 1));
       const bw = Math.max(2, Math.round(f0.w * this.scale * px));
@@ -628,6 +652,7 @@ export class VideoEngine {
       b.filter = filter;
       b.drawImage(job.source, src.sx, src.sy, src.sw, src.sh, 0, 0, bw, bh);
       b.filter = 'none';
+      if (faces) paintFaces(b, bw, bh, faces.looks, faces.hide, layer.faceLook!);
       let out: HTMLCanvasElement = buf;
       if (keyed) {
         const k = this.keyer.process(buf, layer.chroma!);
@@ -664,7 +689,7 @@ export class VideoEngine {
       if (job.mirror) c.scale(-1, 1);
       const x = -f.w / 2;
       const y = -f.h / 2;
-      if (job.shadow && !keyed && !masked && !cut) {
+      if (job.shadow && !keyed && !masked && !cut && !faces) {
         c.save();
         c.shadowColor = 'rgba(0,0,0,0.4)';
         c.shadowBlur = 20;
@@ -674,7 +699,7 @@ export class VideoEngine {
         c.fill();
         c.restore();
       }
-      if (job.rounded && !keyed && !masked && !cut) {
+      if (job.rounded && !keyed && !masked && !cut && !faces) {
         c.beginPath();
         c.roundRect(x, y, f.w, f.h, job.rounded * Math.min(f.w, f.h));
         c.clip();

@@ -102,6 +102,21 @@ await ctx.addInitScript(() => {
       }
       return out;
     },
+    // Stand-in face detector: the bright box in the test videos is "a face".
+    async faces(image) {
+      window.__faceCalls = (window.__faceCalls ?? 0) + 1;
+      const { width: w, height: h, data: d } = image;
+      let x0 = w, y0 = h, x1 = -1, y1 = -1;
+      for (let y = 0; y < h; y += 2)
+        for (let x = 0; x < w; x += 2) {
+          const i = (y * w + x) * 4;
+          if (d[i] > 220 && d[i + 1] > 220 && d[i + 2] > 220) {
+            x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+          }
+        }
+      if (x1 < 0) return [{ x: 0.35, y: 0.3, w: 0.3, h: 0.4, score: 0.9 }];
+      return [{ x: x0 / w, y: y0 / h, w: (x1 - x0 + 2) / w, h: (y1 - y0 + 2) / h, score: 0.95 }];
+    },
     async image(prompt, size) {
       window.__imagePrompt = prompt;
       window.__imageSize = size;
@@ -518,6 +533,65 @@ await vlib.getByRole('textbox', { name: 'Describe the picture' }).fill('mountain
 await vlib.getByRole('button', { name: '✨ Make picture' }).click();
 await page.locator('.main-track .clip-item').nth(1).waitFor({ timeout: 10000 });
 check('AI pictures for a video use its shape', (await page.evaluate(() => window.__imageSize)) === '1536x1024');
+
+// ---------- Face tools ----------
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'talk.webm')]);
+await page.locator('.main-track .clip-item').first().waitFor();
+await seekTo(1);
+await page.locator('.main-track .clip-item').first().click();
+await subTab('Video');
+await details.locator('summary', { hasText: 'Faces' }).click();
+await details.getByRole('button', { name: '🙂 Find faces' }).click();
+// The box in the test video jumps between four places, so it reads as several faces.
+await details.locator('.faces-section').getByText(/faces? found/).waitFor({ timeout: 60000 });
+check('finds and follows a face through the clip', (await page.evaluate(() => window.__faceCalls)) >= 50, `${await page.evaluate(() => window.__faceCalls)} frames checked`);
+const bright = () =>
+  page.locator('canvas.preview').evaluate((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] > 220 && d[i + 1] > 220 && d[i + 2] > 220) n++;
+    return n;
+  });
+await settle();
+const faceBefore = await bright();
+const snap = () => page.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.filter((_, i) => i % 4 !== 3 && i % 16 === 0)));
+const plain = await snap();
+await details.getByRole('button', { name: 'Blur all' }).click();
+await details.getByRole('group', { name: 'Blur style' }).getByRole('button', { name: 'Black box' }).click();
+await settle();
+const faceHidden = await bright();
+check('privacy blur hides the face', faceBefore > 500 && faceHidden < faceBefore * 0.2, `${faceBefore} → ${faceHidden} bright pixels`);
+await details.getByRole('group', { name: 'Blur style' }).getByRole('button', { name: 'Pixelate' }).click();
+await settle();
+const blocky = await snap();
+const changed = blocky.reduce((n, v, i) => n + (Math.abs(v - plain[i]) > 20 ? 1 : 0), 0);
+check('pixelate turns the face edges into blocks', changed > 200, `${changed} samples changed`);
+await details.getByRole('button', { name: 'Blur none' }).click();
+await details.locator('.field', { hasText: 'Enhance detail' }).locator('input[type=range]').fill('1');
+await details.locator('.field', { hasText: 'Smooth skin' }).locator('input[type=range]').fill('0.6');
+await settle();
+check('retouch and enhance run on the face', (await bright()) > 0);
+const textsBefore = await page.locator('.text-item').count();
+await details.getByRole('button', { name: 'Sticker on face 1' }).click();
+await page.locator('.text-item').nth(textsBefore).waitFor();
+check('a sticker can follow a face', (await page.locator('.text-item').count()) === textsBefore + 1 && (await page.locator('.text-item').last().innerText()).includes('😎'));
+const stickerKeys = await page.locator('.text-item').last().locator('.kf-diamond').count();
+check('the sticker moves with the face (keyframes)', stickerKeys >= 2, `${stickerKeys} keyframes`);
+
+await page.locator('.cc-tabs').getByRole('button', { name: 'AI', exact: true }).click();
+const fcalls = await page.evaluate(() => window.__faceCalls);
+await page.locator('.cc-library-body').getByRole('button', { name: 'Reframe' }).click();
+await page.locator('.cc-library-body').getByText(/Reframed to .* follow the faces/).waitFor({ timeout: 60000 });
+check('smart reframe keeps faces in frame', (await page.evaluate(() => window.__faceCalls)) > fcalls);
+
+await page.goto(`${BASE}/?new=design`);
+await page.getByRole('button', { name: /Uploads/ }).click();
+await page.locator('.panel input[type=file][accept="image/*"]').first().setInputFiles(path.join(FIX, 'greenscreen.png'));
+await page.getByRole('button', { name: '✨ Retouch faces' }).waitFor({ timeout: 10000 });
+await page.getByRole('button', { name: '✨ Retouch faces' }).click();
+await page.getByText(/Retouched 1 face/).waitFor({ timeout: 20000 });
+check('faces in photos can be retouched (with a way back)', (await page.getByRole('button', { name: 'Restore' }).count()) === 1);
 
 // MORE CHECKS BELOW
 

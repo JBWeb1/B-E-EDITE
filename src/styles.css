@@ -5693,3 +5693,28 @@ button.link {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Face tools */
+.face-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.face-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.face-row small {
+  color: var(--faint);
+}
+.face-follow {
+  display: flex;
+  gap: 4px;
+}
+.face-follow button {
+  min-height: 28px;
+  padding: 2px 8px;
+}

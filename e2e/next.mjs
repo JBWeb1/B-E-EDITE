@@ -60,7 +60,9 @@ await ctx.addInitScript(() => {
 });
 const page = await ctx.newPage();
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
-page.on('console', (m) => m.type() === 'error' && errors.push('console: ' + m.text()));
+// This test machine is offline: the real face detector (CDN) can't load, and smart reframe falls back.
+const offline = (m) => /cdn\.jsdelivr\.net|storage\.googleapis\.com/.test(m.location()?.url ?? '');
+page.on('console', (m) => m.type() === 'error' && !offline(m) && errors.push('console: ' + m.text()));
 page.on('dialog', (d) => d.accept());
 
 const details = page.locator('.cc-details-body');

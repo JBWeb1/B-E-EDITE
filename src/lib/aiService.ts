@@ -33,6 +33,8 @@ export interface AIProvider {
   speak(text: string, language: string, onProgress?: (f: number) => void): Promise<Blob>;
   /** How much each pixel belongs to a person in the picture (0..255, one byte per pixel). */
   segment(image: ImageData, onProgress?: (f: number) => void): Promise<Uint8Array>;
+  /** Faces in a picture, as boxes in fractions of the picture (0..1) with a confidence. */
+  faces(image: ImageData): Promise<{ x: number; y: number; w: number; h: number; score: number }[]>;
   /** A picture made from a description. `size` is "1024x1024", "1536x1024" or "1024x1536". */
   image(prompt: string, size: ImageSize, onProgress?: (f: number) => void): Promise<Blob>;
 }
@@ -142,6 +144,32 @@ async function deviceSegment(image: ImageData, onProgress?: (f: number) => void)
   return new Uint8Array(mask.data);
 }
 
+const MEDIAPIPE_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let faceDetector: Promise<any> | null = null;
+
+/** MediaPipe's face detector (about 1 MB, runs on this device). */
+async function deviceFaces(image: ImageData) {
+  if (!faceDetector) {
+    faceDetector = (async () => {
+      const vision = await import(/* @vite-ignore */ `${MEDIAPIPE_URL}/vision_bundle.mjs`);
+      const files = await vision.FilesetResolver.forVisionTasks(`${MEDIAPIPE_URL}/wasm`);
+      return vision.FaceDetector.createFromOptions(files, { baseOptions: { modelAssetPath: FACE_MODEL }, runningMode: 'IMAGE', minDetectionConfidence: 0.4 });
+    })();
+    faceDetector.catch(() => (faceDetector = null));
+  }
+  const det = await faceDetector;
+  const res = det.detect(image);
+  return (res.detections ?? []).map((d: { boundingBox: { originX: number; originY: number; width: number; height: number }; categories?: { score: number }[] }) => ({
+    x: d.boundingBox.originX / image.width,
+    y: d.boundingBox.originY / image.height,
+    w: d.boundingBox.width / image.width,
+    h: d.boundingBox.height / image.height,
+    score: d.categories?.[0]?.score ?? 1,
+  }));
+}
+
 const deviceProvider: AIProvider = {
   async transcribe(samples, language, onProgress) {
     // Multilingual tiny Whisper: about 40 MB, cached by the browser after the first use.
@@ -179,6 +207,7 @@ const deviceProvider: AIProvider = {
     return new Blob([floatToWav(out.audio as Float32Array, out.sampling_rate as number)], { type: 'audio/wav' });
   },
   segment: deviceSegment,
+  faces: deviceFaces,
   async image() {
     // Picture models are gigabytes; they don't run in a browser yet.
     throw new Error(NEEDS_KEY);
@@ -255,6 +284,7 @@ function apiProvider(s: AISettings): AIProvider {
     },
     // Cut-outs always run on this device (there is no standard API for them).
     segment: deviceSegment,
+    faces: deviceFaces,
     async image(prompt, size, onProgress) {
       onProgress?.(0.1);
       const r = await fetch(`${base}/images/generations`, {

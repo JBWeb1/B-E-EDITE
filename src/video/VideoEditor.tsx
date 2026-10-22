@@ -33,7 +33,8 @@ import { defaultPlatform } from './preflightRun';
 import type { VideoExportChoice } from './ExportDialog';
 import { extensionFor, mixSoundtrack } from './export';
 import { fastExport } from './fastExport';
-import { SmartCutoutSection, StabilizeSection, StudioSoundSection } from './SmartTools';
+import { FacesSection, SmartCutoutSection, StabilizeSection, StudioSoundSection } from './SmartTools';
+import { followKeys } from './faces';
 import { FontPicker } from '../ui/FontPicker';
 import { StockPanel } from '../ui/StockPanel';
 import { AIImagePanel } from '../ui/AIImagePanel';
@@ -837,6 +838,28 @@ export function VideoEditor({
     rec.start();
     setRecorder(rec);
     if ((engineRef.current?.duration ?? 0) > startAt) engineRef.current?.play();
+  };
+
+  /** A sticker over a face, or a name label under it, that follows the face through the clip. */
+  const followFace = (clipId: string, trackId: string, kind: 'sticker' | 'label') => {
+    const placed = layoutClips(project.clips).find((pc) => pc.clip.id === clipId);
+    const asset = placed && assetOf(placed.clip.assetId);
+    const scan = placed?.clip.faces;
+    const track = scan?.tracks.find((t) => t.id === trackId);
+    if (!placed || !asset || !scan || !track) return;
+    const len = placed.end - placed.start;
+    const k = followKeys(placed.clip, placed.start, asset, project, scan, track, placed.start, len, kind === 'sticker' ? 'on' : 'below');
+    if (!k) {
+      alert('That face is not on screen in this clip.');
+      return;
+    }
+    const patch: Partial<TextOverlay> =
+      kind === 'sticker'
+        ? { text: '😎', size: Math.max(0.05, Math.min(0.6, k.size * 1.1)), bold: false, background: null, animation: 'pop' }
+        : { text: 'Name', size: 0.05, background: '#000000', animation: 'fade' };
+    const o = createTextOverlay(placed.start, { ...patch, duration: len, x: k.x[0].v, y: k.y[0].v, keys: { x: k.x, y: k.y } });
+    set((p) => ({ ...p, texts: [...p.texts, o] }));
+    setSelection({ kind: 'text', id: o.id });
   };
 
   const addText = (patch: Partial<TextOverlay>) => {
@@ -1771,6 +1794,7 @@ export function VideoEditor({
                 onPick={() => (picking ? setPicking(null) : startPick({ kind: 'clip', id: selectedClip.id }))}
                 onSaveLook={saveCurrentLook}
                 onCutoutReady={(c, data) => engineRef.current?.addCutout(c, data)}
+                onFollow={(trackId, kind) => followFace(selectedClip.id, trackId, kind)}
               />
             ) : selectedText ? (
               <TextInspector
@@ -2182,6 +2206,7 @@ function ClipInspector({
   onPick,
   onSaveLook,
   onCutoutReady,
+  onFollow,
 }: {
   clip: Clip;
   asset: MediaAsset | undefined;
@@ -2196,6 +2221,7 @@ function ClipInspector({
   onPick: () => void;
   onSaveLook: () => void;
   onCutoutReady: (c: Cutout, data: Uint8Array) => void;
+  onFollow: (trackId: string, kind: 'sticker' | 'label') => void;
 }) {
   const [tab, setTab] = useState<ClipTab>('basic');
   const isVideo = asset?.kind === 'video';
@@ -2241,6 +2267,11 @@ function ClipInspector({
           {isVideo && asset && (
             <Section title="Stabilise" defaultOpen={!!clip.stabilize}>
               <StabilizeSection layer={clip} asset={asset} update={update} />
+            </Section>
+          )}
+          {asset && (
+            <Section title="Faces" defaultOpen={!!clip.faces}>
+              <FacesSection layer={clip} asset={asset} update={update} onFollow={onFollow} />
             </Section>
           )}
           {!isFirst && (
@@ -2472,6 +2503,9 @@ function OverlayInspector({
               <StabilizeSection layer={o} asset={asset} update={update} />
             </Section>
           )}
+          <Section title="Faces" defaultOpen={!!o.faces}>
+            <FacesSection layer={o} asset={asset} update={update} />
+          </Section>
           <Section title="Green screen" defaultOpen>
             <GreenScreenSection layer={o} picking={picking} mark={mark} update={update} onPick={onPick} />
           </Section>

@@ -1,5 +1,6 @@
 import type { Filters } from '../lib/filters';
 import type { Keyframes, Ramp } from './anim';
+import type { FaceLook, FaceScan } from './faces';
 import type { ColorGrade } from './grade';
 import type { ChromaKey } from './keyer';
 
@@ -93,6 +94,9 @@ export interface LayerProps {
   cutout?: Cutout | null;
   /** Steadied camera: small moves that cancel the shake (see stabilize.ts). */
   stabilize?: Stabilize | null;
+  /** Faces found in the clip, and what to do with them (blur, retouch, enhance). */
+  faces?: FaceScan | null;
+  faceLook?: FaceLook | null;
 }
 
 /** Masks stored with the project (key `cutout-<id>` in the media store). */

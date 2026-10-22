@@ -177,6 +177,13 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - **Free stock media** (Media tab): search openly licensed photos and music & sounds (Openverse, no account needed) and Pexels videos (with your own free Pexels key); one click adds them, and the credit stays in the file's name
 - **✨ AI pictures**: describe a picture, pick a style (photo, illustration, 3D, watercolour, anime) and it's made in your video's or design's shape. Needs an OpenAI-compatible API key in AI settings (picture models are too big to run in a browser)
 - **Ready to post**: after every export you get the finished video with a ready-made caption and hashtags. On phones, **Share** sends it straight to TikTok, Instagram, YouTube and other apps; on a computer, one click opens TikTok, YouTube, Instagram, Facebook, X or LinkedIn's upload page to drop the file into. (Posting automatically or scheduling posts needs each site's own sign-in and a server, so it isn't built in)
+- **🙂 Face tools** (Video tab → Faces, and on layers): **Find faces** follows every face through the clip (MediaPipe face detector, on your device). Then:
+  - **Privacy blur**: blur, pixelate or black-box chosen faces (or all), following them as they move
+  - **Retouch**: smooth skin, brighten faces and enhance detail, only on faces
+  - **Follow a face**: one click adds a 😎 sticker on a face or a name label under it that moves with the person
+  - **Smart reframe keeps faces in frame** (AI tab), falling back to following the movement
+  - Photos in the design editor get **Retouch faces** and **Blur faces** too
+  - There is deliberately no face swapping
 - **⚡ Fast export**: decodes your videos and draws every frame on its own with the browser's video encoder (WebCodecs), so it is usually several times faster than real time, never drops a frame and keeps going in a background tab. Cancel any time. Older browsers record in real time instead
 - **Beat markers**: select a song and press **Find beats**; the beats show on the timeline and clip edges snap to them. **Fit clips to the beat** trims or stretches every clip so each cut lands on a beat. Drop your own **markers** with **M** (double-click one to remove it)
 - **Custom speed curve**: besides the speed ramp presets, draw your own curve: drag points up to speed up, down for slow motion
@@ -267,6 +274,7 @@ Video
 - [x] AI background removal for video, stabiliser, studio sound
 - [x] Multicam editing, screen recorder, AI dubbing, keyframe graph editor
 - [x] Free stock media, AI pictures, share-to-apps after export
+- [x] Face tools: privacy blur, retouch, enhance, follow-a-face stickers, face-aware reframe
 - [x] Save video projects (media stored in IndexedDB)
 - [x] Several saved projects with a project list
 
