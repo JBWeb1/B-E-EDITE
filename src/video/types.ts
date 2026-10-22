@@ -2,6 +2,7 @@ import type { Filters } from '../lib/filters';
 import type { Keyframes, Ramp } from './anim';
 import type { FaceLook, FaceScan } from './faces';
 import type { VectorPath } from './vectorPath';
+import type { Matte, React } from './react';
 import type { ColorGrade } from './grade';
 import type { ChromaKey } from './keyer';
 
@@ -98,6 +99,10 @@ export interface LayerProps {
   /** Faces found in the clip, and what to do with them (blur, retouch, enhance). */
   faces?: FaceScan | null;
   faceLook?: FaceLook | null;
+  /** Moves with the music (audio-reactive). */
+  react?: React | null;
+  /** Show this layer only through a text or shape item (track matte). */
+  matte?: Matte | null;
 }
 
 /** Masks stored with the project (key `cutout-<id>` in the media store). */
@@ -226,6 +231,8 @@ export interface TextOverlay {
   trim?: { start: number; end: number };
   /** Run the text along this path instead of in straight lines. */
   textPath?: VectorPath;
+  /** Moves with the music (audio-reactive). */
+  react?: React | null;
 }
 
 export type TextAnimator = 'none' | 'typewriter' | 'wave' | 'bounce' | 'glitch' | 'fade-letters' | 'rise' | 'zoom' | 'flicker' | 'rainbow' | 'spin';
@@ -264,7 +271,11 @@ export type EffectType =
   | 'sparkles'
   | 'hearts'
   | 'dust'
-  | 'bubbles';
+  | 'bubbles'
+  | 'light-rays'
+  | 'turbulence'
+  | 'echo'
+  | 'fractal-noise';
 
 /** A video effect applied to the whole frame for a stretch of time (its own track). */
 export interface EffectItem {

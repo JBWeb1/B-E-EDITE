@@ -468,6 +468,10 @@ export const EFFECTS: { type: EffectType; label: string; hint: string; group: Ef
   { type: 'glow', label: 'Dreamy glow', hint: 'Soft bloom', group: 'Light' },
   { type: 'light-leak', label: 'Light leak', hint: 'Warm film light sweeping across', group: 'Light' },
   { type: 'lens-flare', label: 'Lens flare', hint: 'Sun flare that drifts', group: 'Light' },
+  { type: 'light-rays', label: 'Light rays', hint: 'God rays streaming from the bright parts', group: 'Light' },
+  { type: 'turbulence', label: 'Turbulent warp', hint: 'Wavy heat-haze / underwater distortion', group: 'Motion' },
+  { type: 'echo', label: 'Echo trails', hint: 'Ghostly trails behind anything that moves', group: 'Motion' },
+  { type: 'fractal-noise', label: 'Fractal fog', hint: 'Drifting smoke and fog', group: 'Look' },
   { type: 'vignette', label: 'Vignette', hint: 'Darker edges', group: 'Look' },
   { type: 'grain', label: 'Film grain', hint: 'Old film texture', group: 'Look' },
   { type: 'vhs', label: 'VHS', hint: 'Retro tape lines', group: 'Look' },
@@ -519,6 +523,18 @@ export interface EffectFrame {
   flare: number;
   flareX: number;
   flareY: number;
+  /** Light rays: strength and where they stream from (fractions). */
+  rays: number;
+  raysX: number;
+  raysY: number;
+  /** Turbulent warp strength and its moving phase. */
+  turb: number;
+  turbPhase: number;
+  /** Echo trails strength. */
+  echo: number;
+  /** Fractal fog strength and drift. */
+  fog: number;
+  fogPhase: number;
   particles: { kind: ParticleKind; local: number; intensity: number; speed: number }[];
 }
 
@@ -541,6 +557,14 @@ export const NO_EFFECT: EffectFrame = {
   flare: 0,
   flareX: 0,
   flareY: 0,
+  rays: 0,
+  raysX: 0.5,
+  raysY: 0.2,
+  turb: 0,
+  turbPhase: 0,
+  echo: 0,
+  fog: 0,
+  fogPhase: 0,
   particles: [],
 };
 
@@ -596,6 +620,23 @@ export function effectFrame(effects: EffectItem[], t: number): EffectFrame {
         f.flareY = 0.22 + 0.06 * Math.sin(u * Math.PI);
         break;
       }
+      case 'light-rays': {
+        f.rays = Math.max(f.rays, k * Math.min(1, local / 0.4, (e.duration - local) / 0.4));
+        f.raysX = 0.5 + 0.25 * Math.sin(local * 0.4 * speed);
+        f.raysY = 0.18;
+        break;
+      }
+      case 'turbulence':
+        f.turb = Math.max(f.turb, k);
+        f.turbPhase = local * speed;
+        break;
+      case 'echo':
+        f.echo = Math.max(f.echo, k);
+        break;
+      case 'fractal-noise':
+        f.fog = Math.max(f.fog, k * Math.min(1, local / 0.5));
+        f.fogPhase = local * speed;
+        break;
       case 'zoom-pulse': {
         const beat = (local % 0.5) / 0.5; // a punch every half second
         f.scale *= 1 + k * 0.12 * Math.exp(-beat * 6);

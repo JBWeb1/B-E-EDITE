@@ -30,7 +30,9 @@ import type { ColorGrade, LookId, Wheel } from './grade';
 import { DEFAULT_KEY } from './keyer';
 import { GraphEditor } from './GraphEditor';
 import { BLEND_MODES, MASK_SHAPES, NO_CROP } from './layers';
-import type { BlendMode, Crop, LayerProps, Mask, MaskShape } from './types';
+import type { BlendMode, Crop, LayerProps, Mask, MaskShape, TextOverlay } from './types';
+import { MATTE_MODES, REACT_PROPS } from './react';
+import type { Matte, React } from './react';
 
 /** Something with animatable properties: a clip, a layer or a text item. */
 interface Animatable {
@@ -690,6 +692,57 @@ export function MotionTrackSection({ waiting, tracked, onStart, onClear }: { wai
         </button>
         {tracked && <button onClick={onClear}>Remove tracking</button>}
       </div>
+    </>
+  );
+}
+
+/** Audio-reactive: the layer pulses, bounces, flickers, shakes or glows with the music. */
+export function ReactSection({ react, update }: { react: React | null | undefined; update: (patch: { react: React | null }, live?: boolean) => void }) {
+  return (
+    <>
+      <h4>Move with the music</h4>
+      <div className="grid3" role="group" aria-label="Move with the music">
+        <button className={!react ? 'active' : ''} onClick={() => update({ react: null })}>
+          Off
+        </button>
+        {REACT_PROPS.map((r) => (
+          <button key={r.value} className={react?.prop === r.value ? 'active' : ''} title={r.hint} onClick={() => update({ react: { prop: r.value, amount: react?.amount ?? 0.7 } })}>
+            {r.label}
+          </button>
+        ))}
+      </div>
+      {react && <RangeField label="Strength" value={react.amount} min={0.05} max={1} step={0.05} onChange={(v) => update({ react: { ...react, amount: v } }, true)} format={(v) => `${Math.round(v * 100)}%`} />}
+      {react && <p className="hint">Follows the music on the audio track (or the clip's own sound when there is no music).</p>}
+    </>
+  );
+}
+
+/** Track matte: show this layer only through a text or shape (video inside letters). */
+export function MatteSection({ matte, texts, update }: { matte: Matte | null | undefined; texts: TextOverlay[]; update: (patch: { matte: Matte | null }) => void }) {
+  const usable = texts.filter((t) => t.text.trim() || t.shape);
+  return (
+    <>
+      <label className="field">
+        <span>Matte (text or shape)</span>
+        <select value={matte?.textId ?? ''} onChange={(e) => update({ matte: e.target.value ? { textId: e.target.value, mode: matte?.mode ?? 'alpha' } : null })} aria-label="Track matte">
+          <option value="">None</option>
+          {usable.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.shape ? `Shape: ${t.shape}` : t.text.split('\n')[0].slice(0, 30)}
+            </option>
+          ))}
+        </select>
+      </label>
+      {matte && (
+        <div className="grid2" role="group" aria-label="Matte mode">
+          {MATTE_MODES.map((m) => (
+            <button key={m.value} className={matte.mode === m.value ? 'active' : ''} title={m.hint} onClick={() => update({ matte: { ...matte, mode: m.value } })}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="hint">{usable.length ? 'Shows this layer only through the chosen text or shape (which is then hidden). Try big bold text for video inside letters.' : 'Add a big text or shape first, then pick it here.'}</p>
     </>
   );
 }

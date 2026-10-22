@@ -129,6 +129,7 @@ export async function fastExport(
   if (!videoCodec) return null;
   const audioCodec = await getFirstEncodableAudioCodec(AUDIO_CODECS[format], { numberOfChannels: 2, sampleRate: 48000 });
 
+  await engine.prepare();
   const duration = engine.duration;
   const plan = framePlan(project, duration, fps);
   const runs = decodeRuns(plan);

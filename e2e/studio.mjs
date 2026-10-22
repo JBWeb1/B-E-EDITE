@@ -174,6 +174,12 @@ const lit = () =>
     for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 300) n++;
     return n;
   });
+// Open a library tab (clicking the tab that is already open would fold the panel away).
+const openLib = async (name) => {
+  const tab = page.locator('.cc-tabs').getByRole('button', { name, exact: true });
+  if (!(await tab.evaluate((b) => b.classList.contains('active')))) await tab.click();
+  else if ((await page.locator('.cc-library-body').count()) === 0) await tab.click();
+};
 const canvasBox = async () => page.locator('canvas.preview').boundingBox();
 const clickAt = async (fx, fy) => {
   const b = await canvasBox();
@@ -214,6 +220,7 @@ check('closed shapes are filled', insideFill[2] > 150 && insideFill[0] < 120, in
 
 await page.keyboard.press('Escape');
 await page.getByRole('button', { name: '✒️ Draw a text path' }).click();
+await page.getByRole('application', { name: /Pen tool/ }).waitFor();
 await clickAt(0.15, 0.6);
 await clickAt(0.5, 0.35);
 await clickAt(0.85, 0.6);
@@ -229,6 +236,93 @@ check('text can travel along its path', (await page.locator('.text-item').nth(1)
 // The Titles tab is still open (clicking it again would fold the panel away).
 await page.getByRole('button', { name: 'Text on a path: Wave' }).click();
 check('one-click text on a wave', (await page.locator('.text-item').count()) === 3);
+
+// ---------- New effects, track mattes, audio-reactive ----------
+const snap = () => page.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.filter((_, i) => i % 4 !== 3 && i % 64 === 0)));
+const diff = (a, b) => a.reduce((n, v, i) => n + (Math.abs(v - b[i]) > 12 ? 1 : 0), 0);
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'talk.webm')]);
+await page.locator('.main-track .clip-item').first().waitFor();
+await seekTo(2);
+await settle();
+const plain = await snap();
+for (const name of ['Light rays', 'Turbulent warp', 'Fractal fog']) {
+  await openLib('Effects');
+  await seekTo(1); // effects start at the playhead
+  await page.locator('.fx-card', { hasText: name }).click();
+  // Effects ease in over their first moments: look a second later.
+  await seekTo(2);
+  await settle();
+  const after = await snap();
+  check(`effect: ${name} changes the picture`, diff(plain, after) > 30, `${diff(plain, after)} samples changed`);
+  await page.locator('.effect-item').last().click();
+  await page.keyboard.press('Delete');
+  await settle();
+}
+
+// Echo trails need movement and real frames: play the moving checkerboard clip.
+{
+  await openLib('Media');
+  await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'moving.webm')]);
+  await page.locator('.main-track .clip-item').nth(1).waitFor();
+  await seekTo(8.4);
+  await openLib('Effects');
+  await page.locator('.fx-card', { hasText: 'Echo trails' }).click();
+  await seekTo(8.6);
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(800);
+  await page.keyboard.press(' ');
+  await page.waitForTimeout(200);
+  const full = () => page.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(0, 0, c.width, c.height).data.filter((_, i) => i % 4 !== 3)));
+  const trails = await full();
+  await page.locator('.effect-item').last().click();
+  await page.keyboard.press('Delete');
+  await settle();
+  const still = await full();
+  check('effect: Echo trails leaves ghosts behind moving things', diff(still, trails) > 30, `${diff(still, trails)} pixels changed`);
+}
+
+// Track matte: video inside big letters.
+await openLib('Media');
+await page.locator('.asset', { hasText: 'moving' }).getByRole('button', { name: 'Add as picture-in-picture' }).click();
+await page.locator('.overlay-item').first().waitFor();
+await subTab('Layer');
+await details.getByRole('slider', { name: /Size/ }).first().fill('1').catch(() => {});
+await openLib('Text');
+await page.locator('.cc-library-body button', { hasText: 'Title' }).first().click();
+await page.locator('.text-item').first().waitFor();
+await settle();
+const withText = await snap();
+await page.locator('.overlay-item').first().click();
+await subTab('Cutout');
+await details.locator('summary', { hasText: 'Track matte' }).click();
+const matteSelect = details.getByRole('combobox', { name: 'Track matte' });
+await matteSelect.selectOption({ index: 1 });
+await settle();
+const matted = await snap();
+check('a track matte shows the layer only through the text', diff(withText, matted) > 50, `${diff(withText, matted)} samples changed`);
+await details.getByRole('group', { name: 'Matte mode' }).getByRole('button', { name: 'Outside' }).click();
+await settle();
+check('the matte can be inverted', diff(matted, await snap()) > 50);
+
+// Audio-reactive text on black, driven by the 120 BPM test song.
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'beat120.wav')]);
+await page.locator('.audio-item').first().waitFor();
+await openLib('Text');
+await page.locator('.cc-library-body button', { hasText: 'Title' }).first().click();
+await page.locator('.text-item').first().waitFor();
+await subTab('Animate');
+await details.getByRole('group', { name: 'Move with the music' }).getByRole('button', { name: 'Pulse' }).click();
+const sizes = [];
+for (const t of [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25]) {
+  await seekTo(t);
+  await page.waitForTimeout(250);
+  sizes.push(await lit());
+}
+const spread = Math.max(...sizes) / Math.max(1, Math.min(...sizes));
+check('audio-reactive text pulses with the beat', spread > 1.15, sizes.join(', '));
 
 // MORE CHECKS BELOW
 

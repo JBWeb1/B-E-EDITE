@@ -56,6 +56,8 @@ import {
   CropSection,
   GreenScreenSection,
   KeyframeTools,
+  MatteSection,
+  ReactSection,
   loadSavedLooks,
   MotionTrackSection,
   MaskSection,
@@ -1901,6 +1903,7 @@ export function VideoEditor({
                 trackWaiting={trackPick?.id === selectedOverlay.id}
                 onTrackStart={() => setTrackPick(trackPick ? null : { kind: 'overlay', id: selectedOverlay.id })}
                 onCutoutReady={(c, data) => engineRef.current?.addCutout(c, data)}
+                texts={project.texts}
               />
             ) : selectedAudio ? (
               <>
@@ -2368,6 +2371,7 @@ function ClipInspector({
         <>
           <TransformFields item={clip} base={base} local={local} mark={mark} onBase={(patch, live) => update(patch, live)} update={update} />
           <KeyframeTools item={clip} local={local} length={clipDuration(clip)} base={base} mark={mark} onSeekLocal={onSeekLocal} update={update} />
+          <ReactSection react={clip.react} update={update} />
         </>
       )}
 
@@ -2477,8 +2481,10 @@ function OverlayInspector({
   trackWaiting,
   onTrackStart,
   onCutoutReady,
+  texts,
 }: {
   o: OverlayClip;
+  texts: TextOverlay[];
   asset: MediaAsset;
   tracks: number[];
   local: number;
@@ -2545,6 +2551,7 @@ function OverlayInspector({
         <>
           <TransformFields item={o} base={base} local={local} mark={mark} onBase={(patch, live) => update(patch, live)} update={update} sizeRange={[0.05, 1.5]} />
           <KeyframeTools item={o} local={local} length={len} base={base} mark={mark} onSeekLocal={onSeekLocal} update={update} />
+          <ReactSection react={o.react} update={update} />
           <MotionTrackSection waiting={trackWaiting} tracked={(o.keys?.x?.length ?? 0) > 3} onStart={onTrackStart} onClear={() => update({ keys: { ...o.keys, x: undefined, y: undefined } })} />
         </>
       )}
@@ -2558,6 +2565,9 @@ function OverlayInspector({
               <StabilizeSection layer={o} asset={asset} update={update} />
             </Section>
           )}
+          <Section title="Track matte" defaultOpen={!!o.matte}>
+            <MatteSection matte={o.matte} texts={texts} update={update} />
+          </Section>
           <Section title="Faces" defaultOpen={!!o.faces}>
             <FacesSection layer={o} asset={asset} update={update} />
           </Section>
@@ -2823,6 +2833,7 @@ function TextInspector({
         <>
           <TransformFields item={text} base={base} local={local} mark={mark} onBase={(patch, live) => update(patch, live)} update={update} sizeLabel="Scale" sizeRange={[0, 4]} />
           <KeyframeTools item={text} local={local} length={text.duration} base={base} mark={mark} onSeekLocal={onSeekLocal} update={update} />
+          <ReactSection react={text.react} update={update} />
           <MotionTrackSection waiting={trackWaiting} tracked={(text.keys?.x?.length ?? 0) > 3} onStart={onTrackStart} onClear={() => update({ keys: { ...text.keys, x: undefined, y: undefined } })} />
         </>
       )}

@@ -1,4 +1,4 @@
-import { rampRate, sourceTimeAt, valueAt } from './anim';
+import { rampRate, sourceTimeAt, transformAt, valueAt } from './anim';
 import { denoiseFilters, pickMimeType, studioChain, watermarkBox } from './export';
 import type { VideoFormat } from './export';
 import { gradeFilterMarkup, gradeId, isNeutral } from './grade';
@@ -8,6 +8,8 @@ import { stabilizedRect } from './stabilize';
 import { boxAt } from './faces';
 import type { Box } from './faces';
 import { paintFaces } from './faceRun';
+import { envelope, levelAt, matteToMask, reactAt, reactSources } from './react';
+import { decodeMono } from '../lib/aiService';
 import { getMedia } from '../lib/projects';
 import { blendOp, blurSamples, clipFrame, cropRect, overlayFrame } from './layers';
 import type { LayerFrame } from './layers';
@@ -464,19 +466,129 @@ export class VideoEngine {
     // Upper video tracks, lowest first, so higher tracks cover lower ones.
     if (!p.tracks?.overlayHidden) {
       const layers = activeAt(p.overlays, this.time).sort((a, b) => trackOf(a) - trackOf(b));
-      for (const o of layers) this.drawOverlay(o, p);
+      for (const o of layers) {
+        if (o.matte) this.drawMatted(o, p);
+        else this.drawOverlay(o, p);
+      }
     }
     ctx.restore();
     this.drawEffects(fx);
 
     // Animations only run during playback so paused frames always show text clearly.
-    if (!p.tracks?.textHidden) for (const o of textsAt(p.texts, this.time)) this.drawTextLayer(o, W, H);
+    // Text used as a track matte only shapes its layer; it isn't drawn itself.
+    const mattes = new Set(p.overlays.flatMap((o) => (o.matte ? [o.matte.textId] : [])));
+    if (!p.tracks?.textHidden) for (const o of textsAt(p.texts, this.time)) if (!mattes.has(o.id)) this.drawTextLayer(o, W, H);
     if (p.watermark) this.drawWatermark(W, H);
     ctx.restore();
   }
 
+  private envs = new Map<string, Float32Array | 'loading'>();
+
+  /** Load everything frames depend on that loads in the background (music levels), before an export. */
+  async prepare(): Promise<void> {
+    const p = this.project;
+    if (!p) return;
+    const reacts = [...p.texts, ...p.overlays, ...p.clips].some((x) => x.react);
+    if (!reacts) return;
+    for (const id of reactSources(p.audio, p.clips, p.assets)) {
+      if (this.envs.get(id) instanceof Float32Array) continue;
+      const asset = p.assets.find((a) => a.id === id);
+      if (!asset) continue;
+      const samples = await decodeMono(asset.url, 8000);
+      this.envs.set(id, samples ? envelope(samples, 8000) : new Float32Array(0));
+    }
+  }
+
+  /** How loud the music is right now (0..1), for audio-reactive layers. Loads the sound once. */
+  private soundLevel(): number {
+    const p = this.project;
+    if (!p) return 0;
+    const ready = new Map<string, Float32Array>();
+    for (const id of reactSources(p.audio, p.clips, p.assets)) {
+      const e = this.envs.get(id);
+      if (e instanceof Float32Array) ready.set(id, e);
+      else if (!e) {
+        const asset = p.assets.find((a) => a.id === id);
+        if (!asset) continue;
+        this.envs.set(id, 'loading');
+        void decodeMono(asset.url, 8000).then((samples) => {
+          this.envs.set(id, samples ? envelope(samples, 8000) : new Float32Array(0));
+          if (!this.playing) this.draw();
+        });
+      }
+    }
+    return levelAt(this.time, p.audio, p.clips, ready);
+  }
+
+  /** A layer that moves with the music: its frame, changed by the sound level. */
+  private reacting<F extends { cx: number; cy: number; w: number; h: number; rotation: number; opacity: number }>(layer: LayerProps, f: F): F {
+    if (!layer.react || !this.project) return f;
+    const r = reactAt(layer.react, this.soundLevel(), this.time);
+    return { ...f, w: f.w * r.scale, h: f.h * r.scale, cx: f.cx + r.dx * this.project.width, cy: f.cy + r.dy * this.project.height, rotation: f.rotation + r.rotation, opacity: f.opacity * r.opacity };
+  }
+
+  /**
+   * Track matte: draw the layer on its own, keep it only where the matte (a text or
+   * shape item) is, by alpha or brightness, then put it on the frame.
+   */
+  private drawMatted(o: OverlayClip, p: VideoProject) {
+    const PW = this.canvas.width;
+    const PH = this.canvas.height;
+    const layer = this.scratch('matte-layer', PW, PH);
+    const lc = layer.getContext('2d', { willReadFrequently: false })!;
+    lc.setTransform(1, 0, 0, 1, 0, 0);
+    lc.globalCompositeOperation = 'source-over';
+    lc.clearRect(0, 0, PW, PH);
+    lc.setTransform(this.scale, 0, 0, this.scale, 0, 0);
+    const main = this.ctx;
+    this.ctx = lc;
+    try {
+      this.drawOverlay(o, p);
+    } finally {
+      this.ctx = main;
+    }
+    const mask = this.scratch('matte-mask', PW, PH);
+    const mc = mask.getContext('2d', { willReadFrequently: true })!;
+    mc.setTransform(1, 0, 0, 1, 0, 0);
+    mc.clearRect(0, 0, PW, PH);
+    const text = p.texts.find((t) => t.id === o.matte!.textId);
+    if (text && this.time >= text.start && this.time < text.start + text.duration) {
+      mc.setTransform(this.scale, 0, 0, this.scale, 0, 0);
+      drawTextItem(mc, { ...text, glow: null }, this.time, p.width, p.height, this.playing);
+      mc.setTransform(1, 0, 0, 1, 0, 0);
+    }
+    if (o.matte!.mode !== 'alpha') {
+      const img = mc.getImageData(0, 0, PW, PH);
+      matteToMask(img.data, o.matte!.mode);
+      mc.putImageData(img, 0, 0);
+    }
+    lc.setTransform(1, 0, 0, 1, 0, 0);
+    lc.globalCompositeOperation = 'destination-in';
+    lc.drawImage(mask, 0, 0);
+    lc.globalCompositeOperation = 'source-over';
+    main.save();
+    main.setTransform(1, 0, 0, 1, 0, 0);
+    main.drawImage(layer, 0, 0);
+    main.restore();
+  }
+
   private drawTextLayer(o: TextOverlay, W: number, H: number) {
     const ctx = this.ctx;
+    if (o.react) {
+      // Moves with the music: scale and turn around the item, shift, fade, glow.
+      const r = reactAt(o.react, this.soundLevel(), this.time);
+      const pos = transformAt(o, this.time - o.start, 1, { x: o.x, y: o.y });
+      ctx.save();
+      ctx.translate((pos.x + r.dx) * W, (pos.y + r.dy) * H);
+      ctx.rotate((r.rotation * Math.PI) / 180);
+      ctx.scale(r.scale, r.scale);
+      ctx.translate(-pos.x * W, -pos.y * H);
+      ctx.globalAlpha *= r.opacity;
+      if (r.glow > 0) ctx.filter = `drop-shadow(0 0 ${Math.round(r.glow * H * 0.03)}px ${o.color}) brightness(${1 + r.glow * 0.4})`;
+      drawTextItem(ctx, o, this.time, W, H, this.playing);
+      ctx.restore();
+      return;
+    }
     if (!o.motionBlur || !this.playing || !o.keys) {
       drawTextItem(ctx, o, this.time, W, H, this.playing);
       return;
@@ -777,6 +889,54 @@ export class VideoEngine {
 
   private fxCanvas = document.createElement('canvas');
   private tmpCanvas = document.createElement('canvas');
+  private echoFrames: { t: number; c: HTMLCanvasElement }[] = [];
+  private fogCanvases: HTMLCanvasElement[] | null = null;
+
+  /** Echo trails: earlier frames, fading, kept wherever they were brighter. */
+  private drawEcho(strength: number) {
+    const ctx = this.ctx;
+    // A jump in time (seek) starts a fresh trail.
+    const prev = this.echoFrames[this.echoFrames.length - 1];
+    if (prev && (this.time < prev.t || this.time - prev.t > 0.5)) this.echoFrames = [];
+    const last = this.echoFrames[this.echoFrames.length - 1];
+    const now = document.createElement('canvas');
+    now.width = this.canvas.width;
+    now.height = this.canvas.height;
+    now.getContext('2d')!.drawImage(this.canvas, 0, 0);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighten';
+    const n = this.echoFrames.length;
+    this.echoFrames.forEach((f, i) => {
+      ctx.globalAlpha = strength * Math.pow(0.7, n - i);
+      ctx.drawImage(f.c, 0, 0);
+    });
+    ctx.restore();
+    if (!last || this.time - last.t >= 1 / 20) this.echoFrames.push({ t: this.time, c: now });
+    if (this.echoFrames.length > 6) this.echoFrames.shift();
+  }
+
+  /** Soft noise pictures for the fog (made once): small random grids, scaled up smoothly. */
+  private fogLayers(): HTMLCanvasElement[] {
+    if (!this.fogCanvases) {
+      let seed = 11;
+      const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      this.fogCanvases = [[10, 6], [24, 14]].map(([w, h]) => {
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        const g = c.getContext('2d')!;
+        const img = g.createImageData(w, h);
+        for (let i = 0; i < w * h; i++) {
+          const v = Math.pow(rnd(), 1.6) * 255;
+          img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+          img.data[i * 4 + 3] = 255;
+        }
+        g.putImageData(img, 0, 0);
+        return c;
+      });
+    }
+    return this.fogCanvases;
+  }
   private grainCanvas: HTMLCanvasElement | null = null;
   private scanCanvas: HTMLCanvasElement | null = null;
 
@@ -846,6 +1006,58 @@ export class VideoEngine {
       ctx.globalAlpha = 0.55 * fx.glow;
       ctx.filter = `blur(${Math.round(PW / 90)}px) brightness(1.15)`;
       ctx.drawImage(c, 0, 0);
+      ctx.restore();
+    }
+    if (fx.turb > 0) {
+      // Turbulent warp: thin strips slid sideways by wandering waves (heat haze, underwater).
+      const c = this.copyFrame();
+      const strip = Math.max(2, Math.round(PH / 240));
+      const amp = fx.turb * PW * 0.014;
+      for (let y = 0; y < PH; y += strip) {
+        const v = y / PH;
+        const off = amp * (Math.sin(v * 19 + fx.turbPhase * 3.1) + 0.55 * Math.sin(v * 47 - fx.turbPhase * 5.3) + 0.3 * Math.sin(v * 97 + fx.turbPhase * 8.7));
+        ctx.drawImage(c, 0, y, PW, strip, off, y, PW, strip);
+      }
+    }
+    if (fx.echo > 0) this.drawEcho(fx.echo);
+    else this.echoFrames = [];
+    if (fx.rays > 0) {
+      // Light rays: the bright parts, smeared outwards from a point many times.
+      const small = this.scratch('rays', Math.max(2, Math.round(PW / 4)), Math.max(2, Math.round(PH / 4)));
+      const g = small.getContext('2d')!;
+      g.globalCompositeOperation = 'source-over';
+      g.filter = 'brightness(0.55) contrast(3.2) saturate(0.6)';
+      g.drawImage(this.canvas, 0, 0, small.width, small.height);
+      g.filter = 'none';
+      g.globalCompositeOperation = 'multiply';
+      g.fillStyle = '#ffe2a8';
+      g.fillRect(0, 0, small.width, small.height);
+      const ox = fx.raysX * PW;
+      const oy = fx.raysY * PH;
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      for (let i = 1; i <= 14; i++) {
+        const z = 1 + i * 0.045;
+        ctx.globalAlpha = fx.rays * 0.16 * (1 - i / 16);
+        ctx.drawImage(small, ox - ox * z, oy - oy * z, PW * z, PH * z);
+      }
+      ctx.restore();
+    }
+    if (fx.fog > 0) {
+      // Fractal fog: two layers of soft noise at different sizes, drifting slowly.
+      const layers = this.fogLayers();
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      layers.forEach((n, i) => {
+        const drift = fx.fogPhase * (0.04 + i * 0.03);
+        const w = PW * (1.5 - i * 0.2);
+        const h = PH * (1.5 - i * 0.2);
+        const x = -((Math.sin(drift) * 0.5 + 0.5) * (w - PW));
+        const y = -((Math.cos(drift * 0.7) * 0.5 + 0.5) * (h - PH));
+        ctx.globalAlpha = fx.fog * (0.55 - i * 0.15);
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(n, x, y, w, h);
+      });
       ctx.restore();
     }
     if (fx.leak > 0) {
@@ -1158,7 +1370,7 @@ export class VideoEngine {
       source,
       src: clip.stabilize ? stabilizedRect(crop, clip.stabilize, sourceTime) : crop,
       layer: clip,
-      frameAt: (t) => clipFrame(clip, asset, W, H, t, len > 0 ? t / len : 0),
+      frameAt: (t) => this.reacting(clip, clipFrame(clip, asset, W, H, t, len > 0 ? t / len : 0)),
       local,
       alpha,
       mirror: clip.mirror,
@@ -1205,7 +1417,7 @@ export class VideoEngine {
       full: { w: sw, h: sh },
       sourceTime,
       layer: o,
-      frameAt: (t) => overlayFrame(o, asset, p.width, p.height, t),
+      frameAt: (t) => this.reacting(o, overlayFrame(o, asset, p.width, p.height, t)),
       local,
       alpha: 1,
       rounded: o.rounded,
@@ -1222,6 +1434,7 @@ export class VideoEngine {
   async record(onProgress?: (fraction: number) => void, opts: RecordOptions = { fps: 30, bitrate: 8_000_000 }): Promise<Blob> {
     const p = this.project;
     if (!p || this.duration <= 0) throw new Error('Nothing to export yet');
+    await this.prepare();
     this.pause();
     this.ensureAudio();
     const prevScale = this.scale;
