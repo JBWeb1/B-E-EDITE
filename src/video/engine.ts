@@ -461,6 +461,12 @@ export class VideoEngine {
       } else if (source && asset) {
         this.drawMainClip(source, asset, hit.clip, alpha, local);
         if (!tr) this.takeSnapshot(hit.clip.id);
+      } else if (asset?.kind === 'video' && this.snapshotClipId === hit.clip.id) {
+        // The video is still seeking (e.g. just after Play): keep its last frame instead of flashing black.
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(this.snapshot, 0, 0);
+        ctx.restore();
       }
     }
 
