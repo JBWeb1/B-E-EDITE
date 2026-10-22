@@ -22,6 +22,7 @@ import {
   trimEnd,
   trimStart,
 } from './timeline';
+import { rollEdit, slideClip, slipClip } from './premiere';
 import type { AudioClip, Clip, EffectItem, OverlayClip, TextOverlay, TrackState, VideoProject } from './types';
 
 /** Height of one row in the text, effects, overlay and audio tracks. */
@@ -30,6 +31,15 @@ const LANE = 30;
 export const HEAD_W = 108;
 /** How close (in screen pixels) an edge must get to something before it snaps. */
 const SNAP_PX = 8;
+
+/** Timeline editing tool: select (move/trim), roll a cut, slip a clip's footage, slide a clip. */
+export type TrimTool = 'select' | 'roll' | 'slip' | 'slide';
+export const TRIM_TOOLS: { id: TrimTool; label: string; key: string; tip: string }[] = [
+  { id: 'select', label: 'Select', key: 'V', tip: 'Move and trim clips' },
+  { id: 'roll', label: 'Roll', key: 'N', tip: 'Drag a cut: one clip gets longer, the next shorter' },
+  { id: 'slip', label: 'Slip', key: 'Y', tip: 'Drag a clip to show an earlier or later part of its footage' },
+  { id: 'slide', label: 'Slide', key: 'U', tip: 'Drag a clip along between its neighbours' },
+];
 
 export type Selection = { kind: 'clip' | 'text' | 'audio' | 'overlay' | 'effect'; id: string } | null;
 
@@ -55,6 +65,8 @@ interface Props {
   onCommit: (fn: (p: VideoProject) => VideoProject) => void;
   /** The transition button between two clips was clicked (id of the incoming clip). */
   onTransitionClick: (clipId: string) => void;
+  /** Editing tool for main-track clips. */
+  tool?: TrimTool;
 }
 
 type Drag =
@@ -64,12 +76,14 @@ type Drag =
   | { kind: 'resize-range'; key: RangeKey; item: RangeItem; startX: number; cands: number[] }
   | { kind: 'move-free'; key: FreeKey; item: FreeItem; startX: number; startY: number; cands: number[] }
   | { kind: 'trim-free'; key: FreeKey; edge: 'start' | 'end'; item: FreeItem; startX: number; cands: number[] }
+  | { kind: 'roll' | 'slide'; index: number; clips: Clip[]; startX: number }
+  | { kind: 'slip'; clip: Clip; startX: number }
   | { kind: 'scrub' };
 
 const effectLabel = (type: EffectItem['type']) => EFFECTS.find((e) => e.type === type)?.label ?? type;
 const textLabel = (o: TextOverlay) => (o.shape ? `◆ ${o.shape}` : o.template ? `▣ ${o.text.split('\n')[0]}` : `T ${o.text}`);
 
-export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBegin, onChange, onCommit, onTransitionClick }: Props) {
+export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBegin, onChange, onCommit, onTransitionClick, tool = 'select' }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
@@ -142,6 +156,17 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
           d.edge === 'start'
             ? trimStart(d.clip, d.clip.in + dt * d.clip.speed)
             : trimEnd(d.clip, d.clip.out + dt * d.clip.speed, asset?.duration ?? Infinity);
+        onChange((p) => ({ ...p, clips: p.clips.map((c) => (c.id === next.id ? next : c)) }));
+        break;
+      }
+      case 'roll':
+        onChange((p) => ({ ...p, clips: rollEdit(d.clips, d.index, dt, p.assets) }));
+        break;
+      case 'slide':
+        onChange((p) => ({ ...p, clips: slideClip(d.clips, d.index, dt, p.assets) }));
+        break;
+      case 'slip': {
+        const next = slipClip(d.clip, -dt, assetOf(d.clip.assetId)?.duration ?? d.clip.out);
         onChange((p) => ({ ...p, clips: p.clips.map((c) => (c.id === next.id ? next : c)) }));
         break;
       }
@@ -381,14 +406,22 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
                   width: clipDuration(clip) * pps,
                   backgroundImage: asset?.thumbnail ? `url(${asset.thumbnail})` : undefined,
                 }}
-                onPointerDown={(e) =>
-                  begin(e, { kind: 'reorder', from: index, startX: e.clientX, moved: false }, { kind: 'clip', id: clip.id })
-                }
+                data-tool={tool}
+                onPointerDown={(e) => {
+                  const sel = { kind: 'clip' as const, id: clip.id };
+                  if (tool === 'slip') begin(e, { kind: 'slip', clip, startX: e.clientX }, sel);
+                  else if (tool === 'slide' && index > 0 && index < project.clips.length - 1)
+                    begin(e, { kind: 'slide', index, clips: project.clips, startX: e.clientX }, sel);
+                  else if (tool === 'roll') e.stopPropagation();
+                  else begin(e, { kind: 'reorder', from: index, startX: e.clientX, moved: false }, sel);
+                }}
               >
                 <span
                   className="edge start"
                   onPointerDown={(e) =>
-                    begin(e, { kind: 'trim-clip', edge: 'start', clip, startX: e.clientX }, { kind: 'clip', id: clip.id })
+                    tool === 'roll' && index > 0
+                      ? begin(e, { kind: 'roll', index, clips: project.clips, startX: e.clientX }, { kind: 'clip', id: clip.id })
+                      : begin(e, { kind: 'trim-clip', edge: 'start', clip, startX: e.clientX }, { kind: 'clip', id: clip.id })
                   }
                 />
                 <span className="clip-meta">
@@ -407,7 +440,9 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
                 <span
                   className="edge end"
                   onPointerDown={(e) =>
-                    begin(e, { kind: 'trim-clip', edge: 'end', clip, startX: e.clientX }, { kind: 'clip', id: clip.id })
+                    tool === 'roll' && index < project.clips.length - 1
+                      ? begin(e, { kind: 'roll', index: index + 1, clips: project.clips, startX: e.clientX }, { kind: 'clip', id: clip.id })
+                      : begin(e, { kind: 'trim-clip', edge: 'end', clip, startX: e.clientX }, { kind: 'clip', id: clip.id })
                   }
                 />
               </div>

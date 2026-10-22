@@ -278,7 +278,8 @@ export type EffectType =
   | 'light-rays'
   | 'turbulence'
   | 'echo'
-  | 'fractal-noise';
+  | 'fractal-noise'
+  | 'adjustment';
 
 /** A video effect applied to the whole frame for a stretch of time (its own track). */
 export interface EffectItem {
@@ -290,6 +291,9 @@ export interface EffectItem {
   intensity: number;
   /** How fast it moves (shake, particles), 1 = normal. */
   speed?: number;
+  /** Adjustment layer: colour changes applied to everything under it (strength = intensity). */
+  filters?: ClipFilters;
+  grade?: ColorGrade;
 }
 
 /** Per-track switches from the timeline's track headers. */

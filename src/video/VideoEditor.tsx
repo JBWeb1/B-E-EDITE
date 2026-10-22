@@ -77,8 +77,10 @@ import { pathToKeys, trackSequence } from './tracker';
 import { SFX_CATEGORIES, SOUND_EFFECTS, soundEffectFile } from './sfx';
 import type { SoundEffect } from './sfx';
 import { ANIMATORS, FONTS, SHAPE_ANIMS, SHAPES, TEMPLATES, textBounds, WORD_MODES } from './textfx';
-import { HEAD_W, Timeline } from './Timeline';
-import type { Selection } from './Timeline';
+import { HEAD_W, Timeline, TRIM_TOOLS } from './Timeline';
+import type { Selection, TrimTool } from './Timeline';
+import { colorStats, jCut, lCut, matchColor, splitAtSource } from './premiere';
+import { ColorMatchSection, ProEditSection, Scopes } from './ProTools';
 import {
   ASPECTS,
   beatTimes,
@@ -294,6 +296,8 @@ export function VideoEditor({
     detailsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }, [selection?.id]);
   const [pps, setPps] = useState(60);
+  const [trimTool, setTrimTool] = useState<TrimTool>('select');
+  const [showScopes, setShowScopes] = useState(false);
   const [tab, setTab] = useState<LibraryTab>('media');
   const [importing, setImporting] = useState(0);
   const [progress, setProgress] = useState<{ label: string; value: number } | null>(null);
@@ -815,9 +819,67 @@ export function VideoEditor({
   };
 
   const addEffect = (type: EffectType) => {
-    const fx = createEffect(type, now(), { duration: type === 'flash' ? 1 : isParticleEffect(type) ? 4 : 3 });
+    const base = createEffect(type, now(), { duration: type === 'flash' ? 1 : isParticleEffect(type) ? 4 : type === 'adjustment' ? 5 : 3 });
+    // An adjustment layer starts with a gentle punchy look so its effect is visible straight away.
+    const fx = type === 'adjustment' ? { ...base, intensity: 1, filters: { ...NEUTRAL_FILTERS, contrast: 1.15, saturation: 1.4 } } : base;
     set((p) => ({ ...p, effects: [...p.effects, fx] }));
     setSelection({ kind: 'effect', id: fx.id });
+  };
+
+  // ---------- Premiere-style tools ----------
+
+  /** J cut (sound starts early) or L cut (sound runs late) for a main-track clip. */
+  const splitSound = (kind: 'j' | 'l', clipId: string, seconds: number) => {
+    set((p) => {
+      const i = p.clips.findIndex((c) => c.id === clipId);
+      return kind === 'j' ? jCut(p, i, seconds) : lCut(p, i, seconds, p.assets);
+    });
+  };
+
+  /** Scene edit detection: split a clip wherever its picture suddenly changes. */
+  const splitAtScenes = async (clipId: string) => {
+    const clip = project.clips.find((c) => c.id === clipId);
+    const asset = clip && assetOf(clip.assetId);
+    if (!clip || asset?.kind !== 'video') return;
+    engineRef.current?.pause();
+    const rate = 10;
+    const times: number[] = [];
+    for (let t = clip.in; t <= clip.out + 1e-6; t += 1 / rate) times.push(t);
+    setProgress({ label: 'Finding scene changes…', value: 0 });
+    try {
+      const frames = await grabGrayFrames(asset.url, times, 64, 36, (v) => setProgress({ label: 'Finding scene changes…', value: v }));
+      const [{ findShots }, { motionScore }] = await Promise.all([import('./autoedit'), import('./ai')]);
+      const cuts = findShots(motionScore(frames), rate).map((t) => clip.in + t);
+      const next = splitAtSource(project.clips, clipId, cuts);
+      if (next.length === project.clips.length) alert('No scene changes found in this clip.');
+      else set((p) => ({ ...p, clips: splitAtSource(p.clips, clipId, cuts) }));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not read the clip');
+    } finally {
+      setProgress(null);
+    }
+  };
+
+  /** Colour match: make one clip's colours look like another's (compares their middle frames). */
+  const matchClipColor = async (clipId: string, referenceId: string) => {
+    const middle = async (c: Clip | undefined) => {
+      const a = c && assetOf(c.assetId);
+      if (!c || !a || (a.kind !== 'video' && a.kind !== 'image')) return null;
+      const { grabFrames } = await import('./faceRun');
+      const [img] = await grabFrames(a.url, a.kind, [(c.in + c.out) / 2], 160);
+      return img ? colorStats(img.data) : null;
+    };
+    setProgress({ label: 'Matching colour…', value: 0.3 });
+    try {
+      const [target, reference] = await Promise.all([middle(project.clips.find((c) => c.id === clipId)), middle(project.clips.find((c) => c.id === referenceId))]);
+      if (!target || !reference) return;
+      const m = matchColor(target, reference);
+      updateClip({ filters: m.filters, grade: m.grade }, false, clipId);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not read the clips');
+    } finally {
+      setProgress(null);
+    }
   };
 
   // Voice-over: record the microphone while the timeline plays, then drop it on the audio track.
@@ -1002,6 +1064,8 @@ export function VideoEditor({
         togglePositionKey();
       } else if (key === 'm' && !mod) {
         toggleMarkerHere();
+      } else if (!mod && TRIM_TOOLS.some((t) => t.key.toLowerCase() === key)) {
+        setTrimTool(TRIM_TOOLS.find((t) => t.key.toLowerCase() === key)!.id);
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         removeSelected();
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -1864,6 +1928,7 @@ export function VideoEditor({
                 <PenTool aspect={project.width / project.height} mode={pen} onDone={finishPen} onCancel={() => setPen(null)} />
               </CanvasCover>
             )}
+            {showScopes && <Scopes source={canvasRef} onClose={() => setShowScopes(false)} />}
             {showZones && (
               <CanvasCover canvasRef={canvasRef}>
                 <Suspense fallback={null}>
@@ -1907,6 +1972,9 @@ export function VideoEditor({
                   <option key={a.label} value={`${a.width}x${a.height}`}>{a.label}</option>
                 ))}
               </select>
+              <button className={`icon-btn ${showScopes ? 'on' : ''}`} onClick={() => setShowScopes((v) => !v)} title="Colour scopes: waveform, vectorscope and histogram" aria-label="Colour scopes" aria-pressed={showScopes}>
+                <Icon name="chart" />
+              </button>
               <button className="icon-btn" onClick={toggleFullscreen} title="Full screen" aria-label="Full screen">
                 <Icon name="fullscreen" />
               </button>
@@ -1936,6 +2004,17 @@ export function VideoEditor({
                 onSaveLook={saveCurrentLook}
                 onCutoutReady={(c, data) => engineRef.current?.addCutout(c, data)}
                 onFollow={(trackId, kind) => followFace(selectedClip.id, trackId, kind)}
+                proEdit={
+                  <ProEditSection
+                    canJ={project.clips[0]?.id !== selectedClip.id}
+                    canL={project.clips[project.clips.length - 1]?.id !== selectedClip.id}
+                    isVideo={assetOf(selectedClip.assetId)?.kind === 'video'}
+                    onJ={(s) => splitSound('j', selectedClip.id, s)}
+                    onL={(s) => splitSound('l', selectedClip.id, s)}
+                    onScenes={() => void splitAtScenes(selectedClip.id)}
+                  />
+                }
+                colorMatch={<ColorMatchSection clip={selectedClip} clips={project.clips} assets={project.assets} onMatch={(ref) => void matchClipColor(selectedClip.id, ref)} />}
               />
             ) : selectedText ? (
               <TextInspector
@@ -1966,6 +2045,24 @@ export function VideoEditor({
                 <RangeField label="Strength" value={selectedEffect.intensity} min={0.1} max={1} step={0.01} onStart={mark} onChange={(v) => updateEffect({ intensity: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
                 {['shake', 'glitch', 'light-leak', 'chromatic', ...EFFECTS.filter((e) => isParticleEffect(e.type)).map((e) => e.type)].includes(selectedEffect.type) && (
                   <RangeField label="Speed" value={selectedEffect.speed ?? 1} min={0.2} max={3} step={0.05} onStart={mark} onChange={(v) => updateEffect({ speed: v }, true)} format={(v) => `${v.toFixed(2)}×`} />
+                )}
+                {selectedEffect.type === 'adjustment' && (
+                  <>
+                    <p className="hint">Changes the colour of every layer under it while it's on the timeline. Strength mixes it in.</p>
+                    <Section title="Filters" defaultOpen>
+                      <div className="grid3">
+                        {FILTER_PRESETS.map((pr) => (
+                          <button key={pr.label} className={sameFilters(selectedEffect.filters ?? NEUTRAL_FILTERS, pr.filters) ? 'active' : ''} onClick={() => updateEffect({ filters: pr.filters })}>
+                            {pr.label}
+                          </button>
+                        ))}
+                      </div>
+                      <FilterSliders filters={selectedEffect.filters ?? NEUTRAL_FILTERS} mark={mark} onChange={(patch) => updateEffect({ filters: { ...(selectedEffect.filters ?? NEUTRAL_FILTERS), ...patch } }, true)} />
+                    </Section>
+                    <Section title="Colour grading">
+                      <ColorSection grade={selectedEffect.grade} mark={mark} onChange={(grade: ColorGrade | null, live) => updateEffect({ grade: grade ?? undefined }, live)} />
+                    </Section>
+                  </>
                 )}
                 <div className="grid2">
                   <NumberField label="Start (s)" value={selectedEffect.start} min={0} step={0.1} onChange={(v) => updateEffect({ start: v })} />
@@ -2128,6 +2225,13 @@ export function VideoEditor({
             <Icon name="diamond" />
           </button>
         </div>
+        <div className="trim-tools" role="group" aria-label="Timeline tool">
+          {TRIM_TOOLS.map((t) => (
+            <button key={t.id} className={trimTool === t.id ? 'active' : ''} aria-pressed={trimTool === t.id} onClick={() => setTrimTool(t.id)} title={`${t.tip} (${t.key})`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
         <div className="cc-tools end">
           <button className="icon-btn" onClick={() => setPps((v) => Math.max(10, Math.round(v / 1.4)))} title="Zoom out" aria-label="Zoom out timeline">
             <Icon name="minus" size={16} />
@@ -2153,6 +2257,7 @@ export function VideoEditor({
         onChange={setTransient}
         onCommit={set}
         onTransitionClick={onTransitionClick}
+        tool={trimTool}
       />
 
       {showLook && <LookSettings onClose={() => setShowLook(false)} />}
@@ -2355,7 +2460,11 @@ function ClipInspector({
   onSaveLook,
   onCutoutReady,
   onFollow,
+  proEdit,
+  colorMatch,
 }: {
+  proEdit?: ReactNode;
+  colorMatch?: ReactNode;
   clip: Clip;
   asset: MediaAsset | undefined;
   isFirst: boolean;
@@ -2412,6 +2521,7 @@ function ClipInspector({
           </label>
           <RangeField label="Fade in" value={clip.fadeIn} min={0} max={maxFade} step={0.1} onStart={mark} onChange={(v) => update({ fadeIn: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
           <RangeField label="Fade out" value={clip.fadeOut} min={0} max={maxFade} step={0.1} onStart={mark} onChange={(v) => update({ fadeOut: v }, true)} format={(v) => `${v.toFixed(1)}s`} />
+          {proEdit && <Section title="Pro edit: J/L cuts and scenes">{proEdit}</Section>}
           {isVideo && asset && (
             <Section title="Stabilise" defaultOpen={!!clip.stabilize}>
               <StabilizeSection layer={clip} asset={asset} update={update} />
@@ -2546,6 +2656,7 @@ function ClipInspector({
           <Section title="Colour grading" defaultOpen>
             <ColorSection grade={clip.grade} mark={mark} onChange={(grade: ColorGrade | null, live) => update({ grade }, live)} />
           </Section>
+          {colorMatch && <Section title="Colour match">{colorMatch}</Section>}
           <button className="block" onClick={onSaveLook}>
             Save as my look
           </button>

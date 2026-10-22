@@ -472,6 +472,7 @@ export const EFFECTS: { type: EffectType; label: string; hint: string; group: Ef
   { type: 'turbulence', label: 'Turbulent warp', hint: 'Wavy heat-haze / underwater distortion', group: 'Motion' },
   { type: 'echo', label: 'Echo trails', hint: 'Ghostly trails behind anything that moves', group: 'Motion' },
   { type: 'fractal-noise', label: 'Fractal fog', hint: 'Drifting smoke and fog', group: 'Look' },
+  { type: 'adjustment', label: 'Adjustment layer', hint: 'Colour and filters for every layer under it', group: 'Look' },
   { type: 'vignette', label: 'Vignette', hint: 'Darker edges', group: 'Look' },
   { type: 'grain', label: 'Film grain', hint: 'Old film texture', group: 'Look' },
   { type: 'vhs', label: 'VHS', hint: 'Retro tape lines', group: 'Look' },

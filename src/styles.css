@@ -5785,3 +5785,72 @@ button.link {
 .corner-picker .pen-line {
   fill: rgba(251, 191, 36, 0.12);
 }
+
+/* Premiere-style tools */
+.trim-tools {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.05));
+}
+.trim-tools button {
+  padding: 3px 9px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+}
+.trim-tools button.active {
+  background: var(--accent, #22d3ee);
+  color: #04121a;
+}
+.clip-item[data-tool='slip'],
+.clip-item[data-tool='slide'] {
+  cursor: ew-resize;
+}
+.clip-item[data-tool='roll'] .edge {
+  cursor: col-resize;
+  background: rgba(250, 204, 21, 0.7);
+}
+.scopes {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 6;
+  padding: 6px;
+  border-radius: 10px;
+  background: rgba(8, 12, 20, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.scopes-head {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.scopes-head button {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+.scopes-head button.active {
+  background: var(--accent, #22d3ee);
+  color: #04121a;
+}
+.scopes-close {
+  margin-left: auto;
+}
+.scopes canvas {
+  display: block;
+  width: 280px;
+  height: 150px;
+  border-radius: 6px;
+}
+@media (max-width: 700px) {
+  .scopes canvas {
+    width: 200px;
+    height: 107px;
+  }
+}

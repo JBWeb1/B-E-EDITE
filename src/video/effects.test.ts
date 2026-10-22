@@ -24,7 +24,8 @@ describe('effects', () => {
   });
 
   it('every effect type changes the frame while active and nothing outside it', () => {
-    for (const { type } of EFFECTS) {
+    // Adjustment layers recolour the frame in the engine, not through effectFrame.
+    for (const { type } of EFFECTS.filter((x) => x.type !== 'adjustment')) {
       const e = createEffect(type, 1, { intensity: 1 });
       expect(effectFrame([e], 0.5)).toEqual(NO_EFFECT);
       expect(effectFrame([e], 4)).toEqual(NO_EFFECT);

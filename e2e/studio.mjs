@@ -388,6 +388,133 @@ await page.getByRole('button', { name: 'Done', exact: true }).click();
 await settle();
 check('corners can be fine-tuned by dragging', (await redBox()).n > followed.n * 1.2, `${followed.n} → ${(await redBox()).n} red pixels`);
 
+// ---------- Premiere tools: scene detection, roll/slip/slide, J/L cuts, adjustment layers, scopes, colour match ----------
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'scenes.webm')]);
+await page.locator('.main-track .clip-item').first().waitFor();
+const clipBoxes = async () => {
+  const out = [];
+  for (const b of await page.locator('.main-track .clip-item').all()) out.push(await b.boundingBox());
+  return out;
+};
+await page.locator('.main-track .clip-item').first().click();
+await details.locator('summary', { hasText: 'Pro edit' }).click();
+await details.getByRole('button', { name: '✂️ Split at scene changes' }).click();
+await page.locator('.main-track .clip-item').nth(2).waitFor({ timeout: 60000 });
+const scenes = await clipBoxes();
+check('scene edit detection splits at the camera cuts', scenes.length === 3 && Math.abs(scenes[0].width - scenes[1].width) < 6, scenes.map((b) => Math.round(b.width)).join(','));
+
+// Ruler click = seek; returns the colour in the middle-left of the picture.
+const seekX = async (x) => {
+  const r = await page.locator('.ruler').boundingBox();
+  await page.mouse.click(x, r.y + r.height / 2);
+  await settle();
+  return px(0.1, 0.85);
+};
+const total = (bs) => bs.reduce((s, b) => s + b.width, 0);
+
+await page.evaluate(() => document.activeElement?.blur?.());
+await page.keyboard.press('y');
+check('Y picks the slip tool', (await page.getByRole('group', { name: 'Timeline tool' }).getByRole('button', { name: 'Slip' }).getAttribute('aria-pressed')) === 'true');
+const startColour = await seekX(scenes[1].x + 3);
+await page.mouse.move(scenes[1].x + scenes[1].width / 2, scenes[1].y + scenes[1].height / 2);
+await page.mouse.down();
+await page.mouse.move(scenes[1].x + scenes[1].width / 2 + 40, scenes[1].y + scenes[1].height / 2, { steps: 5 });
+await page.mouse.up();
+const slipped = await clipBoxes();
+const slipColour = await seekX(slipped[1].x + 3);
+check('slip shows other footage without moving the clip', Math.abs(slipped[1].x - scenes[1].x) < 1 && Math.abs(slipped[1].width - scenes[1].width) < 1 && startColour.join() !== slipColour.join(), `${startColour} → ${slipColour}`);
+await page.keyboard.press('Control+z');
+await settle();
+
+await page.getByRole('group', { name: 'Timeline tool' }).getByRole('button', { name: 'Roll' }).click();
+{
+  const b = (await clipBoxes())[0];
+  // Grab the edge near its top: the transition button sits over the middle of the cut.
+  await page.mouse.move(b.x + b.width - 3, b.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width + 20, b.y + 5, { steps: 5 });
+  await page.mouse.up();
+}
+const rolled = await clipBoxes();
+check('roll moves a cut and keeps the length', rolled[0].width > scenes[0].width + 10 && rolled[1].width < scenes[1].width - 10 && Math.abs(total(rolled) - total(scenes)) < 2, rolled.map((b) => Math.round(b.width)).join(','));
+await page.keyboard.press('Control+z');
+await settle();
+
+await page.keyboard.press('u');
+{
+  const b = (await clipBoxes())[1];
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2 + 20, b.y + b.height / 2, { steps: 5 });
+  await page.mouse.up();
+}
+const slid = await clipBoxes();
+check('slide moves a clip between its neighbours', slid[1].x > scenes[1].x + 10 && Math.abs(slid[1].width - scenes[1].width) < 1 && slid[2].width < scenes[2].width - 10 && Math.abs(total(slid) - total(scenes)) < 2, slid.map((b) => Math.round(b.width)).join(','));
+await page.keyboard.press('Control+z');
+await page.keyboard.press('v');
+await settle();
+
+await page.locator('.main-track .clip-item').nth(1).click();
+await subTab('Video');
+await details.locator('summary', { hasText: 'Pro edit' }).click().catch(() => {});
+await details.getByRole('button', { name: 'J cut' }).click();
+await page.locator('.audio-item').first().waitFor();
+{
+  const a = await page.locator('.audio-item').first().boundingBox();
+  const c = (await clipBoxes())[1];
+  check('a J cut starts the next sound early', a.x < c.x - 10, `audio at ${Math.round(a.x)}, picture at ${Math.round(c.x)}`);
+}
+await page.keyboard.press('Control+z');
+
+// Adjustment layer over the second (orange) scene.
+const mid = await clipBoxes();
+const unadjusted = await seekX(mid[1].x + mid[1].width / 2);
+await openLib('Effects');
+await page.locator('.fx-card', { hasText: 'Adjustment layer' }).click();
+await settle();
+const adjusted = await px(0.1, 0.85);
+check('an adjustment layer recolours what is under it', adjusted.join() !== unadjusted.join(), `${unadjusted} → ${adjusted}`);
+await details.getByRole('button', { name: 'Mono', exact: true }).click();
+await settle();
+const mono = await px(0.1, 0.85);
+check('adjustment layer filters (Mono)', Math.abs(mono[0] - mono[1]) < 12 && Math.abs(mono[1] - mono[2]) < 12, mono.join(','));
+await page.keyboard.press('Delete');
+await settle();
+
+await page.getByRole('button', { name: 'Colour scopes' }).click();
+const scopes = page.getByRole('region', { name: 'Colour scopes' });
+await scopes.waitFor();
+await page.waitForTimeout(500);
+const scopeInk = () =>
+  page.getByTestId('scope-canvas').evaluate((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 200) n++;
+    return n;
+  });
+const wave = await scopeInk();
+await scopes.getByRole('button', { name: 'Vectorscope' }).click();
+await page.waitForTimeout(450);
+const vec = await scopeInk();
+await scopes.getByRole('button', { name: 'Histogram' }).click();
+await page.waitForTimeout(450);
+const hist = await scopeInk();
+check('colour scopes draw (waveform, vectorscope, histogram)', wave > 20 && vec > 5 && hist > 20, `${wave}/${vec}/${hist}`);
+await scopes.getByRole('button', { name: 'Close scopes' }).click();
+
+// Colour match the blue first scene to the green last one.
+const blueBefore = await seekX(mid[0].x + mid[0].width / 2);
+await page.locator('.main-track .clip-item').first().click();
+await subTab('Color');
+await details.locator('summary', { hasText: 'Colour match' }).click();
+await details.getByRole('combobox', { name: 'Reference clip' }).selectOption({ index: 1 });
+await details.getByRole('button', { name: '🎨 Match colour' }).click();
+await page.waitForTimeout(1500);
+const blueAfter = await seekX(mid[0].x + mid[0].width / 2);
+const greenness = (c) => c[1] / Math.max(1, c[0] + c[1] + c[2]);
+check('colour match moves a clip towards the other clip', greenness(blueAfter) > greenness(blueBefore) + 0.05, `${blueBefore} → ${blueAfter}`);
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

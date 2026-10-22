@@ -32,7 +32,7 @@ import {
   transitionAt,
 } from './timeline';
 import type { EffectFrame } from './timeline';
-import type { Clip, Cutout, LayerProps, MediaAsset, OverlayClip, TextOverlay, VideoProject } from './types';
+import type { Clip, Cutout, EffectItem, LayerProps, MediaAsset, OverlayClip, TextOverlay, VideoProject } from './types';
 
 /** Seconds of drift allowed between the clock and a playing media element before re-seeking. */
 const DRIFT_TOLERANCE = 0.3;
@@ -473,6 +473,10 @@ export class VideoEngine {
       }
     }
     ctx.restore();
+    // Adjustment layers recolour everything drawn so far.
+    if (!p.tracks?.effectsHidden) {
+      for (const a of p.effects ?? []) if (a.type === 'adjustment' && this.time >= a.start && this.time < a.start + a.duration) this.drawAdjustment(a);
+    }
     this.drawEffects(fx);
 
     // Animations only run during playback so paused frames always show text clearly.
@@ -952,6 +956,20 @@ export class VideoEngine {
     g.clearRect(0, 0, c.width, c.height);
     g.drawImage(this.canvas, 0, 0);
     return c;
+  }
+
+  /** Redraw the frame through an adjustment layer's filters and grade, mixed by its strength. */
+  private drawAdjustment(a: EffectItem) {
+    const filter = [this.gradeFilter({ grade: a.grade } as LayerProps), cssFilter(a.filters)].filter((f) => f && f !== 'none').join(' ');
+    if (!filter || a.intensity <= 0) return;
+    const ctx = this.ctx;
+    const c = this.copyFrame();
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = Math.min(1, a.intensity);
+    ctx.filter = filter;
+    ctx.drawImage(c, 0, 0);
+    ctx.restore();
   }
 
   /** Paint the frame-wide effects. Works in device pixels. */

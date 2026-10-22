@@ -190,6 +190,12 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - **Move with the music** (Animate tab, clips, layers and text): Pulse, Bounce, Flicker, Shake or Glow in time with the song on the audio track
 - **More effects**: Light rays (god rays), Turbulent warp (heat haze / underwater), Echo trails and Fractal fog
 - **📱 Screen replacement** (layer → Cutout): click the four corners of a phone, TV, laptop or sign, press **Track the screen**, and your video or photo stays stuck to it with perspective as the camera moves. Drag the corners to fine-tune. (Motion tracking is now sub-pixel accurate too)
+- **Premiere-style trimming** (tool buttons above the timeline, or keys **V** select, **N** roll, **Y** slip, **U** slide): **roll** a cut (one clip longer, the next shorter), **slip** a clip to show earlier or later footage in the same spot, **slide** a clip between its neighbours. The main track already ripples (no gaps)
+- **J and L cuts** (clip → Video → Pro edit): hear the next scene before you see it, or keep hearing a clip over the next picture; the sound moves to the audio track and the other clip dips quietly under it
+- **✂️ Split at scene changes** (clip → Video → Pro edit): finds the camera cuts inside a long clip and splits it there (scene edit detection)
+- **Adjustment layers** (Effects tab): filters and colour grading for every layer under it, for as long as it sits on the timeline; Strength mixes it in
+- **Colour scopes** (chart button on the player): live waveform, vectorscope and RGB histogram
+- **🎨 Colour match** (clip → Color): make a clip's brightness, contrast, saturation and colour cast match another clip
 - **⚡ Fast export**: decodes your videos and draws every frame on its own with the browser's video encoder (WebCodecs), so it is usually several times faster than real time, never drops a frame and keeps going in a background tab. Cancel any time. Older browsers record in real time instead
 - **Beat markers**: select a song and press **Find beats**; the beats show on the timeline and clip edges snap to them. **Fit clips to the beat** trims or stretches every clip so each cut lands on a beat. Drop your own **markers** with **M** (double-click one to remove it)
 - **Custom speed curve**: besides the speed ramp presets, draw your own curve: drag points up to speed up, down for slow motion
