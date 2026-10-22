@@ -9,6 +9,7 @@ import { boxAt } from './faces';
 import type { Box } from './faces';
 import { paintFaces } from './faceRun';
 import { envelope, levelAt, matteToMask, reactAt, reactSources } from './react';
+import { drawQuad, quadAt } from './cornerPin';
 import { decodeMono } from '../lib/aiService';
 import { getMedia } from '../lib/projects';
 import { blendOp, blurSamples, clipFrame, cropRect, overlayFrame } from './layers';
@@ -1411,6 +1412,19 @@ export class VideoEngine {
     const local = this.time - o.start;
     const sourceTime = asset.kind === 'video' ? (o.reverse ? o.out - local : o.in + local) : 0;
     const crop = cropRect(sw, sh, o.crop);
+    if (o.pin && o.pin.quads.length) {
+      // Screen replacement: the picture goes onto the tracked corners, with perspective.
+      const q = quadAt(o.pin, local).map(([x, y]) => [x * p.width, y * p.height]) as [number, number][];
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.globalAlpha *= o.opacity;
+      const filter = [this.gradeFilter(o), cssFilter(o.filters)].filter((f) => f && f !== 'none').join(' ');
+      if (filter) ctx.filter = filter;
+      ctx.globalCompositeOperation = blendOp(o.blend);
+      drawQuad(ctx, source, crop, q as [[number, number], [number, number], [number, number], [number, number]]);
+      ctx.restore();
+      return;
+    }
     this.paintLayer({
       source,
       src: o.stabilize ? stabilizedRect(crop, o.stabilize, sourceTime) : crop,

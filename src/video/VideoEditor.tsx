@@ -36,6 +36,9 @@ import { fastExport } from './fastExport';
 import { FacesSection, SmartCutoutSection, StabilizeSection, StudioSoundSection } from './SmartTools';
 import { followKeys } from './faces';
 import { PenTool } from './PenTool';
+import { CornerPicker } from './CornerPicker';
+import { nudgeCorner, quadAt, steadyCorners } from './cornerPin';
+import type { Quad } from './cornerPin';
 import { fromFrame, PATH_PRESETS } from './vectorPath';
 import type { PathPoint } from './vectorPath';
 import { FontPicker } from '../ui/FontPicker';
@@ -305,6 +308,8 @@ export function VideoEditor({
   const [screenRecOpen, setScreenRecOpen] = useState(false);
   const [exported, setExported] = useState<File | null>(null);
   const [pen, setPen] = useState<'shape' | 'text' | null>(null);
+  /** Screen replacement on the player: placing the 4 corners of a layer, or adjusting them. */
+  const [corners, setCorners] = useState<{ id: string; mode: 'place' | 'adjust' } | null>(null);
   const [preflight, setPreflight] = useState(false);
   const [recipesOpen, setRecipesOpen] = useState(false);
   const [postKit, setPostKit] = useState(false);
@@ -1035,6 +1040,65 @@ export function VideoEditor({
    * Motion tracking: follow the point (px, py) (fractions of the frame) through the main
    * clip from the playhead, and write position keyframes so the item moves with it.
    */
+  /** Follow a pinned layer's four corners through the main-track video under it. */
+  const trackPin = async (id: string) => {
+    const o = project.overlays.find((x) => x.id === id);
+    if (!o?.pin) return;
+    const W = project.width;
+    const H = project.height;
+    const t0 = Math.max(o.start, time);
+    const hit = locate(project.clips, t0);
+    const asset = hit && assetOf(hit.clip.assetId);
+    if (!hit || asset?.kind !== 'video' || !asset.width || !asset.height) {
+      alert('Put the playhead over the video with the screen in it (on the main track), then try again.');
+      return;
+    }
+    const t1 = Math.min(o.start + o.out - o.in, hit.end);
+    if (t1 - t0 < 0.2) {
+      alert('Move the playhead to where the layer starts on that video.');
+      return;
+    }
+    const clip = hit.clip;
+    const len = clipDuration(clip);
+    const frameAt = (t: number) => clipFrame(clip, asset, W, H, t - hit.start, (t - hit.start) / len);
+    const src = cropRect(asset.width, asset.height, clip.crop);
+    const gw = 320;
+    const gh = Math.max(2, Math.round((gw * asset.height) / asset.width));
+    const toSource = (x: number, y: number, t: number) => {
+      const f = frameAt(t);
+      let u = (x * W - (f.cx - f.w / 2)) / f.w;
+      const v = (y * H - (f.cy - f.h / 2)) / f.h;
+      if (clip.mirror) u = 1 - u;
+      return { x: ((src.sx + u * src.sw) / asset.width!) * gw, y: ((src.sy + v * src.sh) / asset.height!) * gh };
+    };
+    const fromSource = (sx: number, sy: number, t: number): [number, number] => {
+      const f = frameAt(t);
+      let u = ((sx / gw) * asset.width! - src.sx) / src.sw;
+      const v = ((sy / gh) * asset.height! - src.sy) / src.sh;
+      if (clip.mirror) u = 1 - u;
+      return [(f.cx - f.w / 2 + u * f.w) / W, (f.cy - f.h / 2 + v * f.h) / H];
+    };
+    const rate = 15;
+    const times: number[] = [];
+    for (let t = t0; t <= t1 + 1e-6; t += 1 / rate) times.push(t);
+    engineRef.current?.pause();
+    setProgress({ label: 'Tracking the screen…', value: 0 });
+    try {
+      const frames = await grabGrayFrames(asset.url, times.map((t) => sourceTimeAt(clip, t - hit.start)), gw, gh, (v) => setProgress({ label: 'Tracking the screen…', value: v * 0.9 }));
+      const start = quadAt(o.pin, t0 - o.start);
+      const paths = start.map(([x, y]) => {
+        const p0 = toSource(x, y, t0);
+        return trackSequence(frames, p0.x, p0.y, { patch: 13, search: 16 });
+      });
+      const quads = steadyCorners(times.map((t, i) => paths.map((path) => fromSource(path[i].x, path[i].y, t)) as Quad));
+      updateItem('overlays', id, { pin: { from: t0 - o.start, rate, quads } });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Tracking failed');
+    } finally {
+      setProgress(null);
+    }
+  };
+
   const runTrack = async (target: { kind: 'text' | 'overlay'; id: string }, px: number, py: number) => {
     const W = project.width;
     const H = project.height;
@@ -1774,6 +1838,27 @@ export function VideoEditor({
               onPointerUp={() => (dragRef.current = null)}
             />
             {project.clips.length === 0 && project.texts.length === 0 && project.overlays.length === 0 && <div className="preview-empty">Import a video or photo to get started</div>}
+            {corners && (
+              <CanvasCover canvasRef={canvasRef}>
+                <CornerPicker
+                  aspect={project.width / project.height}
+                  quad={corners.mode === 'adjust' ? (() => {
+                    const o = project.overlays.find((x) => x.id === corners.id);
+                    return o?.pin ? quadAt(o.pin, time - o.start) : null;
+                  })() : null}
+                  onPlace={(q) => {
+                    const o = project.overlays.find((x) => x.id === corners.id);
+                    if (o) updateItem('overlays', o.id, { pin: { from: Math.max(0, time - o.start), rate: 1, quads: [q] } });
+                    setCorners(null);
+                  }}
+                  onNudge={(corner, dx, dy, done) => {
+                    if (done) return;
+                    setTransient((p) => ({ ...p, overlays: p.overlays.map((x) => (x.id === corners.id && x.pin ? { ...x, pin: nudgeCorner(x.pin, corner, dx, dy) } : x)) }));
+                  }}
+                  onClose={() => setCorners(null)}
+                />
+              </CanvasCover>
+            )}
             {pen && (
               <CanvasCover canvasRef={canvasRef}>
                 <PenTool aspect={project.width / project.height} mode={pen} onDone={finishPen} onCancel={() => setPen(null)} />
@@ -1904,6 +1989,11 @@ export function VideoEditor({
                 onTrackStart={() => setTrackPick(trackPick ? null : { kind: 'overlay', id: selectedOverlay.id })}
                 onCutoutReady={(c, data) => engineRef.current?.addCutout(c, data)}
                 texts={project.texts}
+                onPin={(action) => {
+                  engineRef.current?.pause();
+                  if (action === 'track') void trackPin(selectedOverlay.id);
+                  else setCorners({ id: selectedOverlay.id, mode: action });
+                }}
               />
             ) : selectedAudio ? (
               <>
@@ -2482,9 +2572,11 @@ function OverlayInspector({
   onTrackStart,
   onCutoutReady,
   texts,
+  onPin,
 }: {
   o: OverlayClip;
   texts: TextOverlay[];
+  onPin: (action: 'place' | 'adjust' | 'track') => void;
   asset: MediaAsset;
   tracks: number[];
   local: number;
@@ -2565,6 +2657,28 @@ function OverlayInspector({
               <StabilizeSection layer={o} asset={asset} update={update} />
             </Section>
           )}
+          <Section title="Screen replacement" defaultOpen={!!o.pin}>
+            {!o.pin ? (
+              <>
+                <p className="hint">Put this layer on a phone, TV, laptop or sign in the video: click its four corners, then track them so the picture stays stuck to the screen.</p>
+                <button className="block primary" onClick={() => (mark(), onPin('place'))}>
+                  📱 Place on 4 corners
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="hint">{o.pin.quads.length > 1 ? `Tracked through ${(o.pin.quads.length / o.pin.rate).toFixed(1)} s.` : 'Placed. Track it so it follows the screen as the camera moves.'}</p>
+                <div className="row">
+                  <button className="primary" onClick={() => onPin('track')}>Track the screen</button>
+                  <button onClick={() => (mark(), onPin('adjust'))}>Adjust corners</button>
+                </div>
+                <div className="row">
+                  <button onClick={() => (mark(), onPin('place'))}>Place again</button>
+                  <button onClick={() => update({ pin: null })}>Remove</button>
+                </div>
+              </>
+            )}
+          </Section>
           <Section title="Track matte" defaultOpen={!!o.matte}>
             <MatteSection matte={o.matte} texts={texts} update={update} />
           </Section>

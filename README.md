@@ -189,6 +189,7 @@ npm run test:e2e:unique # browser test for pre-flight check, recipes, post kit, 
 - **Track mattes** (layer → Cutout → Track matte): show a video or photo layer only through a text or shape (video inside big letters), or cut the text out of it; by shape (alpha) or brightness (luma)
 - **Move with the music** (Animate tab, clips, layers and text): Pulse, Bounce, Flicker, Shake or Glow in time with the song on the audio track
 - **More effects**: Light rays (god rays), Turbulent warp (heat haze / underwater), Echo trails and Fractal fog
+- **📱 Screen replacement** (layer → Cutout): click the four corners of a phone, TV, laptop or sign, press **Track the screen**, and your video or photo stays stuck to it with perspective as the camera moves. Drag the corners to fine-tune. (Motion tracking is now sub-pixel accurate too)
 - **⚡ Fast export**: decodes your videos and draws every frame on its own with the browser's video encoder (WebCodecs), so it is usually several times faster than real time, never drops a frame and keeps going in a background tab. Cancel any time. Older browsers record in real time instead
 - **Beat markers**: select a song and press **Find beats**; the beats show on the timeline and clip edges snap to them. **Fit clips to the beat** trims or stretches every clip so each cut lands on a beat. Drop your own **markers** with **M** (double-click one to remove it)
 - **Custom speed curve**: besides the speed ramp presets, draw your own curve: drag points up to speed up, down for slow motion

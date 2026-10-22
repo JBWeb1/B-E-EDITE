@@ -5772,3 +5772,16 @@ button.link {
   font-size: 12px;
   white-space: nowrap;
 }
+.corner-picker svg {
+  cursor: crosshair;
+}
+.corner-dot {
+  fill: #fbbf24;
+  stroke: #111;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  cursor: move;
+}
+.corner-picker .pen-line {
+  fill: rgba(251, 191, 36, 0.12);
+}

@@ -324,6 +324,70 @@ for (const t of [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25]) {
 const spread = Math.max(...sizes) / Math.max(1, Math.min(...sizes));
 check('audio-reactive text pulses with the beat', spread > 1.15, sizes.join(', '));
 
+// ---------- Screen replacement (corner pin) ----------
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'moving.webm')]);
+await page.locator('.main-track .clip-item').first().waitFor();
+// The yellow/white checker square in this clip plays the part of a phone screen.
+const square = () =>
+  page.locator('canvas.preview').evaluate((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+    for (let y = 0; y < c.height; y++)
+      for (let x = 0; x < c.width; x++) {
+        const i = (y * c.width + x) * 4;
+        if (d[i] > 200 && d[i + 1] > 170) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+      }
+    return { x0: x0 / c.width, y0: y0 / c.height, x1: x1 / c.width, y1: y1 / c.height };
+  });
+const redBox = () =>
+  page.locator('canvas.preview').evaluate((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0, sx = 0, sy = 0;
+    for (let y = 0; y < c.height; y++)
+      for (let x = 0; x < c.width; x++) {
+        const i = (y * c.width + x) * 4;
+        if (d[i] > 150 && d[i + 1] < 80 && d[i + 2] < 80) { n++; sx += x; sy += y; }
+      }
+    return n ? { n, cx: sx / n / c.width, cy: sy / n / c.height } : { n: 0, cx: -1, cy: -1 };
+  });
+await seekTo(2.2);
+await settle();
+const later = await square();
+await seekTo(0.5);
+await settle();
+const here = await square();
+check('the test "screen" moves during the clip', Math.hypot((later.x0 + later.x1) / 2 - (here.x0 + here.x1) / 2, (later.y0 + later.y1) / 2 - (here.y0 + here.y1) / 2) > 0.05, `${JSON.stringify(here)} → ${JSON.stringify(later)}`);
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'red.webm')]);
+await page.locator('.asset', { hasText: 'red' }).waitFor();
+await page.locator('.asset', { hasText: 'red' }).getByRole('button', { name: 'Add as picture-in-picture' }).click();
+await page.locator('.overlay-item').first().waitFor();
+await subTab('Cutout');
+await details.locator('summary', { hasText: 'Screen replacement' }).click();
+await details.getByRole('button', { name: '📱 Place on 4 corners' }).click();
+await page.getByRole('application', { name: /four corners/ }).waitFor();
+for (const [x, y] of [[here.x0, here.y0], [here.x1, here.y0], [here.x1, here.y1], [here.x0, here.y1]]) await clickAt(x, y);
+await settle();
+const placed = await redBox();
+check('a layer can be placed on four corners', placed.n > 200 && Math.abs(placed.cx - (here.x0 + here.x1) / 2) < 0.02 && Math.abs(placed.cy - (here.y0 + here.y1) / 2) < 0.03, JSON.stringify(placed));
+await details.getByRole('button', { name: 'Track the screen' }).click();
+await details.getByText(/Tracked through/).waitFor({ timeout: 60000 });
+await seekTo(2.2);
+await settle();
+const followed = await redBox();
+const target = { cx: (later.x0 + later.x1) / 2, cy: (later.y0 + later.y1) / 2 };
+check('the layer stays on the moving screen (tracked)', Math.hypot(followed.cx - target.cx, followed.cy - target.cy) < 0.03, `${JSON.stringify(followed)} vs ${JSON.stringify(target)}`);
+await details.getByRole('button', { name: 'Adjust corners' }).click();
+const corner = page.getByRole('slider', { name: 'Bottom right corner' });
+const cb = await corner.boundingBox();
+await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
+await page.mouse.down();
+await page.mouse.move(cb.x + cb.width / 2 + 40, cb.y + cb.height / 2 + 30, { steps: 4 });
+await page.mouse.up();
+await page.getByRole('button', { name: 'Done', exact: true }).click();
+await settle();
+check('corners can be fine-tuned by dragging', (await redBox()).n > followed.n * 1.2, `${followed.n} → ${(await redBox()).n} red pixels`);
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

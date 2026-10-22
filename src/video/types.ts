@@ -3,6 +3,7 @@ import type { Keyframes, Ramp } from './anim';
 import type { FaceLook, FaceScan } from './faces';
 import type { VectorPath } from './vectorPath';
 import type { Matte, React } from './react';
+import type { CornerPin } from './cornerPin';
 import type { ColorGrade } from './grade';
 import type { ChromaKey } from './keyer';
 
@@ -103,6 +104,8 @@ export interface LayerProps {
   react?: React | null;
   /** Show this layer only through a text or shape item (track matte). */
   matte?: Matte | null;
+  /** Screen replacement: drawn onto four (tracked) corners with perspective. */
+  pin?: CornerPin | null;
 }
 
 /** Masks stored with the project (key `cutout-<id>` in the media store). */

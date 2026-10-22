@@ -69,7 +69,23 @@ export function trackStep(prev: GrayFrame, next: GrayFrame, x: number, y: number
       if (score < best.score) best = { x: coarse.x + dx, y: coarse.y + dy, score };
     }
   }
-  return { x: Math.max(0, Math.min(next.w - 1, best.x)), y: Math.max(0, Math.min(next.h - 1, best.y)), score: best.score };
+  // Sub-pixel: fit through the best match and its neighbours. Without this,
+  // slow movements (under a pixel or two a frame) get rounded away frame after frame.
+  const at = (dx: number, dy: number) => patchDiff(prev, cx, cy, next, best.x + dx, best.y + dy, r, Infinity);
+  const refine = (m: number, c: number, p: number) => {
+    if (!Number.isFinite(m) || !Number.isFinite(p)) return 0;
+    const hi = Math.max(m, p);
+    // An exact whole-pixel match needs no refining.
+    if (c <= 0.05 * Math.min(m, p) || hi - c < 1e-9) return 0;
+    // Absolute differences rise in a V around the true position: fit a V, not a curve.
+    return Math.max(-0.5, Math.min(0.5, (m - p) / (2 * (hi - c))));
+  };
+  const fx = refine(at(-1, 0), best.score, at(1, 0));
+  const fy = refine(at(0, -1), best.score, at(0, 1));
+  // Move the exact (not rounded) point by the matched displacement.
+  const nx = x + (best.x - cx) + fx;
+  const ny = y + (best.y - cy) + fy;
+  return { x: Math.max(0, Math.min(next.w - 1, nx)), y: Math.max(0, Math.min(next.h - 1, ny)), score: best.score };
 }
 
 /** Follow a point through a list of frames. Returns one position per frame (the first is the start point). */
