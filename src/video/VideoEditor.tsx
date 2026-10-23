@@ -7,6 +7,7 @@ import { uid } from '../lib/id';
 import { putMedia, saveVideoProject } from '../lib/projects';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { FilterSliders } from '../ui/FilterSliders';
+import { InstagramFilterGrid } from '../ui/InstagramFilters';
 import { keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import { Tour, tourSeen } from '../ui/Tour';
 import type { TourStep } from '../ui/Tour';
@@ -288,13 +289,9 @@ export function VideoEditor({
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [selection, setSelection] = useState<Selection>(null);
-  /** On phones the details sit below the library: bring them into view when something is picked. */
+  /** The details panel (on phones it sits below the timeline). */
   const detailsRef = useRef<HTMLElement>(null);
   const libraryRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (!selection || !window.matchMedia?.('(max-width: 760px)').matches) return;
-    detailsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  }, [selection?.id]);
   const [pps, setPps] = useState(60);
   const [trimTool, setTrimTool] = useState<TrimTool>('select');
   const [showScopes, setShowScopes] = useState(false);
@@ -306,7 +303,8 @@ export function VideoEditor({
   const [showHelp, setShowHelp] = useState(false);
   const [showLook, setShowLook] = useState(false);
   const look = useLook();
-  const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
+  // Open everywhere: on phones the editor is one scrolling page, so the library never crowds the player.
+  const [panelOpen, setPanelOpen] = useState(true);
   const [exportDialog, setExportDialog] = useState(false);
   const [multicamOpen, setMulticamOpen] = useState(false);
   const [screenRecOpen, setScreenRecOpen] = useState(false);
@@ -373,7 +371,11 @@ export function VideoEditor({
     engine.onTime = setTime;
     engine.onPlayingChange = setPlaying;
     engineRef.current = engine;
+    // Some phones only let a video show its picture after the first tap on the page.
+    const prime = () => engine.primeAll();
+    window.addEventListener('pointerdown', prime, true);
     return () => {
+      window.removeEventListener('pointerdown', prime, true);
       engine.destroy();
       previewAudio.current?.pause();
     };
@@ -1736,6 +1738,8 @@ export function VideoEditor({
             </button>
           ))}
         </div>
+        <h4>Instagram filters</h4>
+        <InstagramFilterGrid current={targetClip?.filters} thumb={previewThumb} disabled={!targetClip} onPick={applyFilter} />
         <h4>Cinematic looks</h4>
         <div className="grid3 looks-grid">
           {LOOKS.filter((l) => l.id !== 'none').map((l) => (
@@ -1870,12 +1874,14 @@ export function VideoEditor({
                 key={t.id}
                 className={tab === t.id ? 'active' : ''}
                 onClick={() => {
-                  if (tab === t.id) setPanelOpen((o) => !o);
+                  // Phones: the tabs are a bar at the bottom, so a tap always opens the library and jumps to it.
+                  const phone = window.matchMedia?.('(max-width: 760px)').matches;
+                  if (tab === t.id && !phone) setPanelOpen((o) => !o);
                   else {
                     setTab(t.id);
                     setPanelOpen(true);
                   }
-                  if (window.matchMedia?.('(max-width: 760px)').matches) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                  if (phone) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
                 }}
               >
                 <Icon name={t.icon} size={18} />
@@ -2043,7 +2049,7 @@ export function VideoEditor({
                   </select>
                 </label>
                 <RangeField label="Strength" value={selectedEffect.intensity} min={0.1} max={1} step={0.01} onStart={mark} onChange={(v) => updateEffect({ intensity: v }, true)} format={(v) => `${Math.round(v * 100)}%`} />
-                {['shake', 'glitch', 'light-leak', 'chromatic', ...EFFECTS.filter((e) => isParticleEffect(e.type)).map((e) => e.type)].includes(selectedEffect.type) && (
+                {['shake', 'glitch', 'light-leak', 'chromatic', 'strobe', 'offset', 'ripple', 'twirl', 'kaleidoscope', 'four-color-gradient', 'venetian-blinds', ...EFFECTS.filter((e) => isParticleEffect(e.type)).map((e) => e.type)].includes(selectedEffect.type) && (
                   <RangeField label="Speed" value={selectedEffect.speed ?? 1} min={0.2} max={3} step={0.05} onStart={mark} onChange={(v) => updateEffect({ speed: v }, true)} format={(v) => `${v.toFixed(2)}×`} />
                 )}
                 {selectedEffect.type === 'adjustment' && (
@@ -2058,6 +2064,9 @@ export function VideoEditor({
                         ))}
                       </div>
                       <FilterSliders filters={selectedEffect.filters ?? NEUTRAL_FILTERS} mark={mark} onChange={(patch) => updateEffect({ filters: { ...(selectedEffect.filters ?? NEUTRAL_FILTERS), ...patch } }, true)} />
+                    </Section>
+                    <Section title="Instagram filters">
+                      <InstagramFilterGrid current={selectedEffect.filters} thumb={previewThumb} onPick={(filters) => updateEffect({ filters })} />
                     </Section>
                     <Section title="Colour grading">
                       <ColorSection grade={selectedEffect.grade} mark={mark} onChange={(grade: ColorGrade | null, live) => updateEffect({ grade: grade ?? undefined }, live)} />
@@ -2653,6 +2662,9 @@ function ClipInspector({
             <FilterSliders filters={f} mark={mark} onChange={updateFilters} />
             <button className="block" onClick={() => update({ filters: NEUTRAL_FILTERS })}>Reset adjustments</button>
           </Section>
+          <Section title="Instagram filters" defaultOpen>
+            <InstagramFilterGrid current={f} thumb={asset?.thumbnail} onPick={(filters) => update({ filters })} />
+          </Section>
           <Section title="Colour grading" defaultOpen>
             <ColorSection grade={clip.grade} mark={mark} onChange={(grade: ColorGrade | null, live) => update({ grade }, live)} />
           </Section>
@@ -2818,6 +2830,9 @@ function OverlayInspector({
               ))}
             </div>
             <FilterSliders filters={o.filters ?? NEUTRAL_FILTERS} mark={mark} onChange={(patch) => update({ filters: { ...(o.filters ?? NEUTRAL_FILTERS), ...patch } }, true)} />
+          </Section>
+          <Section title="Instagram filters" defaultOpen>
+            <InstagramFilterGrid current={o.filters} thumb={asset?.thumbnail} onPick={(filters) => update({ filters })} />
           </Section>
           <Section title="Colour grading" defaultOpen>
             <ColorSection grade={o.grade} mark={mark} onChange={(grade, live) => update({ grade }, live)} />

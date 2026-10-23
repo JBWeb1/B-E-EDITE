@@ -8,6 +8,7 @@ import { detectBeats } from './beats';
 import { grabGrayFrames } from './grab';
 import { focusX, smooth } from './transcript';
 import { LOOKS } from './grade';
+import { FILTER_PRESETS, INSTAGRAM_FILTERS } from '../lib/filters';
 import type { LookId } from './grade';
 import { layoutClips } from './timeline';
 import { createTextOverlay } from './timeline';
@@ -311,6 +312,22 @@ export function AutoEditDialog({
               {LOOKS.map((l) => (
                 <option key={l.id} value={l.id}>{l.label}</option>
               ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>Filter</span>
+            <select value={options.filter ?? ''} onChange={(e) => update({ filter: e.target.value || null })} aria-label="Filter">
+              <option value="">No filter</option>
+              <optgroup label="Instagram">
+                {INSTAGRAM_FILTERS.map((f) => (
+                  <option key={f.label} value={f.label}>{f.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Basic">
+                {FILTER_PRESETS.filter((f) => f.label !== 'Original').map((f) => (
+                  <option key={f.label} value={f.label}>{f.label}</option>
+                ))}
+              </optgroup>
             </select>
           </label>
         </div>

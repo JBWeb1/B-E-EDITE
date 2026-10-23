@@ -438,7 +438,7 @@ const phone = await newPage({ width: 390, height: 844 });
 await phone.goto(BASE);
 await phone.locator('.hero-card.design').click();
 await phone.locator('.artboard canvas').waitFor();
-check('phone: side panel starts folded', (await phone.locator('.panel.collapsed').count()) === 1);
+check('phone: the library starts open (one scrolling page)', (await phone.locator('.panel.collapsed').count()) === 0 && (await phone.locator('.cc-library-body').count()) === 1);
 await phone.getByRole('button', { name: 'Text', exact: true }).click();
 await phone.getByRole('button', { name: 'Add a heading' }).click();
 check('phone: add text', (await phone.locator('.layers li button').count()) === 1);
@@ -476,7 +476,7 @@ await dphone.getByRole('button', { name: 'Done' }).click();
 const phoneLayout = await dphone.evaluate(() => {
   const y = (s) => document.querySelector(s).getBoundingClientRect().y;
   const add = document.querySelector('.page-add').getBoundingClientRect();
-  return { stacked: y('.stage-column') < y('.cc-library') && y('.cc-library') < y('.cc-details') /* canvas pinned on top on phones */, addVisible: add.right <= innerWidth && add.width > 50, overflow: document.documentElement.scrollWidth > innerWidth + 1 };
+  return { stacked: y('.stage-column') < y('.cc-details') && y('.cc-details') < y('.cc-library-body') /* canvas pinned on top, then details, then the library */, addVisible: add.right <= innerWidth && add.width > 50, overflow: document.documentElement.scrollWidth > innerWidth + 1 };
 });
 check('phone: look options keep the stacked layout', phoneLayout.stacked && phoneLayout.addVisible && !phoneLayout.overflow, JSON.stringify(phoneLayout));
 

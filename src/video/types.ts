@@ -279,7 +279,35 @@ export type EffectType =
   | 'turbulence'
   | 'echo'
   | 'fractal-noise'
-  | 'adjustment';
+  | 'adjustment'
+  // Adobe-style effects (Premiere Pro / After Effects effect bins)
+  | 'directional-blur'
+  | 'zoom-blur'
+  | 'sharpen'
+  | 'mirror'
+  | 'kaleidoscope'
+  | 'twirl'
+  | 'bulge'
+  | 'ripple'
+  | 'offset'
+  | 'replicate'
+  | 'mosaic'
+  | 'posterize'
+  | 'emboss'
+  | 'find-edges'
+  | 'strobe'
+  | 'solarize'
+  | 'halftone'
+  | 'cartoon'
+  | 'invert'
+  | 'tint'
+  | 'tritone'
+  | 'threshold'
+  | 'leave-color'
+  | 'four-color-gradient'
+  | 'grid'
+  | 'venetian-blinds'
+  | 'posterize-time';
 
 /** A video effect applied to the whole frame for a stretch of time (its own track). */
 export interface EffectItem {

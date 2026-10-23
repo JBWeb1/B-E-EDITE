@@ -108,8 +108,18 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
     return Math.max(0, (clientX - rect.left - HEAD_W) / pps);
   };
 
+  /** A touch that may turn out to be a tap (select or seek) or a swipe (the timeline scrolls). */
+  const tapRef = useRef<{ x: number; y: number; select?: Selection } | null>(null);
+
   const begin = (e: ReactPointerEvent, drag: Drag, select?: Selection) => {
     e.stopPropagation();
+    // Touch: swiping over a clip scrolls the timeline; a tap picks it, and only a picked
+    // clip (or any trim handle) drags.
+    const handle = (e.target as Element).closest?.('.edge');
+    if (e.pointerType === 'touch' && select && selection?.id !== select.id && !handle) {
+      tapRef.current = { x: e.clientX, y: e.clientY, select };
+      return;
+    }
     if (select !== undefined) onSelect(select);
     dragRef.current = drag;
     if (drag.kind !== 'scrub' && drag.kind !== 'reorder') onBegin();
@@ -346,9 +356,28 @@ export function Timeline({ project, time, pps, selection, onSelect, onSeek, onBe
         ref={innerRef}
         style={{ width }}
         onPointerMove={onMove}
-        onPointerUp={onUp}
-        onPointerCancel={onUp}
+        onPointerUp={(e) => {
+          const tap = tapRef.current;
+          tapRef.current = null;
+          if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 10) {
+            if (tap.select) onSelect(tap.select);
+            else {
+              onSelect(null);
+              onSeek(timeAt(e.clientX));
+            }
+          }
+          onUp();
+        }}
+        onPointerCancel={() => {
+          tapRef.current = null;
+          onUp();
+        }}
         onPointerDown={(e) => {
+          // On touch screens the empty timeline scrolls; a tap moves the playhead. The ruler scrubs.
+          if (e.pointerType === 'touch' && !(e.target as Element).closest('.ruler')) {
+            tapRef.current = { x: e.clientX, y: e.clientY };
+            return;
+          }
           onSelect(null);
           onSeek(timeAt(e.clientX));
           begin(e, { kind: 'scrub' });

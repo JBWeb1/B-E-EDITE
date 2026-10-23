@@ -162,3 +162,21 @@ describe('auto edit: long-form', () => {
     expect([options.style, options.chapters, options.coldOpen]).toEqual(['longform', true, true]);
   });
 });
+
+describe('filters from the prompt', () => {
+  it('picks Instagram filters by name, and ordinary words only with "filter"', async () => {
+    const { findFilter, parsePrompt, defaultOptions } = await import('./autoedit');
+    expect(findFilter('a travel video with the Clarendon look')).toBe('Clarendon');
+    expect(findFilter('make it juno please')).toBe('Juno');
+    expect(findFilter('use the X-Pro II filter')).toBe('X-Pro II');
+    expect(findFilter('lo-fi filter and fast cuts')).toBe('Lo-Fi');
+    expect(findFilter('add the moon filter')).toBe('Moon');
+    expect(findFilter('watch the moon rise slowly')).toBeNull();
+    expect(findFilter('our trip to Valencia')).toBeNull();
+    expect(findFilter('add an Instagram filter')).toBe('Clarendon');
+    expect(findFilter('a vivid filter')).toBe('Vivid');
+    const p = parsePrompt('30 second vlog with the Valencia filter', defaultOptions());
+    expect(p.options.filter).toBe('Valencia');
+    expect(p.understood).toContain('Valencia filter');
+  });
+});

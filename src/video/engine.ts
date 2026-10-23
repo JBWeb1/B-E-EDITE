@@ -10,6 +10,8 @@ import type { Box } from './faces';
 import { paintFaces } from './faceRun';
 import { envelope, levelAt, matteToMask, reactAt, reactSources } from './react';
 import { drawQuad, quadAt } from './cornerPin';
+import { applyPixelFx, PIXEL_FX } from './pixelfx';
+import type { PixelFx } from './pixelfx';
 import { decodeMono } from '../lib/aiService';
 import { getMedia } from '../lib/projects';
 import { blendOp, blurSamples, clipFrame, cropRect, overlayFrame } from './layers';
@@ -188,10 +190,36 @@ export class VideoEngine {
     v.src = url;
     v.preload = 'auto';
     v.playsInline = true;
+    v.setAttribute('playsinline', '');
+    v.setAttribute('webkit-playsinline', '');
     v.addEventListener('seeked', () => !this.playing && this.draw());
     v.addEventListener('loadeddata', () => !this.playing && this.draw());
+    // iPhones and iPads load no picture until a video has played once, so the player
+    // stayed blank. Play it for a moment without sound to get its first frame.
+    v.addEventListener('loadedmetadata', () => this.prime(v), { once: true });
     this.connect(v);
     return v;
+  }
+
+  /** Get a first frame out of a video that has none yet (iOS), without making a sound. */
+  private prime(v: HTMLVideoElement) {
+    if (v.readyState >= 2 || this.playing) return;
+    const at = v.currentTime;
+    v.muted = true;
+    v.play()
+      .then(() => {
+        if (!this.playing) v.pause();
+        v.currentTime = at;
+      })
+      .catch(() => {})
+      .finally(() => {
+        v.muted = false;
+      });
+  }
+
+  /** Try again on the first tap, for browsers that only allow playing after one. */
+  primeAll() {
+    for (const v of [...this.videos.values(), ...this.overlayVideos.values()]) this.prime(v);
   }
 
   /** Route an element through Web Audio: noise-reduction filters, then a per-clip volume. */
@@ -483,6 +511,7 @@ export class VideoEngine {
     if (!p.tracks?.effectsHidden) {
       for (const a of p.effects ?? []) if (a.type === 'adjustment' && this.time >= a.start && this.time < a.start + a.duration) this.drawAdjustment(a);
     }
+    if (fx.adobe.length) this.drawAdobe(fx.adobe);
     this.drawEffects(fx);
 
     // Animations only run during playback so paused frames always show text clearly.
@@ -962,6 +991,186 @@ export class VideoEngine {
     g.clearRect(0, 0, c.width, c.height);
     g.drawImage(this.canvas, 0, 0);
     return c;
+  }
+
+  private heldFrame = document.createElement('canvas');
+  private heldStep = -1;
+  private heldEffect = '';
+
+  /**
+   * Adobe-style effects on the finished picture (device pixels): blurs, distortions,
+   * stylize and colour effects. Pixel effects come from pixelfx.ts; the rest are
+   * drawn with the canvas. Posterize time goes last, so it holds the finished frame.
+   */
+  private drawAdobe(list: EffectFrame['adobe']) {
+    const ctx = this.ctx;
+    const PW = this.canvas.width;
+    const PH = this.canvas.height;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.filter = 'none';
+    const ordered = [...list.filter((a) => a.type !== 'posterize-time'), ...list.filter((a) => a.type === 'posterize-time')];
+    for (const { type, k, local, speed } of ordered) {
+      if (PIXEL_FX.includes(type as PixelFx)) {
+        const img = ctx.getImageData(0, 0, PW, PH);
+        const out = new ImageData(PW, PH);
+        applyPixelFx(type as PixelFx, img.data, out.data, PW, PH, k, local * speed);
+        ctx.putImageData(out, 0, 0);
+        continue;
+      }
+      switch (type) {
+        case 'directional-blur':
+        case 'zoom-blur': {
+          const c = this.copyFrame();
+          const n = 10;
+          for (let i = 1; i < n; i++) {
+            const f = i / (n - 1);
+            ctx.globalAlpha = 1 / (i + 1);
+            if (type === 'directional-blur') {
+              const d = (f - 0.5) * k * 0.05 * PW;
+              ctx.drawImage(c, d, 0);
+            } else {
+              const z = 1 + f * k * 0.14;
+              ctx.drawImage(c, (PW - PW * z) / 2, (PH - PH * z) / 2, PW * z, PH * z);
+            }
+          }
+          ctx.globalAlpha = 1;
+          break;
+        }
+        case 'mirror': {
+          const c = this.copyFrame();
+          ctx.save();
+          ctx.globalAlpha = k;
+          ctx.beginPath();
+          ctx.rect(PW / 2, 0, PW / 2, PH);
+          ctx.clip();
+          ctx.translate(PW, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(c, 0, 0);
+          ctx.restore();
+          break;
+        }
+        case 'offset': {
+          const c = this.copyFrame();
+          const dx = (((local * speed * 0.15 * k) % 1) + 1) % 1 * PW;
+          ctx.drawImage(c, dx, 0);
+          ctx.drawImage(c, dx - PW, 0);
+          break;
+        }
+        case 'replicate': {
+          const c = this.copyFrame();
+          const n = 2 + Math.round(k * 2);
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, PW, PH);
+          for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) ctx.drawImage(c, (x * PW) / n, (y * PH) / n, PW / n, PH / n);
+          break;
+        }
+        case 'mosaic': {
+          const c = this.copyFrame();
+          const block = Math.max(2, Math.round((4 + k * 40) * (PW / 1280)));
+          const small = this.scratch('mosaic', Math.max(1, Math.round(PW / block)), Math.max(1, Math.round(PH / block)));
+          const g = small.getContext('2d')!;
+          g.imageSmoothingEnabled = true;
+          g.drawImage(c, 0, 0, small.width, small.height);
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(small, 0, 0, PW, PH);
+          ctx.imageSmoothingEnabled = true;
+          break;
+        }
+        case 'halftone': {
+          const c = this.copyFrame();
+          const cell = Math.max(4, Math.round((6 + (1 - k) * 10) * (PW / 1280)));
+          const cols = Math.ceil(PW / cell);
+          const rows = Math.ceil(PH / cell);
+          const small = this.scratch('halftone', cols, rows);
+          const g = small.getContext('2d', { willReadFrequently: true })!;
+          g.drawImage(c, 0, 0, cols, rows);
+          const d = g.getImageData(0, 0, cols, rows).data;
+          ctx.fillStyle = '#f8f5ec';
+          ctx.fillRect(0, 0, PW, PH);
+          for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) {
+              const i = (y * cols + x) * 4;
+              const dark = 1 - (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+              const r = (cell / 2) * Math.sqrt(Math.max(0.04, dark + 0.15));
+              ctx.fillStyle = `rgb(${d[i] * 0.85},${d[i + 1] * 0.85},${d[i + 2] * 0.85})`;
+              ctx.beginPath();
+              ctx.arc(x * cell + cell / 2, y * cell + cell / 2, Math.min(cell * 0.62, r), 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+          break;
+        }
+        case 'strobe': {
+          const rate = 6 * speed;
+          if ((local * rate) % 1 < 0.3) {
+            ctx.fillStyle = `rgba(255,255,255,${0.9 * k})`;
+            ctx.fillRect(0, 0, PW, PH);
+          }
+          break;
+        }
+        case 'four-color-gradient': {
+          const cols = ['#ff3d7f', '#22d3ee', '#a3e635', '#8b5cf6'];
+          const pts = [[0.15, 0.2], [0.85, 0.2], [0.85, 0.85], [0.15, 0.85]];
+          ctx.globalCompositeOperation = 'soft-light';
+          ctx.globalAlpha = k;
+          pts.forEach(([x, y], i) => {
+            const ox = Math.sin(local * 0.5 * speed + i) * 0.08;
+            const g = ctx.createRadialGradient((x + ox) * PW, y * PH, 0, (x + ox) * PW, y * PH, Math.max(PW, PH) * 0.65);
+            g.addColorStop(0, cols[i]);
+            g.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, PW, PH);
+          });
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = 1;
+          break;
+        }
+        case 'grid': {
+          const step = Math.max(8, Math.round(PH / 8));
+          ctx.strokeStyle = `rgba(255,255,255,${0.15 + 0.45 * k})`;
+          ctx.lineWidth = Math.max(1, PH / 540);
+          ctx.beginPath();
+          for (let x = (PW / 2) % step; x < PW; x += step) {
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, PH);
+          }
+          for (let y = (PH / 2) % step; y < PH; y += step) {
+            ctx.moveTo(0, y);
+            ctx.lineTo(PW, y);
+          }
+          ctx.stroke();
+          break;
+        }
+        case 'venetian-blinds': {
+          const band = Math.max(8, Math.round(PH / 10));
+          const open = 0.5 + 0.5 * Math.sin(local * speed * 2);
+          ctx.fillStyle = `rgba(0,0,0,${0.85 * k})`;
+          for (let y = 0; y < PH; y += band) ctx.fillRect(0, y, PW, band * (1 - open) * 0.9);
+          break;
+        }
+        case 'posterize-time': {
+          // Hold each frame for a while: 24 frames a second at the lightest, 5 at full.
+          const rate = 24 - 19 * k;
+          const step = Math.floor(local * rate);
+          const key = `${rate}`;
+          const held = this.heldFrame;
+          if (step !== this.heldStep || key !== this.heldEffect || held.width !== PW || held.height !== PH) {
+            held.width = PW;
+            held.height = PH;
+            held.getContext('2d')!.drawImage(this.canvas, 0, 0);
+            this.heldStep = step;
+            this.heldEffect = key;
+          } else {
+            ctx.drawImage(held, 0, 0);
+          }
+          break;
+        }
+      }
+    }
+    ctx.restore();
   }
 
   /** Redraw the frame through an adjustment layer's filters and grade, mixed by its strength. */

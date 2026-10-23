@@ -515,6 +515,83 @@ const blueAfter = await seekX(mid[0].x + mid[0].width / 2);
 const greenness = (c) => c[1] / Math.max(1, c[0] + c[1] + c[2]);
 check('colour match moves a clip towards the other clip', greenness(blueAfter) > greenness(blueBefore) + 0.05, `${blueBefore} → ${blueAfter}`);
 
+// ---------- Instagram filters, Adobe-style effects, filters from the AI prompt ----------
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'red.webm')]);
+await page.locator('.main-track .clip-item').first().waitFor();
+await settle();
+const centre = () => px(0.5, 0.5);
+const plainRed = await centre();
+await openLib('Filters');
+await page.getByRole('button', { name: 'Instagram filter: Inkwell' }).click();
+await settle();
+const inkwell = await centre();
+check('an Instagram filter changes the picture (Inkwell is black & white)', Math.abs(inkwell[0] - inkwell[1]) < 25 && Math.abs(plainRed[0] - plainRed[1]) > 100, `${plainRed} → ${inkwell}`);
+await page.getByRole('button', { name: 'Instagram filter: Clarendon' }).click();
+await page.locator('.main-track .clip-item').first().click();
+await subTab('Color');
+check('Instagram filters are in the clip colour tab too', (await details.getByRole('button', { name: 'Instagram filter: Clarendon' }).getAttribute('class')).includes('active'));
+await openLib('Effects');
+check('Adobe-style effect groups are listed', (await page.locator('.cc-library-body').innerText()).match(/BLUR & SHARPEN|Blur & Sharpen/i) !== null);
+await page.keyboard.press('Home');
+await page.locator('.fx-card', { hasText: /^\s*Invert\s*$/ }).click();
+await page.keyboard.press('Shift+ArrowRight');
+await settle();
+const inverted = await centre();
+check('the Invert effect turns red to cyan', inverted[0] < 120 && inverted[2] > 120, inverted.join(','));
+await page.keyboard.press('Delete');
+
+await openLib('AI');
+await page.locator('.autoedit-card').click();
+const aed = page.getByRole('dialog', { name: 'Auto edit' });
+await aed.waitFor();
+await aed.getByRole('textbox', { name: 'Describe your video' }).fill('a fun 10 second vlog with the Valencia filter');
+check('the AI prompt understands a filter', (await aed.locator('.chip').allInnerTexts()).some((c) => c.includes('Valencia filter')) && (await aed.getByRole('combobox', { name: 'Filter' }).inputValue()) === 'Valencia');
+await aed.getByRole('button', { name: 'Close' }).click();
+
+// ---------- Phone: one scrolling page; the timeline scrolls under a swipe ----------
+{
+  const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  await mctx.addInitScript(() => {
+    for (const k of ['bee.tips.design', 'bee.tips.video', 'bee.tour.video', 'bee.tour.design']) localStorage.setItem(k, '1');
+  });
+  const m = await mctx.newPage();
+  m.on('pageerror', (e) => errors.push('phone pageerror: ' + e.message));
+  const cdp = await mctx.newCDPSession(m);
+  const swipe = async (x, y, dx, dy) => {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (let i = 1; i <= 12; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + (dx * i) / 12, y: y + (dy * i) / 12 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await m.waitForTimeout(400);
+  };
+  await m.goto(`${BASE}/?new=video`);
+  await m.locator('canvas.preview').waitFor();
+  check('phone: Import is there straight away', await m.locator('.cc-library-body').getByText('Import', { exact: true }).first().isVisible().catch(() => false));
+  await m.locator('.panel input[type=file]').first().setInputFiles([path.join(FIX, 'red.webm'), path.join(FIX, 'blue.webm'), path.join(FIX, 'moving.webm')]);
+  await m.locator('.main-track .clip-item').nth(2).waitFor();
+  await m.locator('.main-track').scrollIntoViewIfNeeded();
+  await m.evaluate(() => window.scrollBy(0, 160));
+  await m.waitForTimeout(300);
+  const clip = await m.locator('.main-track .clip-item').first().boundingBox();
+  await swipe(300, clip.y + clip.height / 2, -220, 0);
+  const tl = await m.evaluate(() => document.querySelector('.timeline').scrollLeft);
+  check('phone: swiping the timeline scrolls it (and picks nothing)', tl > 100 && (await m.locator('.clip-item.selected').count()) === 0, `scrollLeft ${tl}`);
+  const second = await m.locator('.main-track .clip-item').nth(1).boundingBox();
+  await m.touchscreen.tap(Math.min(Math.max(second.x + 30, 130), 370), second.y + second.height / 2);
+  await m.waitForTimeout(500);
+  check('phone: a tap picks a clip', (await m.locator('.clip-item.selected').count()) === 1);
+  const before = await m.evaluate(() => scrollY);
+  await swipe(200, 700, 0, -300);
+  check('phone: the page scrolls under a swipe', (await m.evaluate(() => scrollY)) > before + 100);
+  // A tap while the page is still gliding only stops it (as on any phone): let it settle.
+  await m.waitForTimeout(1500);
+  await m.locator('.cc-tabs').getByRole('button', { name: 'Effects', exact: true }).tap();
+  await m.waitForTimeout(900);
+  const fxVisible = await m.locator('.fx-card').first().boundingBox();
+  check('phone: the bottom tabs jump to the library', fxVisible && fxVisible.y > 0 && fxVisible.y < 844);
+  await mctx.close();
+}
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

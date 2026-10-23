@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { ChangeEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { downloadBlob, readFileAsDataURL } from '../lib/download';
 import { FILTER_PRESETS, NEUTRAL_FILTERS, sameFilters } from '../lib/filters';
+import { InstagramFilterGrid } from '../ui/InstagramFilters';
 import type { Filters } from '../lib/filters';
 import { useHistory } from '../lib/history';
 import { saveDesignProject } from '../lib/projects';
@@ -189,13 +190,15 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const shownTime = previewTime ?? motionTime;
   const [videoProgress, setVideoProgress] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  /** On phones the details sit below the library: bring them into view when something is picked. */
+  /** On phones the details sit below the canvas: bring them into view when something is picked. */
   const detailsRef = useRef<HTMLElement>(null);
   const libraryRef = useRef<HTMLElement>(null);
   const firstSelected = selectedIds[0];
   useEffect(() => {
     if (!firstSelected || !window.matchMedia?.('(max-width: 760px)').matches) return;
-    detailsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    // Only when the details are out of sight below, and just far enough to show their top.
+    const top = detailsRef.current?.getBoundingClientRect().top ?? 0;
+    if (top > window.innerHeight - 80) window.scrollBy({ top: top - window.innerHeight * 0.6, behavior: 'smooth' });
   }, [firstSelected]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [guides, setGuides] = useState<Guide[]>([]);
@@ -228,7 +231,8 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const [iconQuery, setIconQuery] = useState('');
   const [exportScale, setExportScale] = useState(1);
   const [busy, setBusy] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia?.('(max-width: 760px)').matches);
+  // Open everywhere: on phones the editor is one scrolling page, so the library never crowds the player.
+  const [panelOpen, setPanelOpen] = useState(true);
   const openInputRef = useRef<HTMLInputElement>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -868,13 +872,15 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
               key={t}
               className={tab === t ? 'active' : ''}
               onClick={() => {
-                // Tapping the open tab again folds the panel away (handy on small screens).
-                if (tab === t) setPanelOpen((o) => !o);
+                // Tapping the open tab again folds the panel away; on phones the tabs are a bar
+                // at the bottom, so a tap always opens the library and jumps to it.
+                const phone = window.matchMedia?.('(max-width: 760px)').matches;
+                if (tab === t && !phone) setPanelOpen((o) => !o);
                 else {
                   setTab(t);
                   setPanelOpen(true);
                 }
-                if (window.matchMedia?.('(max-width: 760px)').matches) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+                if (phone) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
               }}
             >
               <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', photos: 'image', uploads: 'upload', background: 'droplet', brand: 'palette' } as const)[t]} size={18} />
@@ -1360,6 +1366,8 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
                       </button>
                     ))}
                   </div>
+                  <h4>Instagram filters</h4>
+                  <InstagramFilterGrid current={selected.filters} thumb={selected.src} onPick={(filters) => patchSelected({ filters })} />
                   <h4>Adjust</h4>
                   <FilterSliders filters={selected.filters ?? NEUTRAL_FILTERS} mark={mark} onChange={patchImageFilters} />
                   <PhotoTools el={selected} mark={mark} onChange={(photo, live) => patchSelected({ photo }, live)} />

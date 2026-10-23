@@ -13,7 +13,7 @@ import type { AudioClip, Clip, EffectType, MediaAsset, Motion, TextOverlay, Titl
 import type { Range } from './ai';
 import { duckKeys, reframe } from './transcript';
 import { uid } from '../lib/id';
-import { NEUTRAL_FILTERS } from '../lib/filters';
+import { filterByName, INSTAGRAM_FILTERS, NEUTRAL_FILTERS } from '../lib/filters';
 
 // ---------- Styles ----------
 
@@ -216,6 +216,8 @@ export interface AutoEditOptions {
   musicAssetId: string | null;
   title: string;
   look: LookId | null;
+  /** A filter for every clip, by name ("Clarendon", "Vivid"…), or null for none. */
+  filter: string | null;
   captions: boolean;
   /** 1 = the style's pace, below 1 slower cuts, above 1 faster. */
   pace: number;
@@ -236,6 +238,7 @@ export const defaultOptions = (style: StyleId = 'hype'): AutoEditOptions => ({
   musicAssetId: null,
   title: '',
   look: null,
+  filter: null,
   captions: styleById(style).speech,
   pace: 1,
   coldOpen: style === 'longform',
@@ -295,6 +298,11 @@ export function parsePrompt(text: string, base: AutoEditOptions = defaultOptions
       understood.push(`${id.replace('-', ' ')} colours`);
       break;
     }
+  const filter = findFilter(text);
+  if (filter) {
+    o.filter = filter;
+    understood.push(`${filter} filter`);
+  }
   if (has(text, ['fast', 'quick', 'snappy', 'energetic'])) {
     o.pace = 1.4;
     understood.push('faster cuts');
@@ -324,6 +332,30 @@ export function parsePrompt(text: string, base: AutoEditOptions = defaultOptions
     understood.push(`title “${quoted[1]}”`);
   }
   return { options: o, understood };
+}
+
+/** Filter names that are ordinary words too: they only count when followed by "filter". */
+const COMMON_WORDS = new Set(['original', 'valencia', 'sierra', 'nashville', 'vivid', 'warm', 'mono', 'fade', 'dream', 'rise', 'moon', 'lark', 'willow', 'crema', 'slumber', 'perpetua', 'brooklyn', 'hudson', 'toaster', 'kelvin', '1977']);
+
+/** The filter a request asks for: "with the Clarendon filter", "juno", "add an Instagram filter". */
+export function findFilter(text: string): string | null {
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // "<name> filter" (one or two words before "filter": "X-Pro II filter", "lo-fi filter").
+  const named = text.match(/([a-z0-9][\w-]*(?:\s+ii)?)\s+filter\b/i);
+  if (named) {
+    const two = named[1];
+    const hit = filterByName(two) ?? filterByName(two.split(/\s+/).pop() ?? '');
+    if (hit && hit.label !== 'Original') return hit.label;
+  }
+  // A distinctive name on its own ("make it Valencia").
+  for (const w of text.split(/[^a-z0-9-]+/i)) {
+    if (!w || COMMON_WORDS.has(key(w))) continue;
+    const hit = filterByName(w);
+    if (hit && INSTAGRAM_FILTERS.includes(hit)) return hit.label;
+  }
+  if (/x-?pro\s*(ii|2)/i.test(text)) return 'X-Pro II';
+  if (/\b(instagram|insta)\s+(filter|look)|\badd\s+a\s+filter\b/i.test(text)) return 'Clarendon';
+  return null;
 }
 
 // ---------- Measuring clips ----------
@@ -644,7 +676,7 @@ export function buildAutoEdit(p: VideoProject, plan: Plan, assets: MediaAsset[])
       volume: style.music === 'loud' && !style.speech ? 0.35 : 1,
       fadeIn: 0,
       fadeOut: 0,
-      filters: NEUTRAL_FILTERS,
+      filters: (options.filter && filterByName(options.filter)?.filters) || NEUTRAL_FILTERS,
       transition: tr,
       grade,
       motion: s.photo || asset?.kind === 'image' ? motions[i % motions.length] : undefined,

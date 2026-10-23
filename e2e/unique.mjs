@@ -364,10 +364,12 @@ for (const [w, h] of [[390, 844], [360, 740]]) {
       const c = document.querySelector('canvas.preview').getBoundingClientRect();
       const t = document.querySelector('.timeline').getBoundingClientRect();
       const top = document.querySelector('.topbar').getBoundingClientRect();
-      return { canvasTop: c.top, canvasBottom: c.bottom, canvasH: c.height, timelineTop: t.top, topbarBottom: top.bottom };
+      const hit = document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2);
+      return { canvasTop: c.top, canvasBottom: c.bottom, canvasH: c.height, timelineTop: t.top, topbarBottom: top.bottom, uncovered: hit === document.querySelector('canvas.preview'), vh: innerHeight };
     });
   const v = await view();
-  check(`phone ${w}: video shows with the library open`, v.canvasH > 120 && v.canvasTop >= v.topbarBottom - 1 && v.canvasBottom <= v.timelineTop + 1, JSON.stringify(v));
+  // One scrolling page: the player stays pinned on screen, uncovered, while the library is in view.
+  check(`phone ${w}: video shows with the library open`, v.canvasH > 120 && v.canvasTop >= -1 && v.canvasBottom <= v.vh && v.uncovered, JSON.stringify(v));
   const px = await m.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data));
   check(`phone ${w}: the clip is drawn`, px[0] > 150, px.join(','));
   await m.locator('.clip-item').first().tap();
@@ -375,9 +377,10 @@ for (const [w, h] of [[390, 844], [360, 740]]) {
   const d = await m.evaluate(() => {
     const r = document.querySelector('.cc-details-body').getBoundingClientRect();
     const t = document.querySelector('.timeline').getBoundingClientRect();
-    return { detailsTop: r.top, timelineTop: t.top };
+    return { detailsTop: r.top, timelineBottom: t.bottom, clipTabs: !!document.querySelector('.cc-details-body .cc-subtabs') };
   });
-  check(`phone ${w}: selecting a clip brings up its details`, d.detailsTop < d.timelineTop - 60, JSON.stringify(d));
+  // The picked clip's options sit right under the timeline (no jumping around while you edit).
+  check(`phone ${w}: selecting a clip brings up its details`, d.clipTabs && d.detailsTop >= d.timelineBottom - 1 && d.detailsTop - d.timelineBottom < 80, JSON.stringify(d));
   const v2 = await view();
   check(`phone ${w}: the video stays in view while editing`, v2.canvasH > 120 && v2.canvasTop >= v2.topbarBottom - 1, JSON.stringify(v2));
   const bar = await m.evaluate(() => {

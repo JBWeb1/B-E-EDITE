@@ -7,7 +7,7 @@ import type { AudioClip, Clip, EffectItem, EffectType, MediaAsset, Motion, Overl
 export const DEFAULT_IMAGE_SECONDS = 3;
 export const MIN_CLIP_SECONDS = 0.1;
 
-export { cssFilter, FILTER_PRESETS, NEUTRAL_FILTERS } from '../lib/filters';
+export { cssFilter, FILTER_PRESETS, INSTAGRAM_FILTERS, NEUTRAL_FILTERS } from '../lib/filters';
 export { textAnimation } from './textfx';
 
 export const ASPECTS = [
@@ -458,7 +458,7 @@ export function estimateSizeMB(seconds: number, opts: ExportOptions, audioBitrat
 
 // ---------- Effects ----------
 
-export type EffectGroup = 'Motion' | 'Look' | 'Light' | 'Particles';
+export type EffectGroup = 'Motion' | 'Look' | 'Light' | 'Particles' | 'Blur & Sharpen' | 'Distort' | 'Stylize' | 'Colour' | 'Generate' | 'Time';
 
 export const EFFECTS: { type: EffectType; label: string; hint: string; group: EffectGroup }[] = [
   { type: 'shake', label: 'Shake', hint: 'Camera shake (set its speed)', group: 'Motion' },
@@ -479,6 +479,33 @@ export const EFFECTS: { type: EffectType; label: string; hint: string; group: Ef
   { type: 'chromatic', label: 'Chromatic', hint: 'Red/blue colour fringes', group: 'Look' },
   { type: 'blur', label: 'Blur', hint: 'Soft focus', group: 'Look' },
   { type: 'letterbox', label: 'Cinema bars', hint: 'Black bars, movie look', group: 'Look' },
+  { type: 'directional-blur', label: 'Directional blur', hint: 'Motion blur streaking sideways', group: 'Blur & Sharpen' },
+  { type: 'zoom-blur', label: 'Radial blur (zoom)', hint: 'Streaks rushing out from the middle', group: 'Blur & Sharpen' },
+  { type: 'sharpen', label: 'Sharpen', hint: 'Crisper details', group: 'Blur & Sharpen' },
+  { type: 'mirror', label: 'Mirror', hint: 'Left half reflected onto the right', group: 'Distort' },
+  { type: 'kaleidoscope', label: 'Kaleidoscope', hint: 'Six mirrored slices turning slowly', group: 'Distort' },
+  { type: 'twirl', label: 'Twirl', hint: 'Swirl the middle of the picture', group: 'Distort' },
+  { type: 'bulge', label: 'Spherize', hint: 'Lens bulge that magnifies the middle', group: 'Distort' },
+  { type: 'ripple', label: 'Ripple', hint: 'Water ripples spreading from the middle', group: 'Distort' },
+  { type: 'offset', label: 'Offset', hint: 'The picture slides and wraps around', group: 'Distort' },
+  { type: 'replicate', label: 'Replicate', hint: 'A grid of copies of the picture', group: 'Distort' },
+  { type: 'mosaic', label: 'Mosaic', hint: 'Big square pixels', group: 'Stylize' },
+  { type: 'posterize', label: 'Posterize', hint: 'Fewer colours, poster look', group: 'Stylize' },
+  { type: 'emboss', label: 'Emboss', hint: 'Raised, stamped-metal look', group: 'Stylize' },
+  { type: 'find-edges', label: 'Find edges', hint: 'Drawn outlines on white', group: 'Stylize' },
+  { type: 'cartoon', label: 'Cartoon', hint: 'Flat colours with dark outlines', group: 'Stylize' },
+  { type: 'halftone', label: 'Colour halftone', hint: 'Comic-book printed dots', group: 'Stylize' },
+  { type: 'solarize', label: 'Solarize', hint: 'Bright parts flip to negative', group: 'Stylize' },
+  { type: 'strobe', label: 'Strobe light', hint: 'Flashing white strobe (set its speed)', group: 'Stylize' },
+  { type: 'invert', label: 'Invert', hint: 'Photo negative', group: 'Colour' },
+  { type: 'tint', label: 'Tint', hint: 'Two-colour duotone, navy to gold', group: 'Colour' },
+  { type: 'tritone', label: 'Tritone', hint: 'Shadows, midtones and highlights in three colours', group: 'Colour' },
+  { type: 'threshold', label: 'Threshold', hint: 'Pure black and white', group: 'Colour' },
+  { type: 'leave-color', label: 'Leave colour', hint: 'Keeps the reds, everything else goes grey', group: 'Colour' },
+  { type: 'four-color-gradient', label: 'Four-colour gradient', hint: 'Soft colour wash over the picture', group: 'Generate' },
+  { type: 'grid', label: 'Grid', hint: 'Grid lines over the picture', group: 'Generate' },
+  { type: 'venetian-blinds', label: 'Venetian blinds', hint: 'Sliding stripes', group: 'Generate' },
+  { type: 'posterize-time', label: 'Posterize time', hint: 'Choppy, low frame rate (stop-motion feel)', group: 'Time' },
   { type: 'confetti', label: 'Confetti', hint: 'Party confetti falling', group: 'Particles' },
   { type: 'sparkles', label: 'Sparkles', hint: 'Twinkling stars', group: 'Particles' },
   { type: 'snow', label: 'Snow', hint: 'Gentle snowfall', group: 'Particles' },
@@ -487,7 +514,11 @@ export const EFFECTS: { type: EffectType; label: string; hint: string; group: Ef
   { type: 'dust', label: 'Dust', hint: 'Floating dust in the light', group: 'Particles' },
 ];
 
-export const EFFECT_GROUPS: EffectGroup[] = ['Motion', 'Light', 'Look', 'Particles'];
+export const EFFECT_GROUPS: EffectGroup[] = ['Motion', 'Light', 'Look', 'Blur & Sharpen', 'Distort', 'Stylize', 'Colour', 'Generate', 'Time', 'Particles'];
+
+/** The Adobe-style effects (drawn by the engine from `EffectFrame.adobe`). */
+export const ADOBE_GROUPS: EffectGroup[] = ['Blur & Sharpen', 'Distort', 'Stylize', 'Colour', 'Generate', 'Time'];
+export const isAdobeEffect = (t: EffectType) => ADOBE_GROUPS.includes(EFFECTS.find((e) => e.type === t)?.group as EffectGroup);
 
 const PARTICLE_TYPES: EffectType[] = ['confetti', 'snow', 'sparkles', 'hearts', 'dust', 'bubbles'];
 export const isParticleEffect = (t: EffectType) => PARTICLE_TYPES.includes(t);
@@ -537,6 +568,8 @@ export interface EffectFrame {
   fog: number;
   fogPhase: number;
   particles: { kind: ParticleKind; local: number; intensity: number; speed: number }[];
+  /** Adobe-style effects to draw, in timeline order. */
+  adobe: { type: EffectType; k: number; local: number; speed: number }[];
 }
 
 export const NO_EFFECT: EffectFrame = {
@@ -567,11 +600,12 @@ export const NO_EFFECT: EffectFrame = {
   fog: 0,
   fogPhase: 0,
   particles: [],
+  adobe: [],
 };
 
 /** How every effect active at time `t` changes the frame (effects add up). */
 export function effectFrame(effects: EffectItem[], t: number): EffectFrame {
-  const f: EffectFrame = { ...NO_EFFECT, particles: [] };
+  const f: EffectFrame = { ...NO_EFFECT, particles: [], adobe: [] };
   for (const e of effects) {
     const local = t - e.start;
     if (local < 0 || local >= e.duration) continue;
@@ -579,6 +613,10 @@ export function effectFrame(effects: EffectItem[], t: number): EffectFrame {
     const speed = e.speed ?? 1;
     if (isParticleEffect(e.type)) {
       f.particles.push({ kind: e.type as ParticleKind, local, intensity: k, speed });
+      continue;
+    }
+    if (isAdobeEffect(e.type)) {
+      f.adobe.push({ type: e.type, k, local, speed });
       continue;
     }
     switch (e.type) {
