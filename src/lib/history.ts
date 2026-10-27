@@ -45,6 +45,13 @@ export function redo<T>(h: History<T>): History<T> {
   return { past: [...h.past, h.present], present: next, future: rest };
 }
 
+/** Move to step `index` of past + present + future (0 = oldest). Nothing is lost: later steps become redo. */
+export function jumpTo<T>(h: History<T>, index: number): History<T> {
+  const all = [...h.past, h.present, ...h.future];
+  const i = Math.max(0, Math.min(all.length - 1, index));
+  return { past: all.slice(0, i), present: all[i], future: all.slice(i + 1) };
+}
+
 type Updater<T> = T | ((prev: T) => T);
 const apply = <T,>(u: Updater<T>, prev: T): T =>
   typeof u === 'function' ? (u as (p: T) => T)(prev) : u;
@@ -82,6 +89,10 @@ export function useHistory<T>(initial: T | (() => T)) {
     pending.current = false;
     setHistory((h) => redo(h));
   }, []);
+  const doJump = useCallback((index: number) => {
+    pending.current = false;
+    setHistory((h) => jumpTo(h, index));
+  }, []);
   const reset = useCallback((value: T) => {
     pending.current = false;
     setHistory(createHistory(value));
@@ -97,6 +108,9 @@ export function useHistory<T>(initial: T | (() => T)) {
     undo: doUndo,
     redo: doRedo,
     reset,
+    /** Every step (oldest first) and which one is showing, for the visual history. */
+    steps: history,
+    jumpTo: doJump,
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
   };

@@ -1,6 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
-/** Number input that commits on blur/Enter so typing doesn't create an undo step per key. */
+const showNumber = (v: number) => String(Number(v.toFixed(2)));
+
+/**
+ * Number input that commits on blur/Enter, so typing doesn't create an undo step
+ * per key. It shows the live value, and keeps its own draft only while focused.
+ */
 export function NumberField({
   label,
   value,
@@ -16,25 +21,27 @@ export function NumberField({
   max?: number;
   step?: number;
 }) {
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => setDraft(String(Number(value.toFixed(2)))), [value]);
+  const [draft, setDraft] = useState<string | null>(null);
   const commit = () => {
-    let n = Number(draft);
-    if (!Number.isFinite(n) || draft.trim() === '') return setDraft(String(value));
+    const text = draft;
+    setDraft(null);
+    if (text === null || text.trim() === '') return;
+    let n = Number(text);
+    if (!Number.isFinite(n)) return;
     if (min !== undefined) n = Math.max(min, n);
     if (max !== undefined) n = Math.min(max, n);
     if (n !== value) onChange(n);
-    else setDraft(String(value));
   };
   return (
     <label className="field">
       <span>{label}</span>
       <input
         type="number"
-        value={draft}
+        value={draft ?? showNumber(value)}
         min={min}
         max={max}
         step={step}
+        onFocus={() => setDraft(showNumber(value))}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
@@ -82,21 +89,43 @@ export function RangeField({
   );
 }
 
+/** Color picker. `swatches` shows one-click colors (e.g. ones already used in the design). */
 export function ColorField({
   label,
   value,
   onChange,
   onStart,
+  swatches,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   onStart?: () => void;
+  swatches?: string[];
 }) {
+  const others = swatches?.filter((c) => c.toLowerCase() !== value.toLowerCase()) ?? [];
   return (
-    <label className="field color-field">
-      <span>{label}</span>
-      <input type="color" value={value} onFocus={onStart} onClick={onStart} onChange={(e) => onChange(e.target.value)} />
-    </label>
+    <div className="color-group">
+      <label className="field color-field">
+        <span>{label}</span>
+        <input type="color" value={value} onFocus={onStart} onClick={onStart} onChange={(e) => onChange(e.target.value)} />
+      </label>
+      {others.length > 0 && (
+        <div className="mini-swatches" aria-label={`${label}: colors in this design`}>
+          {others.map((c) => (
+            <button
+              key={c}
+              className="mini-swatch"
+              style={{ background: c }}
+              title={c}
+              onClick={() => {
+                onStart?.();
+                onChange(c);
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

@@ -1,0 +1,24 @@
+{
+  "name": "B-E Motion",
+  "short_name": "B-E Motion",
+  "description": "Design graphics and edit videos right in your browser.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#0b0c10",
+  "theme_color": "#0b0c10",
+  "categories": ["design", "photo", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "New video", "url": "./?new=video", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "New design", "url": "./?new=design", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

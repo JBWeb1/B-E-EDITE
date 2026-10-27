@@ -1,21 +1,86 @@
-import { useState } from 'react';
-import { DesignEditor } from './design/DesignEditor';
-import type { DesignDoc } from './design/types';
+import { Suspense, useEffect, useState } from 'react';
+import { createDoc } from './design/model';
+import { toFile } from './design/pages';
+import { newProjectId } from './lib/projects';
+import type { DesignFile } from './design/types';
 import { Home } from './home/Home';
-import { VideoEditor } from './video/VideoEditor';
+import type { VideoProject } from './video/types';
+import { DesignEditor, LiveJoin, PhoneLink, prefetchAll, VideoEditor } from './lazy';
+import { Logo } from './ui/Logo';
+import type { Peer } from './lib/p2p';
 
 export type Screen =
   | { kind: 'home' }
-  | { kind: 'design'; doc: DesignDoc }
-  | { kind: 'video'; width: number; height: number };
+  | { kind: 'design'; file: DesignFile; projectId: string }
+  | { kind: 'video'; width: number; height: number; projectId: string; project?: VideoProject; template?: string; live?: Peer; autoEdit?: boolean }
+  | { kind: 'phone'; code: string }
+  | { kind: 'live-join'; code: string };
 
 export function App() {
-  const [screen, setScreen] = useState<Screen>({ kind: 'home' });
+  const [screen, setScreen] = useState<Screen>(startScreen);
+  useEffect(prefetchAll, []);
+  return (
+    <Suspense fallback={<Loading />}>
+      <Screens screen={screen} setScreen={setScreen} />
+    </Suspense>
+  );
+}
+
+/** Shown for a moment while an editor loads. */
+function Loading() {
+  return (
+    <div className="app-loading" role="status" aria-label="Loading">
+      <Logo height={28} />
+      <span className="app-loading-bar" />
+    </div>
+  );
+}
+
+function Screens({ screen, setScreen }: { screen: Screen; setScreen: (s: Screen) => void }) {
   const goHome = () => setScreen({ kind: 'home' });
 
-  if (screen.kind === 'design') return <DesignEditor initialDoc={screen.doc} onExit={goHome} />;
+  if (screen.kind === 'phone') return <PhoneLink code={screen.code} onDone={goHome} />;
+  if (screen.kind === 'live-join') {
+    return (
+      <LiveJoin
+        code={screen.code}
+        onCancel={goHome}
+        onOpen={(project, projectId, peer) => setScreen({ kind: 'video', width: project.width, height: project.height, projectId, project, live: peer })}
+      />
+    );
+  }
+  if (screen.kind === 'design') {
+    return <DesignEditor key={screen.projectId} initialFile={screen.file} projectId={screen.projectId} onExit={goHome} />;
+  }
   if (screen.kind === 'video') {
-    return <VideoEditor aspect={{ width: screen.width, height: screen.height }} onExit={goHome} />;
+    return (
+      <VideoEditor
+        key={screen.projectId}
+        aspect={{ width: screen.width, height: screen.height }}
+        initialProject={screen.project}
+        projectId={screen.projectId}
+        template={screen.template}
+        live={screen.live}
+        autoEdit={screen.autoEdit}
+        onOpenDesign={(file, projectId) => setScreen({ kind: 'design', file, projectId })}
+        onExit={goHome}
+      />
+    );
   }
   return <Home onOpen={setScreen} />;
+}
+
+/** The installed app's shortcuts open `?new=video` / `?new=design` straight into an editor. */
+function startScreen(): Screen {
+  // Links from "Send from your phone" and "Edit together, live".
+  const link = window.location.hash.match(/^#(pair|live)=(.+)$/);
+  if (link) {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    return link[1] === 'pair' ? { kind: 'phone', code: link[2] } : { kind: 'live-join', code: link[2] };
+  }
+  const wanted = new URLSearchParams(window.location.search).get('new');
+  if (wanted) window.history.replaceState(null, '', window.location.pathname);
+  if (wanted === 'video') return { kind: 'video', width: 1280, height: 720, projectId: newProjectId() };
+  if (wanted === 'design') return { kind: 'design', file: toFile(createDoc(1080, 1080, 'Instagram Post')), projectId: newProjectId() };
+  return { kind: 'home' };
 }

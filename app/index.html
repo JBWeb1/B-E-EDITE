@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="B-E Motion" />
+    <meta name="application-name" content="B-E Motion" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <meta name="theme-color" content="#0b0c10" />
+    <title>B-E Motion</title>
+    <script type="module" crossorigin src="./assets/index-BQViQ6kw.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C9KfxA_v.css">
+  </head>
+  <body>
+    <div id="root">
+      <!-- Replaced as soon as the app starts. Shown only if it can't, e.g. when GitHub Pages
+           publishes the raw source files instead of the built app. -->
+      <div id="boot-fallback" style="display: none; max-width: 560px; margin: 12vh auto; padding: 0 20px; font: 16px/1.6 system-ui, sans-serif; color: #eceef3">
+        <h1 style="font-size: 24px">B-E Motion didn't start</h1>
+        <p>This page is showing the app's source files instead of the finished app.</p>
+        <p>
+          <strong>If you own this site:</strong> on GitHub open <em>Settings → Pages</em>, set <em>Source</em> to
+          <strong>GitHub Actions</strong>, then open the <em>Actions</em> tab and re-run <strong>Deploy to GitHub Pages</strong>.
+        </p>
+        <p style="color: #8e95a6">Already did that? Reload this page in a minute or two.</p>
+      </div>
+    </div>
+    <script>
+      document.body.style.background = '#0b0c10';
+      setTimeout(function () {
+        var el = document.getElementById('boot-fallback');
+        if (el) el.style.display = 'block';
+      }, 4000);
+    </script>
+    <script>
+      // GitHub Pages in "Deploy from a branch" mode serves these source files, which a
+      // browser can't run. A ready-built copy of the app lives in ./app/, so go there.
+      // (The built page has no /src/main.tsx script, so this never runs in the real app.)
+      if (
+        document.querySelector('script[src$="/src/main.tsx"]') &&
+        (location.hostname.endsWith('github.io') || location.search.includes('pages-fallback'))
+      ) {
+        location.replace('./app/' + location.search.replace(/[?&]pages-fallback/, '') + location.hash);
+      }
+    </script>
+  </body>
+</html>
