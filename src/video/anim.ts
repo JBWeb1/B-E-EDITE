@@ -96,9 +96,14 @@ export interface Keyframe {
   ease?: Easing;
   /** Handles of a 'custom' easing. */
   bez?: Bezier;
+  /** On the last keyframe: keep the animation going after it (like After Effects' loopOut). */
+  loop?: KeyLoop;
 }
 
-export type AnimProp = 'x' | 'y' | 'scale' | 'rotation' | 'opacity' | 'volume' | 'maskX' | 'maskY' | 'maskScale' | 'trimStart' | 'trimEnd';
+/** 'cycle' repeats the animation, 'pingpong' plays it forwards then backwards. */
+export type KeyLoop = 'cycle' | 'pingpong';
+
+export type AnimProp = 'x' | 'y' | 'scale' | 'rotation' | 'opacity' | 'volume' | 'maskX' | 'maskY' | 'maskScale' | 'trimStart' | 'trimEnd' | 'rotX' | 'rotY';
 export type Keyframes = Partial<Record<AnimProp, Keyframe[]>>;
 
 /** Keyframes closer than this (seconds) count as the same one. */
@@ -109,6 +114,7 @@ export function valueAt(keys: Keyframe[] | undefined, t: number, base: number): 
   if (!keys || keys.length === 0) return base;
   if (t <= keys[0].t) return keys[0].v;
   const last = keys[keys.length - 1];
+  t = loopTime(keys, t);
   if (t >= last.t) return last.v;
   for (let i = 0; i < keys.length - 1; i++) {
     const a = keys[i];
@@ -122,12 +128,45 @@ export function valueAt(keys: Keyframe[] | undefined, t: number, base: number): 
   return last.v;
 }
 
+/** Time inside the keyframed stretch for a looping animation (unchanged when not looping). */
+export function loopTime(keys: Keyframe[], t: number): number {
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  const span = last.t - first.t;
+  if (!last.loop || keys.length < 2 || span <= 1e-6 || t <= last.t) return t;
+  const into = t - first.t;
+  if (last.loop === 'cycle') return first.t + (into % span);
+  const m = into % (2 * span);
+  return first.t + (m <= span ? m : 2 * span - m);
+}
+
+/** Set (or clear) looping after the last keyframe of every animated property. */
+export function setLoop(keys: Keyframes | undefined, loop: KeyLoop | undefined): Keyframes | undefined {
+  if (!keys) return keys;
+  const out: Keyframes = {};
+  for (const [prop, list] of Object.entries(keys) as [AnimProp, Keyframe[] | undefined][]) {
+    if (!list?.length) continue;
+    out[prop] = list.map((k, i) => (i === list.length - 1 ? { ...k, loop } : { ...k, loop: undefined }));
+  }
+  return out;
+}
+
+/** The loop setting of an item's keyframes (from its first animated property). */
+export function loopOf(keys: Keyframes | undefined): KeyLoop | undefined {
+  for (const list of Object.values(keys ?? {})) if (list?.length) return list[list.length - 1].loop;
+  return undefined;
+}
+
 /** Add or replace the keyframe at `t`, keeping the list sorted. */
 export function setKey(keys: Keyframe[] | undefined, t: number, v: number, easing?: Easing): Keyframe[] {
   const list = (keys ?? []).filter((k) => Math.abs(k.t - t) > KEY_EPS);
   const old = keys?.find((k) => Math.abs(k.t - t) <= KEY_EPS);
+  const loop = keys?.[keys.length - 1]?.loop;
   list.push({ t: Math.max(0, t), v, ease: easing ?? old?.ease ?? 'smooth' });
-  return list.sort((a, b) => a.t - b.t);
+  const sorted = list.sort((a, b) => a.t - b.t).map((k) => (k.loop ? { ...k, loop: undefined } : k));
+  // The loop stays on whichever keyframe is now last.
+  if (loop && sorted.length) sorted[sorted.length - 1] = { ...sorted[sorted.length - 1], loop };
+  return sorted;
 }
 
 export function removeKey(keys: Keyframe[] | undefined, t: number): Keyframe[] {

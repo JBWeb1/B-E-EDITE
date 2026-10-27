@@ -15,16 +15,19 @@ import {
   DEFAULT_CURVE,
   EASINGS,
   keyAt,
+  loopOf,
   neighbourKey,
   presetKeys,
   RAMPS,
   removeKey,
   setAllEasing,
   setKey,
+  setLoop,
   transformAt,
   valueAt,
 } from './anim';
-import type { AnimPreset, AnimProp, Easing, Keyframes, Ramp } from './anim';
+import type { AnimPreset, AnimProp, Easing, KeyLoop, Keyframes, Ramp } from './anim';
+import { CurvesEditor } from './CurvesEditor';
 import { LOOKS, NEUTRAL_GRADE, NEUTRAL_WHEEL, wheelColor } from './grade';
 import type { ColorGrade, LookId, Wheel } from './grade';
 import { DEFAULT_KEY } from './keyer';
@@ -172,6 +175,16 @@ export function KeyframeTools({
           </label>
           <button onClick={() => update({ keys: undefined })} title="Remove all keyframes">Clear</button>
         </div>
+      )}
+      {anyKeys && (
+        <label className="field">
+          <span>After the last keyframe</span>
+          <select value={loopOf(item.keys) ?? ''} onChange={(e) => update({ keys: setLoop(item.keys, (e.target.value || undefined) as KeyLoop | undefined) })} aria-label="Loop keyframes">
+            <option value="">Stop (hold the last value)</option>
+            <option value="cycle">Loop (repeat)</option>
+            <option value="pingpong">Ping-pong (back and forth)</option>
+          </select>
+        </label>
       )}
       {anyKeys && (
         <Section title="Graph editor">
@@ -478,6 +491,9 @@ export function ColorSection({ grade, mark, onChange }: { grade: ColorGrade | nu
         <ColorWheel label="Midtones" wheel={g.midtones} mark={mark} onChange={(w, live) => onChange({ ...g, midtones: w }, live)} />
         <ColorWheel label="Highlights" wheel={g.highlights} mark={mark} onChange={(w, live) => onChange({ ...g, highlights: w }, live)} />
       </div>
+      <Section title="RGB curves">
+        <CurvesEditor curves={g.curves} mark={mark} onChange={(curves, live) => onChange({ ...g, curves }, live)} />
+      </Section>
       <button className="block" onClick={() => onChange(null, false)} disabled={!grade}>
         Reset colour
       </button>

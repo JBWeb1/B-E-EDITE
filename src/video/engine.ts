@@ -10,6 +10,7 @@ import type { Box } from './faces';
 import { paintFaces } from './faceRun';
 import { envelope, levelAt, matteToMask, reactAt, reactSources } from './react';
 import { drawQuad, quadAt } from './cornerPin';
+import { layerQuad } from './layer3d';
 import { applyPixelFx, PIXEL_FX } from './pixelfx';
 import type { PixelFx } from './pixelfx';
 import { decodeMono } from '../lib/aiService';
@@ -1645,6 +1646,22 @@ export class VideoEngine {
     const local = this.time - o.start;
     const sourceTime = asset.kind === 'video' ? (o.reverse ? o.out - local : o.in + local) : 0;
     const crop = cropRect(sw, sh, o.crop);
+    // 3D layer: turned in depth, drawn with perspective like a screen replacement.
+    const rx = valueAt(o.keys?.rotX, local, o.rotX ?? 0);
+    const ry = valueAt(o.keys?.rotY, local, o.rotY ?? 0);
+    if (!o.pin && (Math.abs(rx) > 0.01 || Math.abs(ry) > 0.01)) {
+      const f = this.reacting(o, overlayFrame(o, asset, p.width, p.height, local));
+      const q = layerQuad(f.cx, f.cy, f.w, f.h, rx, ry, f.rotation, Math.max(p.width, p.height) * 1.6);
+      const ctx = this.ctx;
+      ctx.save();
+      ctx.globalAlpha *= f.opacity;
+      const filter = [this.gradeFilter(o), cssFilter(o.filters)].filter((x) => x && x !== 'none').join(' ');
+      if (filter) ctx.filter = filter;
+      ctx.globalCompositeOperation = blendOp(o.blend);
+      drawQuad(ctx, source, crop, q);
+      ctx.restore();
+      return;
+    }
     if (o.pin && o.pin.quads.length) {
       // Screen replacement: the picture goes onto the tracked corners, with perspective.
       const q = quadAt(o.pin, local).map(([x, y]) => [x * p.width, y * p.height]) as [number, number][];

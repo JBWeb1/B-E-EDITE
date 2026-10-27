@@ -180,6 +180,9 @@ export interface OverlayClip extends Omit<LayerProps, 'x' | 'y' | 'scale' | 'opa
   filters?: Filters;
   /** Soft shadow behind the layer. */
   shadow?: boolean;
+  /** 3D layer: turned around its horizontal (X) and vertical (Y) axes, in degrees (keys rotX / rotY animate them). */
+  rotX?: number;
+  rotY?: number;
 }
 
 export interface TextOverlay {

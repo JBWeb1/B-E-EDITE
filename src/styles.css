@@ -6186,3 +6186,33 @@ button.link {
     height: 32px;
   }
 }
+
+/* RGB curves */
+.curves {
+  display: grid;
+  gap: 8px;
+}
+.curves-box {
+  width: 100%;
+  max-width: 260px;
+  aspect-ratio: 1;
+  justify-self: center;
+  background: #0b0d12;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  touch-action: none;
+  cursor: crosshair;
+}
+.curves-grid line,
+.curves-diag {
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+}
+.curves-diag {
+  stroke-dasharray: 4 4;
+}
+.curves-point {
+  stroke: #0b0d12;
+  stroke-width: 2;
+  cursor: grab;
+}

@@ -599,6 +599,58 @@ await aed.getByRole('button', { name: 'Close' }).click();
   await mctx.close();
 }
 
+// ---------- 3D layers, RGB curves, looping keyframes ----------
+await page.goto(`${BASE}/?new=video`);
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'blue.webm')]);
+await page.locator('.main-track .clip-item').first().waitFor();
+await page.locator('.panel input[type=file]').setInputFiles([path.join(FIX, 'red.webm')]);
+await page.locator('.asset', { hasText: 'red' }).waitFor();
+await page.locator('.asset', { hasText: 'red' }).getByRole('button', { name: 'Add as picture-in-picture' }).click();
+await page.locator('.overlay-item').first().waitFor();
+await page.keyboard.press('Home');
+await subTab('Animate');
+await details.locator('summary', { hasText: '3D layer' }).click();
+// Width of the red layer at its top and bottom rows.
+const redRows = () =>
+  page.locator('canvas.preview').evaluate((c) => {
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    const rows = [];
+    for (let y = 0; y < c.height; y++) {
+      let n = 0;
+      for (let x = 0; x < c.width; x++) {
+        const i = (y * c.width + x) * 4;
+        if (d[i] > 150 && d[i + 1] < 90 && d[i + 2] < 90) n++;
+      }
+      if (n > 2) rows.push(n);
+    }
+    return { top: rows[2] ?? 0, bottom: rows[rows.length - 3] ?? 0, total: rows.reduce((a, b) => a + b, 0) };
+  });
+const flat = await redRows();
+await details.getByRole('button', { name: 'Tilt back', exact: true }).click();
+await page.keyboard.press('Shift+ArrowRight');
+await page.keyboard.press('Shift+ArrowRight');
+await settle();
+const tilted = await redRows();
+check('a 3D layer tilts back with perspective (narrower at the far edge)', Math.abs(flat.top - flat.bottom) <= 2 && tilted.bottom - tilted.top > 4, `${JSON.stringify(flat)} → ${JSON.stringify(tilted)}`);
+await details.getByRole('button', { name: 'Card flip', exact: true }).click();
+await seekTo(1.8);
+await settle();
+const held = await redRows();
+await details.getByRole('combobox', { name: 'Loop keyframes' }).selectOption('cycle');
+await settle();
+const looped = await redRows();
+check('looping keyframes repeat the animation', held.total > 1000 && looped.total < held.total / 3, `held ${held.total}, looping ${looped.total}`);
+
+await page.locator('.main-track .clip-item').first().click();
+await subTab('Color');
+const beforeCurve = await px(0.1, 0.1);
+await details.locator('summary', { hasText: 'RGB curves' }).click();
+await details.getByRole('button', { name: 'Cross process' }).click();
+await settle();
+const afterCurve = await px(0.1, 0.1);
+check('RGB curves change the colours', afterCurve.join() !== beforeCurve.join(), `${beforeCurve} → ${afterCurve}`);
+check('the curve editor is there to drag', (await details.getByRole('application', { name: 'RGB curve' }).count()) === 1);
+
 // MORE CHECKS BELOW
 
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | '));

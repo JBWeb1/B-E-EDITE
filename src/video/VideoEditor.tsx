@@ -82,6 +82,7 @@ import { ANIMATORS, FONTS, SHAPE_ANIMS, SHAPES, TEMPLATES, textBounds, WORD_MODE
 import { HEAD_W, Timeline, TRIM_TOOLS } from './Timeline';
 import type { Selection, TrimTool } from './Timeline';
 import { colorStats, jCut, lCut, matchColor, splitAtSource } from './premiere';
+import { move3d, MOVES_3D } from './layer3d';
 import { ColorMatchSection, ProEditSection, Scopes } from './ProTools';
 import {
   ASPECTS,
@@ -2777,6 +2778,21 @@ function OverlayInspector({
         <>
           <TransformFields item={o} base={base} local={local} mark={mark} onBase={(patch, live) => update(patch, live)} update={update} sizeRange={[0.05, 1.5]} />
           <KeyframeTools item={o} local={local} length={len} base={base} mark={mark} onSeekLocal={onSeekLocal} update={update} />
+          <Section title="3D layer" defaultOpen={!!(o.rotX || o.rotY || o.keys?.rotX || o.keys?.rotY)}>
+            <p className="hint">Turn the layer in depth, with perspective (like an After Effects 3D layer).</p>
+            <AnimField label="Tilt (X)" prop="rotX" base={o.rotX ?? 0} keys={o.keys} local={local} min={-180} max={180} step={1} format={(v) => `${Math.round(v)}°`} mark={mark} onBase={(v, live) => update({ rotX: v }, live)} onKeys={(keys, live) => update({ keys }, live)} />
+            <AnimField label="Turn (Y)" prop="rotY" base={o.rotY ?? 0} keys={o.keys} local={local} min={-180} max={180} step={1} format={(v) => `${Math.round(v)}°`} mark={mark} onBase={(v, live) => update({ rotY: v }, live)} onKeys={(keys, live) => update({ keys }, live)} />
+            <div className="grid2">
+              {MOVES_3D.map((m) => (
+                <button key={m} onClick={() => update({ keys: { ...o.keys, rotX: undefined, rotY: undefined, ...move3d(m, len) } })}>
+                  {m}
+                </button>
+              ))}
+            </div>
+            <button className="block" onClick={() => update({ rotX: 0, rotY: 0, keys: { ...o.keys, rotX: undefined, rotY: undefined } })}>
+              Flat again
+            </button>
+          </Section>
           <ReactSection react={o.react} update={update} />
           <MotionTrackSection waiting={trackWaiting} tracked={(o.keys?.x?.length ?? 0) > 3} onStart={onTrackStart} onClear={() => update({ keys: { ...o.keys, x: undefined, y: undefined } })} />
         </>
