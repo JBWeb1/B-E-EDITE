@@ -6098,3 +6098,91 @@ button.link {
 .fx-thumb.fx-twirl,
 .fx-thumb.fx-bulge,
 .fx-thumb.fx-ripple { filter: saturate(1.5) hue-rotate(-20deg); }
+
+/* =========================================================
+   Phones: the library is a bottom sheet (like CapCut)
+   ========================================================= */
+.sheet-close {
+  display: none;
+}
+@media (max-width: 760px) {
+  .editor.cc {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+  .editor.cc .cc-library > .cc-library-body {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: max(var(--sheet-top, 45vh), 25vh);
+    bottom: calc(57px + env(safe-area-inset-bottom, 0px));
+    z-index: 19;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    max-height: none;
+    padding: 0 14px 14px;
+    background: var(--surface);
+    border-top: 1px solid var(--border-strong, var(--border));
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -12px 28px rgba(0, 0, 0, 0.5);
+    animation: sheet-up 0.18s ease-out;
+  }
+  .editor.cc .cc-library > .cc-library-body > .sheet-close {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    width: calc(100% + 28px);
+    margin: 0 -14px 6px;
+    height: 26px;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: var(--surface);
+  }
+  .sheet-grip {
+    width: 44px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--surface-4, #555);
+  }
+  /* The library's place in the page is just its (fixed) tab bar now. */
+  .editor.cc > .workspace > .cc-library {
+    margin: 0;
+    min-height: 0;
+    background: transparent;
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(40px);
+    opacity: 0.4;
+  }
+}
+
+/* Touch screens: bigger targets for fingers. */
+@media (pointer: coarse) {
+  .editor .icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .timeline .edge {
+    width: 16px;
+  }
+  .timeline .edge::after {
+    left: 6px;
+  }
+  .cc-subtabs button,
+  .trim-tools button,
+  .cc-tabs button {
+    min-height: 40px;
+  }
+  .editor input[type='range'] {
+    min-height: 30px;
+  }
+  .ruler {
+    height: 32px;
+  }
+}

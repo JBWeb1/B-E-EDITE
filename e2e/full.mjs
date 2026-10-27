@@ -476,7 +476,8 @@ await dphone.getByRole('button', { name: 'Done' }).click();
 const phoneLayout = await dphone.evaluate(() => {
   const y = (s) => document.querySelector(s).getBoundingClientRect().y;
   const add = document.querySelector('.page-add').getBoundingClientRect();
-  return { stacked: y('.stage-column') < y('.cc-details') && y('.cc-details') < y('.cc-library-body') /* canvas pinned on top, then details, then the library */, addVisible: add.right <= innerWidth && add.width > 50, overflow: document.documentElement.scrollWidth > innerWidth + 1 };
+  const stage = document.querySelector('.stage-column').getBoundingClientRect(); const sheet = document.querySelector('.cc-library-body')?.getBoundingClientRect();
+  return { stacked: stage.top < y('.cc-details') && (!sheet || sheet.top >= stage.bottom - 1) /* canvas pinned on top, details under it, library sheet never over the canvas */, addVisible: add.right <= innerWidth && add.width > 50, overflow: document.documentElement.scrollWidth > innerWidth + 1 };
 });
 check('phone: look options keep the stacked layout', phoneLayout.stacked && phoneLayout.addVisible && !phoneLayout.overflow, JSON.stringify(phoneLayout));
 

@@ -8,6 +8,7 @@ import { putMedia, saveVideoProject } from '../lib/projects';
 import { ColorField, NumberField, RangeField } from '../ui/fields';
 import { FilterSliders } from '../ui/FilterSliders';
 import { InstagramFilterGrid } from '../ui/InstagramFilters';
+import { isPhone, useSheetTop } from '../ui/sheet';
 import { keyBelongsToField, ShortcutsDialog, shortcutsBlocked } from '../ui/Help';
 import { Tour, tourSeen } from '../ui/Tour';
 import type { TourStep } from '../ui/Tour';
@@ -303,8 +304,10 @@ export function VideoEditor({
   const [showHelp, setShowHelp] = useState(false);
   const [showLook, setShowLook] = useState(false);
   const look = useLook();
-  // Open everywhere: on phones the editor is one scrolling page, so the library never crowds the player.
-  const [panelOpen, setPanelOpen] = useState(true);
+  // On phones the library is a bottom sheet: open at the start only while there is nothing to edit yet.
+  const [panelOpen, setPanelOpen] = useState(() => !isPhone() || (initialProject?.clips?.length ?? 0) === 0);
+  const playerRef = useRef<HTMLElement>(null);
+  useSheetTop(playerRef);
   const [exportDialog, setExportDialog] = useState(false);
   const [multicamOpen, setMulticamOpen] = useState(false);
   const [screenRecOpen, setScreenRecOpen] = useState(false);
@@ -439,6 +442,8 @@ export function VideoEditor({
           setImporting((n) => n - 1);
         }
       }
+      // Phones: close the bottom sheet so the new clips show on the timeline.
+      if (list.length && isPhone()) setPanelOpen(false);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [set],
@@ -1872,16 +1877,15 @@ export function VideoEditor({
             {LIBRARY_TABS.map((t) => (
               <button
                 key={t.id}
-                className={tab === t.id ? 'active' : ''}
+                className={tab === t.id && panelOpen ? 'active' : ''}
+                aria-pressed={tab === t.id && panelOpen}
                 onClick={() => {
-                  // Phones: the tabs are a bar at the bottom, so a tap always opens the library and jumps to it.
-                  const phone = window.matchMedia?.('(max-width: 760px)').matches;
-                  if (tab === t.id && !phone) setPanelOpen((o) => !o);
+                  // Tapping the open tab again folds the library away (on phones: closes the bottom sheet).
+                  if (tab === t.id) setPanelOpen((o) => !o);
                   else {
                     setTab(t.id);
                     setPanelOpen(true);
                   }
-                  if (phone) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
                 }}
               >
                 <Icon name={t.icon} size={18} />
@@ -1889,10 +1893,17 @@ export function VideoEditor({
               </button>
             ))}
           </nav>
-          {panelOpen && <div className="cc-library-body">{library[tab]}</div>}
+          {panelOpen && (
+            <div className="cc-library-body">
+              <button className="sheet-close" onClick={() => setPanelOpen(false)} aria-label="Close panel">
+                <span className="sheet-grip" aria-hidden />
+              </button>
+              {library[tab]}
+            </div>
+          )}
         </aside>
 
-        <main className="preview-area cc-player">
+        <main className="preview-area cc-player" ref={playerRef}>
           <div className="cc-panel-head">
             <span>Player</span>
             {picking && <span className="pick-hint">Click the background colour to remove · Esc to cancel</span>}

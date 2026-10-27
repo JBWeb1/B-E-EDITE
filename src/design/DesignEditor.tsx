@@ -3,6 +3,7 @@ import type { ChangeEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { downloadBlob, readFileAsDataURL } from '../lib/download';
 import { FILTER_PRESETS, NEUTRAL_FILTERS, sameFilters } from '../lib/filters';
 import { InstagramFilterGrid } from '../ui/InstagramFilters';
+import { useSheetTop } from '../ui/sheet';
 import type { Filters } from '../lib/filters';
 import { useHistory } from '../lib/history';
 import { saveDesignProject } from '../lib/projects';
@@ -231,8 +232,10 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
   const [iconQuery, setIconQuery] = useState('');
   const [exportScale, setExportScale] = useState(1);
   const [busy, setBusy] = useState(false);
-  // Open everywhere: on phones the editor is one scrolling page, so the library never crowds the player.
+  // Open at the start (templates); on phones it is a bottom sheet under the pinned canvas.
   const [panelOpen, setPanelOpen] = useState(true);
+  const playerRef = useRef<HTMLDivElement>(null);
+  useSheetTop(playerRef);
   const openInputRef = useRef<HTMLInputElement>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -870,17 +873,15 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
           {(['templates', 'text', 'elements', 'photos', 'uploads', 'background', 'brand'] as Tab[]).map((t) => (
             <button
               key={t}
-              className={tab === t ? 'active' : ''}
+              className={tab === t && panelOpen ? 'active' : ''}
+              aria-pressed={tab === t && panelOpen}
               onClick={() => {
-                // Tapping the open tab again folds the panel away; on phones the tabs are a bar
-                // at the bottom, so a tap always opens the library and jumps to it.
-                const phone = window.matchMedia?.('(max-width: 760px)').matches;
-                if (tab === t && !phone) setPanelOpen((o) => !o);
+                // Tapping the open tab again folds the library away (on phones: closes the bottom sheet).
+                if (tab === t) setPanelOpen((o) => !o);
                 else {
                   setTab(t);
                   setPanelOpen(true);
                 }
-                if (phone) libraryRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
               }}
             >
               <Icon name={({ templates: 'layout', text: 'text', elements: 'shapes', photos: 'image', uploads: 'upload', background: 'droplet', brand: 'palette' } as const)[t]} size={18} />
@@ -890,6 +891,9 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
           </nav>
           {panelOpen && (
           <div className="cc-library-body">
+          <button className="sheet-close" onClick={() => setPanelOpen(false)} aria-label="Close panel">
+            <span className="sheet-grip" aria-hidden />
+          </button>
           {tab === 'templates' && (
             <>
               <h3>Templates</h3>
@@ -1115,7 +1119,7 @@ export function DesignEditor({ initialFile, projectId, onExit }: { initialFile: 
           )}
         </aside>
 
-        <div className="stage-column cc-player">
+        <div className="stage-column cc-player" ref={playerRef}>
         <div className="cc-panel-head">
           <span>Canvas</span>
           <span className="cc-head-info">

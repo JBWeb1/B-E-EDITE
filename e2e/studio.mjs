@@ -569,6 +569,8 @@ await aed.getByRole('button', { name: 'Close' }).click();
   check('phone: Import is there straight away', await m.locator('.cc-library-body').getByText('Import', { exact: true }).first().isVisible().catch(() => false));
   await m.locator('.panel input[type=file]').first().setInputFiles([path.join(FIX, 'red.webm'), path.join(FIX, 'blue.webm'), path.join(FIX, 'moving.webm')]);
   await m.locator('.main-track .clip-item').nth(2).waitFor();
+  await m.waitForTimeout(300);
+  check('phone: importing closes the library sheet so the timeline shows', (await m.locator('.cc-library-body').count()) === 0);
   await m.locator('.main-track').scrollIntoViewIfNeeded();
   await m.evaluate(() => window.scrollBy(0, 160));
   await m.waitForTimeout(300);
@@ -588,7 +590,12 @@ await aed.getByRole('button', { name: 'Close' }).click();
   await m.locator('.cc-tabs').getByRole('button', { name: 'Effects', exact: true }).tap();
   await m.waitForTimeout(900);
   const fxVisible = await m.locator('.fx-card').first().boundingBox();
-  check('phone: the bottom tabs jump to the library', fxVisible && fxVisible.y > 0 && fxVisible.y < 844);
+  const sheetBox = await m.locator('.cc-library-body').boundingBox();
+  const playerBox = await m.locator('.cc-player').boundingBox();
+  check('phone: the bottom tabs open the library as a sheet under the player', fxVisible && fxVisible.y > 0 && fxVisible.y < 844 && sheetBox.y >= playerBox.y + playerBox.height - 1, `${JSON.stringify(sheetBox)} / player bottom ${playerBox.y + playerBox.height}`);
+  await m.getByRole('button', { name: 'Close panel' }).tap();
+  await m.waitForTimeout(300);
+  check('phone: the sheet closes', (await m.locator('.cc-library-body').count()) === 0);
   await mctx.close();
 }
 

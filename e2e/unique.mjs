@@ -355,7 +355,7 @@ for (const [w, h] of [[390, 844], [360, 740]]) {
   watch(m, `phone ${w} `);
   await m.goto(`${BASE}/?new=video`);
   await m.locator('canvas.preview').waitFor();
-  await m.locator('.cc-tabs').getByRole('button', { name: 'Media', exact: true }).tap();
+  // An empty project opens with the library's bottom sheet showing Import.
   await m.locator('input[type=file][accept="video/*,image/*,audio/*"]').first().setInputFiles([`${FIX}/red.webm`, `${FIX}/blue.webm`]);
   await m.locator('.clip-item').nth(1).waitFor({ timeout: 20000 });
   await m.waitForTimeout(500);
@@ -367,11 +367,14 @@ for (const [w, h] of [[390, 844], [360, 740]]) {
       const hit = document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2);
       return { canvasTop: c.top, canvasBottom: c.bottom, canvasH: c.height, timelineTop: t.top, topbarBottom: top.bottom, uncovered: hit === document.querySelector('canvas.preview'), vh: innerHeight };
     });
+  // Importing closes the sheet; open it again (Effects) — the player stays in view above it.
+  await m.locator('.cc-tabs').getByRole('button', { name: 'Effects', exact: true }).tap();
+  await m.locator('.fx-card').first().waitFor();
   const v = await view();
-  // One scrolling page: the player stays pinned on screen, uncovered, while the library is in view.
   check(`phone ${w}: video shows with the library open`, v.canvasH > 120 && v.canvasTop >= -1 && v.canvasBottom <= v.vh && v.uncovered, JSON.stringify(v));
   const px = await m.locator('canvas.preview').evaluate((c) => Array.from(c.getContext('2d').getImageData(c.width / 2, c.height / 2, 1, 1).data));
   check(`phone ${w}: the clip is drawn`, px[0] > 150, px.join(','));
+  await m.getByRole('button', { name: 'Close panel' }).tap();
   await m.locator('.clip-item').first().tap();
   await m.waitForTimeout(900);
   const d = await m.evaluate(() => {
